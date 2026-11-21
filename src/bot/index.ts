@@ -65,6 +65,7 @@ import type { UsageSnapshot } from "../usage.ts";
 import { estimateSttCostUsd, httpEndpointOf, resolveVoiceConfig, sniffAudioKind, transcribeAudio } from "../voice.ts";
 import { createHash } from "node:crypto";
 import { configWithSandboxTier, type BindingSandboxTier } from "../channels/bindings.ts";
+import { checkCircleInbound } from "../circles.ts";
 import { ApprovalBridge, approvalArgsHash } from "./approvalBridge.ts";
 import { resolveBotComputer, type BotComputerBinding } from "./binding.ts";
 import { processAttachments } from "./attachments.ts";
@@ -1143,6 +1144,22 @@ export class BotRunner {
         const msgs = await this.adapter.pollOnce(this.stopController.signal);
         backoffMs = 1000;
         for (const m of msgs) {
+          // 缺口 34：信任圈预过滤（与网关同款口径）——单渠道 Bot 也要过圈，
+          // 否则绕过网关就等于绕过准入。圈外消息直接丢弃，只记审计。
+          const admission = checkCircleInbound(this.home, m.channel, m.senderId);
+          if (!admission.admitted) {
+            appendAudit(this.home, {
+              ts: new Date().toISOString(),
+              channel: m.channel,
+              session_key: `${m.channel}:${m.chatId}`,
+              message_id: m.messageId,
+              outcome: "dropped:circle",
+              ...(this.bindingId ? { binding_id: this.bindingId } : {}),
+              rule: "circle:admission",
+              reason: admission.reason,
+            });
+            continue;
+          }
           void this.handleMessage(m).catch((err) => {
             process.stderr.write(`Bot 处理消息失败：${err instanceof Error ? err.message : String(err)}\n`);
           });
