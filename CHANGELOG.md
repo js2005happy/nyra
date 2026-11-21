@@ -1,3 +1,8 @@
+## 2026-11-22 — Metadata-only task contract validation (unreleased, static-only)
+
+- Added `angel/task_contract.py`: strict bounded in-memory task metadata with requirement/prohibition labels, revision and phase; rejects unknown fields, duplicates and conflicts; always reports execution unverified and auto-resume unsafe.
+- Added unexecuted regression definitions. No persistence, secrets, prompt content, main-loop integration, test execution, dependencies, CI, merge or release.
+
 ## 2026-11-22 — Issuer-bound offline receipt verifier (unreleased, static-only)
 
 - Added `angel/acceptance_issuer.py` with a separate HMAC domain and signed issuer/key-id fields, exact requirement/reference/revision/environment matching, and an externally supplied trusted key registry. Unknown or removed key IDs fail closed; existing v1 verifier unchanged.
