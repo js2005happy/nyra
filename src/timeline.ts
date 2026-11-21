@@ -472,6 +472,18 @@ export function buildTimeline(store: RunStore, runId: string): Timeline {
         push(at, "event", `渠道发件人已绑定：${str(ev.channel) ?? "?"} / ${str(ev.sender) ?? "?"} → ${str(ev.identity) ?? "?"}`, null, null, null);
         break;
       }
+      case "onboarding_completed": {
+        push(at, "event", `入职完成：${str(ev.agent) ?? "?"}（角色 ${str(ev.role) ?? "?"}${str(ev.template) ? `，模板 ${str(ev.template)}` : ""}）`, null, null, null);
+        break;
+      }
+      case "onboarding_template_applied": {
+        push(at, "event", `角色模板已应用：${str(ev.agent) ?? "?"} 用了 ${str(ev.template) ?? "?"}`, null, null, null);
+        break;
+      }
+      case "onboarding_ready_briefing": {
+        push(at, "event", `就绪简报已发：${str(ev.agent) ?? "?"}（${str(ev.channel) ?? "?"}）`, null, null, null);
+        break;
+      }
       case "subagent_stop_requested": {
         const by = str(ev.by) ?? "未记发起人";
         const step = str(ev.step) ?? "";

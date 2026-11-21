@@ -322,6 +322,11 @@ circle_deleted: ["circle", "by"],
 circle_invited: ["circle", "peer", "by", "channel"],
 circle_revoked: ["circle", "peer", "by"],
 circle_binding_set: ["channel", "sender", "identity"],
+// 缺口 35：对话式入职进证据链——入职完成 / 角色模板应用 / 就绪简报已发。
+// 只记 agent、角色与模板 id，不记三问答案原文、不记绝对路径。
+onboarding_completed: ["agent", "role", "template"],
+onboarding_template_applied: ["agent", "template"],
+onboarding_ready_briefing: ["agent", "channel"],
 // 缺口 51：业务动作硬红线进证据链——改表（哪个连接器、哪个动作、从哪档到
 // 哪档、原因指纹）与拦截（哪个连接器、哪个动作、哪档、哪个工具）。只记
 // 元数据与 SHA-256 前 12 位指纹，不记原因原文、不记业务内容。
