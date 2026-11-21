@@ -152,6 +152,9 @@ nyra channels explain --channel telegram --chat 100 --sender 8 --group
 
 - `routed`——命中哪条绑定、哪条规则；
 - `dropped:not_in_allowlist` / `dropped:mention_only`——为什么丢弃；
+- `dropped:circle`——发件人没通过信任圈准入（缺口 34：未绑定身份、
+  好友不在任何信任圈里、好友已拉黑、账本读失败；只记最小审计，不进
+  agent 上下文、不耗 token，详见 `docs/circles.md`）；
 - `error:no-runner`——绑定命中了但 runner 不在（建 runner 失败时）。
 
 之后 runner 自己的每条审计记录（ok、blocked、审批结论等）都带
@@ -165,6 +168,18 @@ nyra governance audit export --sources bot
 网关还写一份状态文件 `~/.nyra/channel-gateway-status.json`（每 5 秒最多
 写一次）：各渠道 started、token、绑定数、已路由/已丢弃/出错计数、最近轮询时间。
 `nyra channels status` 读它。
+
+## 信任圈预过滤（缺口 34）
+
+绑定路由只定“谁接”，信任圈再定“接不接”：路由命中后，网关按发件人
+id 查 `circles.json` 里的绑定认出身份，再查准入。圈外消息在网关层
+直接丢弃（`dropped:circle`），不进 agent 上下文、不耗 token、不调
+模型；圈内照常路由。单渠道 Bot（`startPolling` 循环）用同一套口径，
+绕过网关不等于绕过准入。
+
+新接一个渠道时，先跑 `nyra circle owner` 登记机主、再跑 `nyra circle
+bind` 绑定每个要放行的好友，否则他们的消息到不了 agent——这是故意
+的（默认全封闭），不是 bug。详见 `docs/circles.md`。
 
 ## 语音入口：语音指挥
 
