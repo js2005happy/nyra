@@ -1,3 +1,10 @@
+## 2026-11-22 — Metadata-only task contract boundary (static-only)
+
+- **Public facts (reviewed 2026-11-22):** [Codex #40646](https://github.com/openai/codex/issues/40646) (opened 2026-08-25) reports loss of task constraints during long sessions; [Codex #36718](https://github.com/openai/codex/issues/36718) (opened 2026-08-03) requests evidence-backed completion records. These are external user reports, not Angel reproductions or prevalence measurements.
+- **Inference:** preserve a bounded, privacy-minimal contract of requirement labels, prohibition labels, phase and revision before considering durable storage or runtime enforcement.
+- **Rank (value / effort / safety risk / dependencies):** P1 metadata contract high / low / low / standard library (**implemented, untested**); P1 durable privacy-preserving storage high / medium / medium / atomic storage and consent (**open**); P1 independent key lifecycle high / high / high / external trust authority (**blocked**); P1 replay protection high / high / high / trusted state (**blocked**); P1 no-progress detection medium-high / medium / medium / reliable events (**open**); P0 claim dispatch high / high / high / isolation and approvals (**blocked**).
+- **Scope:** in-memory strict validator and unexecuted regression definitions only. No private prompts, tool inputs, secrets, persistence, auto-resume, runtime wiring, CI, merge or release.
+
 ## 2026-11-22 — Issuer-bound offline receipt verification (static-only)
 
 - **External facts (reviewed 2026-11-22):** [Codex #61857](https://github.com/openai/codex/issues/61857), opened 2026-11-16, reports unsupported acceptance claims; [Codex #40646](https://github.com/openai/codex/issues/40646), opened 2026-08-25, reports drift of execution constraints and unsupported verification. Individual user reports, not Angel reproductions or frequency estimates.
