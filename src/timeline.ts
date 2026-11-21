@@ -484,6 +484,42 @@ export function buildTimeline(store: RunStore, runId: string): Timeline {
         push(at, "event", `就绪简报已发：${str(ev.agent) ?? "?"}（${str(ev.channel) ?? "?"}）`, null, null, null);
         break;
       }
+      case "session_created": {
+        push(at, "event", `联合会话已建：${str(ev.session) ?? "?"}（${str(ev.title) ?? "?"}，由 ${str(ev.by) ?? "机主"}创建）`, null, null, null);
+        break;
+      }
+      case "session_joined": {
+        push(at, "event", `${str(ev.peer) ?? "?"} 已进联合会话 ${str(ev.session) ?? "?"}`, null, null, null);
+        break;
+      }
+      case "session_left": {
+        push(at, "event", `${str(ev.peer) ?? "?"} 已离开联合会话 ${str(ev.session) ?? "?"}`, null, null, null);
+        break;
+      }
+      case "session_ended": {
+        push(at, "event", `联合会话 ${str(ev.session) ?? "?"} 已结束（由 ${str(ev.by) ?? "机主"}结束，帧记录已清空）`, null, null, null);
+        break;
+      }
+      case "session_delegated": {
+        push(at, "event", `会内委派：${str(ev.from) ?? "?"} 委派给 ${str(ev.to) ?? "?"}（委派 ${str(ev.delegation) ?? "?"}，契约 ${str(ev.contract) ?? "?"}，交付 ${str(ev.delivery) ?? "?" }）`, null, null, null);
+        break;
+      }
+      case "session_delegation_accepted": {
+        push(at, "event", `委派 ${str(ev.delegation) ?? "?"} 已接下（${str(ev.by) ?? "?"}）`, null, null, null);
+        break;
+      }
+      case "session_delegation_completed": {
+        push(at, "event", `委派 ${str(ev.delegation) ?? "?"} 已交活（${str(ev.by) ?? "?"}）`, null, null, null);
+        break;
+      }
+      case "session_shared": {
+        push(at, "event", `会内共享：${str(ev.from) ?? "?"} 共享了 ${str(ev.items) ?? "?"} 项（${str(ev.kind) ?? "?"}）`, null, null, null);
+        break;
+      }
+      case "session_recording_consented": {
+        push(at, "event", `${str(ev.by) ?? "?"} ${ev.consented === true ? "同意" : "撤回同意"}录制（会话 ${str(ev.session) ?? "?"}）`, null, null, null);
+        break;
+      }
       case "subagent_stop_requested": {
         const by = str(ev.by) ?? "未记发起人";
         const step = str(ev.step) ?? "";

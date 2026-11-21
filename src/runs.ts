@@ -327,6 +327,20 @@ circle_binding_set: ["channel", "sender", "identity"],
 onboarding_completed: ["agent", "role", "template"],
 onboarding_template_applied: ["agent", "template"],
 onboarding_ready_briefing: ["agent", "channel"],
+// 缺口 39：跨 agent 联合会话进证据链——建会 / 进会 / 离会 / 结束 /
+// 会内委派（谁委派给谁、哪条委派、哪个契约、交付状态）/ 接下 / 交活 /
+// 共享（谁共享、什么种、几项）/ 录制同意。只记会话 id、成员名与结论，
+// 不记任务正文、共享包内容、帧内容与绝对路径；帧扇出只记在会话账本
+// 与 peer-audit 里（只记指纹与收件人），不单记运行事件。
+session_created: ["session", "title", "by"],
+session_joined: ["session", "peer"],
+session_left: ["session", "peer"],
+session_ended: ["session", "by"],
+session_delegated: ["session", "from", "to", "delegation", "contract", "delivery"],
+session_delegation_accepted: ["session", "delegation", "by"],
+session_delegation_completed: ["session", "delegation", "by"],
+session_shared: ["session", "from", "kind", "items"],
+session_recording_consented: ["session", "by", "consented"],
 // 缺口 51：业务动作硬红线进证据链——改表（哪个连接器、哪个动作、从哪档到
 // 哪档、原因指纹）与拦截（哪个连接器、哪个动作、哪档、哪个工具）。只记
 // 元数据与 SHA-256 前 12 位指纹，不记原因原文、不记业务内容。
