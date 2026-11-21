@@ -1,3 +1,9 @@
+## 2026-11-22 — Advisory no-progress observer (development, untested)
+
+- Added `angel/no_progress.py` with a pure, bounded consecutive-idle observer and immutable snapshot. It only flags attention; it does not stop, resume, retry or claim task success.
+- Added unexecuted regression definitions in `tests/test_no_progress.py`. No new dependency, persistence, runtime wiring or user-content capture.
+- Reviewed external Codex reports #37800 (2026-08-10), #47802 (2026-09-24), #43021 (2026-09-05); their relevance is an engineering inference, not a confirmed Angel defect.
+
 ## 2026-11-22 — Versioned task contract metadata envelope (unreleased, static-only)
 
 - Added bounded, deterministic standard-library JSON encode/decode for validated task-contract metadata. Import rejects duplicate JSON keys, unknown fields, wrong version, oversized payload and attempted injected authority flags; execution verification and automatic resume remain false.
