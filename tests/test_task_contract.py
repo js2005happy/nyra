@@ -35,7 +35,7 @@ class TaskContractTests(unittest.TestCase):
 
     def test_control_character(self):
         with self.assertRaises(TaskContractError):
-            validate_task_contract({**self.data, "task_id": "bad\\nname"})
+            validate_task_contract({**self.data, "task_id": "bad\nname"})
 
 
 if __name__ == "__main__":
