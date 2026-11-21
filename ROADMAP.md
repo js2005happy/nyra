@@ -1,3 +1,10 @@
+## 2026-11-22 — Task contract metadata wire boundary (static-only)
+
+- **External reports (facts, reviewed 2026-11-22):** [Codex #40646](https://github.com/openai/codex/issues/40646) (2026-08-25) reports lost task prohibitions and unsupported execution claims; [Codex #57608](https://github.com/openai/codex/issues/57608) (2026-10-28) reports task loss after compaction. These are individual reports, not Angel reproductions or prevalence measurements.
+- **Inference:** a strict versioned, metadata-only import/export format can be reviewed before any durable storage or auto-resume. Added bounded 32 KiB JSON bytes envelope, duplicate-key and unknown-field rejection; authority flags are regenerated false on import. No persistence, encryption, runtime integration or permission transfer.
+- **Priority (value / difficulty / safety risk / dependencies):** P1 metadata envelope high / low / low / existing validator (**implemented; untested**); P1 opt-in private durable storage high / medium / medium-high / filesystem atomicity, user consent and cross-platform protections (**open**); P1 no-progress detector medium-high / medium / medium / trusted events (**open**); P1 key lifecycle high / high / high / independent authority (**blocked**); P0 claim dispatch high / high / high / isolation and approval (**blocked**).
+- **Privacy boundary:** labels are metadata, not cryptographically secret; callers must not put prompts, secrets, paths, user content or tool outputs in labels. No filesystem writes or auto-resume.
+
 ## 2026-11-22 — Metadata-only task contract boundary (static-only)
 
 - **Public facts (reviewed 2026-11-22):** [Codex #40646](https://github.com/openai/codex/issues/40646) (opened 2026-08-25) reports loss of task constraints during long sessions; [Codex #36718](https://github.com/openai/codex/issues/36718) (opened 2026-08-03) requests evidence-backed completion records. These are external user reports, not Angel reproductions or prevalence measurements.
