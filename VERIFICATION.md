@@ -1,3 +1,10 @@
+## 2026-11-22 — Advisory progress-event classification (static review only)
+
+- Reviewed development README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/Tools, no-progress module and tests; checked recent repository commits, open Issues/PR, development branch, prior commit statuses and PR-triggered workflow runs (no status/run records returned).
+- External user reports reviewed 2026-11-22: [Codex #37800](https://github.com/openai/codex/issues/37800) (2026-08-10), [#41007](https://github.com/openai/codex/issues/41007) (2026-08-27), [#47802](https://github.com/openai/codex/issues/47802) (2026-09-24). These are not Angel defect reproductions.
+- Source-only review: bounded known event names, strict bool attestation, unknown/untrusted status rejected as progress, and no state change on malformed events. Added unexecuted regression definitions. **No tests, scripts, compilation, CI or cross-platform runtime checks performed.**
+- Caller attestation is not cryptographic proof; no main-loop integration, tool execution, automatic pause/retry/resume, account access, main merge or production release.
+
 ## 2026-11-22 — Advisory no-progress observer (static review only)
 
 - Reviewed development README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/Tools and task-contract code; checked branch, prior commit status and open Issues/PR. External user reports reviewed 2026-11-22: [#37800](https://github.com/openai/codex/issues/37800) (2026-08-10), [#47802](https://github.com/openai/codex/issues/47802) (2026-09-24), [#43021](https://github.com/openai/codex/issues/43021) (2026-09-05).
