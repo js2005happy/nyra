@@ -56,3 +56,66 @@ def validate_task_contract(contract: Mapping[str, object]) -> dict[str, object]:
         "phase": phase, "execution_verified": False,
         "safe_to_auto_resume": False,
     }
+
+
+# This format is deliberately a *transport envelope*, not a resumable checkpoint.
+# Persisting it is a separate, explicitly authorized operation.
+import json
+
+_CONTRACT_FIELDS = ("task_id", "revision", "requirements", "prohibitions", "phase")
+_MAX_ENVELOPE_BYTES = 32768
+_FORMAT_VERSION = 1
+
+
+def encode_task_contract(contract: Mapping[str, object]) -> bytes:
+    """Serialize only validated metadata; never serialize caller-supplied extras.
+
+    The unverified/auto-resume flags are deliberately excluded from the wire
+    format and regenerated on import. No disk, clock, network or execution.
+    """
+    normalized = validate_task_contract(contract)
+    envelope = {
+        "format": "angel.task_contract",
+        "version": _FORMAT_VERSION,
+        "contract": {field: normalized[field] for field in _CONTRACT_FIELDS},
+    }
+    try:
+        payload = json.dumps(envelope, ensure_ascii=True, sort_keys=True,
+                             separators=(",", ":"), allow_nan=False).encode("ascii")
+    except (TypeError, ValueError, UnicodeError) as exc:
+        raise TaskContractError("invalid contract serialization") from exc
+    if len(payload) > _MAX_ENVELOPE_BYTES:
+        raise TaskContractError("contract envelope too large")
+    return payload
+
+
+def decode_task_contract(payload: bytes) -> dict[str, object]:
+    """Strictly import a bounded metadata envelope without granting authority."""
+    if not isinstance(payload, bytes) or not 0 < len(payload) <= _MAX_ENVELOPE_BYTES:
+        raise TaskContractError("invalid contract envelope size")
+    try:
+        envelope = json.loads(payload.decode("utf-8"),
+                              object_pairs_hook=_unique_json_pairs,
+                              parse_constant=_reject_json_constant)
+    except (UnicodeError, ValueError, TypeError, RecursionError) as exc:
+        raise TaskContractError("invalid contract envelope") from exc
+    if (not isinstance(envelope, dict)
+            or set(envelope) != {"format", "version", "contract"}
+            or envelope["format"] != "angel.task_contract"
+            or type(envelope["version"]) is not int
+            or envelope["version"] != _FORMAT_VERSION):
+        raise TaskContractError("unsupported contract envelope")
+    return validate_task_contract(envelope["contract"])
+
+
+def _unique_json_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise TaskContractError("duplicate JSON key")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(value: str) -> None:
+    raise TaskContractError("nonfinite JSON constant")
