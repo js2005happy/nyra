@@ -452,6 +452,26 @@ export function buildTimeline(store: RunStore, runId: string): Timeline {
         push(at, "event", "好友码已重生成", null, null, null);
         break;
       }
+      case "circle_created": {
+        push(at, "event", `信任圈 ${str(ev.circle) ?? "?"} 已建（由 ${str(ev.by) ?? "机主"}）`, null, null, null);
+        break;
+      }
+      case "circle_deleted": {
+        push(at, "event", `信任圈 ${str(ev.circle) ?? "?"} 已删`, null, null, null);
+        break;
+      }
+      case "circle_invited": {
+        push(at, "event", `${str(ev.peer) ?? "?"} 已引进 ${str(ev.circle) ?? "?"} 圈（由 ${str(ev.by) ?? "机主"} 经 ${str(ev.channel) ?? "cli"} 引进）`, null, null, null);
+        break;
+      }
+      case "circle_revoked": {
+        push(at, "event", `${str(ev.peer) ?? "?"} 已从 ${str(ev.circle) ?? "?"} 圈撤销`, null, null, null);
+        break;
+      }
+      case "circle_binding_set": {
+        push(at, "event", `渠道发件人已绑定：${str(ev.channel) ?? "?"} / ${str(ev.sender) ?? "?"} → ${str(ev.identity) ?? "?"}`, null, null, null);
+        break;
+      }
       case "subagent_stop_requested": {
         const by = str(ev.by) ?? "未记发起人";
         const step = str(ev.step) ?? "";

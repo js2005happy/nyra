@@ -708,6 +708,13 @@ export async function shareWithFriend(home: string, config: Record<string, unkno
     throw new PeerCardError(`好友账本里没有 ${opts.to}，也没有这个圈：先加好友（nyra peer add / request + accept）或建圈`);
   }
   const share = opts.share ?? HANDOFF_DEFAULT_FIELDS;
+  // 缺口 34：只向信任圈里的好友分享——先全员验一遍，不过整批拒绝，
+  // 不发一半。动态 import：circles.ts 静态依赖本文件，静态引入会循环。
+  const { isAdmitted } = await import("./circles.ts");
+  const notAdmitted = targets.filter((t) => !isAdmitted(home, t.name));
+  if (notAdmitted.length) {
+    throw new PeerCardError(`以下好友不在信任圈里，整批分享已拒绝：${notAdmitted.map((t) => t.name).join("、")}（先跑 nyra circle invite <圈名> <好友名> 把他们引进圈）`);
+  }
   const results: { name: string; status: string; peerRunId: string | null }[] = [];
   for (const target of targets) {
     const peer: PeerEntry = { name: target.name, url: target.url };

@@ -366,6 +366,13 @@ export async function askPeer(opts: {
     finishPeerRun(store, runId, false);
     throw err;
   };
+  // 缺口 34：只向信任圈里的对端发任务——对方须是已批准好友且在圈里。
+  // 动态 import：circles.ts 经 peerCard 静态依赖 peer.ts，这里静态引
+  // 入会形成循环导入（与 checkApproval 里动态引 team.ts 同款原因）。
+  const { isAdmitted } = await import("./circles.ts");
+  if (!isAdmitted(home, peer.name)) {
+    return fail(new PeerError(`对方 ${peer.name} 不在信任圈里：先跑 nyra circle invite <圈名> ${peer.name} 把它引进圈（对方须先是已批准、未拉黑的好友）`));
+  }
   const verdict = await reviewPeerAction({
       config, home, action: "peer_ask",
       args: { peer: peer.name, question_hash: questionHash},
@@ -432,6 +439,13 @@ export async function handoffPeer(opts: {
     finishPeerRun(store, runId, status === "accepted");
     return { peerRunId, status, bead, runId};
   };
+  // 缺口 34：只向信任圈里的对端交接——对方须是已批准好友且在圈里。
+  // 动态 import：circles.ts 经 peerCard 静态依赖 peer.ts，这里静态引
+  // 入会形成循环导入（与 checkApproval 里动态引 team.ts 同款原因）。
+  const { isAdmitted } = await import("./circles.ts");
+  if (!isAdmitted(home, peer.name)) {
+    return recordOutcome("rejected", null, `对方 ${peer.name} 不在信任圈里：先跑 nyra circle invite <圈名> ${peer.name} 把它引进圈（对方须先是已批准、未拉黑的好友）`);
+  }
   const verdict = await reviewPeerAction({
       config, home, action: "peer_handoff",
       args: { peer: peer.name, run_id: opts.runId, package_hash: packageHash},

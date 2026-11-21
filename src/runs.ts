@@ -315,6 +315,13 @@ friend_blocked: ["peer"],
 friend_unblocked: ["peer"],
 friend_removed: ["peer"],
 friend_code_regenerated: ["code_hash"],
+// 缺口 34：信任圈进证据链——建圈 / 删圈 / 引入 / 撤销 / 绑定渠道发件人。
+// 只记圈名、身份名、引入者与渠道，不记发件人 id 以外的任何消息内容。
+circle_created: ["circle", "by"],
+circle_deleted: ["circle", "by"],
+circle_invited: ["circle", "peer", "by", "channel"],
+circle_revoked: ["circle", "peer", "by"],
+circle_binding_set: ["channel", "sender", "identity"],
 // 缺口 51：业务动作硬红线进证据链——改表（哪个连接器、哪个动作、从哪档到
 // 哪档、原因指纹）与拦截（哪个连接器、哪个动作、哪档、哪个工具）。只记
 // 元数据与 SHA-256 前 12 位指纹，不记原因原文、不记业务内容。
