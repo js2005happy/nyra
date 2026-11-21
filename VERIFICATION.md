@@ -1,3 +1,9 @@
+## 2026-11-22 — Task contract metadata boundary (static inspection only)
+
+- Reviewed README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/Tools and acceptance modules, existing development branch, open Issues/PR and previous commit status (no checks returned). Recent public feedback: [Codex #40646](https://github.com/openai/codex/issues/40646) (2026-08-25), [#36718](https://github.com/openai/codex/issues/36718) (2026-08-03); reviewed 2026-11-22. Reports are not Angel reproductions.
+- Added strict in-memory task-contract validator and regression source. **Static source review only; no tests, scripts, compilation or CI run.** Cross-platform behavior unverified.
+- No persistence, runtime enforcement, authorization, independent verification or safe automatic resume. No main merge or release.
+
 ## 2026-11-22 — Issuer-bound receipt verification (static inspection only)
 
 - Reviewed development branch README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/Tools, existing acceptance modules/tests, recent commits, Issues/PR and available CI status. External reports: [Codex #61857](https://github.com/openai/codex/issues/61857) (2026-11-16) and [#40646](https://github.com/openai/codex/issues/40646) (2026-08-25); reviewed 2026-11-22. Reports are not Angel reproductions.
