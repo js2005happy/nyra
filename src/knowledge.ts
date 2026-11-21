@@ -4,10 +4,14 @@
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeSync, fsyncSync } from "node:fs";
 import { join, basename, extname } from "node:path";
 import { randomBytes } from "node:crypto";
+import { inflateSync } from "node:zlib";
 import { ToolPool, type Bm25Payload } from "./toolPool.ts";
+import { EvidenceStore } from "./evidence.ts";
 
 export const MAX_NOTE_CHARS = 1500;
 export const MIN_NOTE_CHARS = 200;
+/** 单个 PDF 超过该大小不收录（最小抽取不值得为超大文件扛内存）。 */
+export const MAX_PDF_BYTES = 20 * 1024 * 1024;
 /** 笔记数达到该值时 searchAsync 把评分挪到 worker 池（低于则同步算）。 */
 export const POOL_MIN_NOTES = 100;
 export const ASK_SYSTEM_PROMPT =
@@ -45,6 +49,9 @@ function checkName(name: string): string {
 function checkDate(date: string | null | undefined): string {
   if (date === null || date === undefined) return today();
   if (typeof date !== "string" || !DATE_RE.test(date)) throw new KnowledgeError("日期须为 YYYY-MM-DD 格式");
+  const [y, m, d] = date.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== m - 1 || dt.getUTCDate() !== d) throw new KnowledgeError("日期不是真实的日历日期");
   return date;
 }
 
@@ -154,6 +161,78 @@ function decodeEntities(s: string): string {
     .replace(/&#x([0-9a-fA-F]+);/g, (_m, n) => String.fromCodePoint(parseInt(n, 16)));
 }
 
+/** 缺口 33：最小可用的 PDF 文本抽取——只处理 FlateDecode 压缩与未压缩的
+ * 内容流，取括号字面量字符串（Tj / TJ 运算符的参数）。不处理 ToUnicode
+ * 映射、十六进制字符串、加密与扫描件：抽不出来的返回空串，调用方直接报错，
+ * 不假装读到了。图片流（DCT/JPX/CCITT/JBIG2）直接跳过，不把二进制垃圾当正文。 */
+export function extractPdfText(buf: Buffer): string {
+  const latin1 = buf.toString("latin1");
+  const texts: string[] = [];
+  const streamRe = /stream\r?\n/g;
+  let m: RegExpExecArray | null;
+  while ((m = streamRe.exec(latin1)) !== null) {
+    const start = m.index + m[0].length;
+    const end = latin1.indexOf("endstream", start);
+    if (end < 0) break;
+    const dict = latin1.slice(Math.max(0, m.index - 300), m.index);
+    if (/\/(Image|DCTDecode|JPXDecode|CCITTFaxDecode|JBIG2Decode|Crypt)\b/.test(dict)) {
+      streamRe.lastIndex = end;
+      continue;
+    }
+    const raw = Buffer.from(latin1.slice(start, end), "latin1");
+    let content: string;
+    if (dict.includes("/FlateDecode")) {
+      try { content = inflateSync(raw).toString("latin1"); }
+      catch { streamRe.lastIndex = end; continue; }
+    } else {
+      content = raw.toString("latin1");
+    }
+    for (const lit of content.match(/\((?:\\.|[^\\()])*\)/g) ?? []) {
+      const inner = lit.slice(1, -1)
+        .replace(/\\([()\\])/g, "$1")
+        .replace(/\\n/g, "\n").replace(/\\r/g, "\r").replace(/\\t/g, "\t")
+        .replace(/\\([0-7]{1,3})/g, (_x, oct) => String.fromCharCode(parseInt(oct, 8)));
+      if (inner.trim()) texts.push(inner);
+    }
+    streamRe.lastIndex = end;
+  }
+  return texts.join("\n").replace(/[ \t]+/g, " ").replace(/\n\s*\n+/g, "\n\n").trim();
+}
+
+/** 缺口 33：检索进证据链的双通道记录——有运行上下文时写该运行的
+ * events.jsonl（knowledge_search 事件），否则写 evidence/knowledge/ 下
+ * 的证据文件（与审阅队列的 recordReviewEvent 同款口径）。
+ * RunStore 只在函数内动态 import：runs.ts 静态 import tools.ts，
+ * knowledge.ts 若静态 import runs.ts 会形成 tools→knowledge→runs→tools
+ * 的循环导入。 */
+export async function recordKnowledgeSearch(
+  home: string | undefined,
+  runId: string | null,
+  fields: { base: string; query: string; hits: number; topScore: number },
+  citationText: string,
+): Promise<{ channel: "events" | "evidence" | "none"; path?: string }> {
+  const h = home ?? process.env.NYRA_HOME ?? join(process.env.HOME ?? "", ".nyra");
+  if (runId) {
+    for (const sub of ["runs", "tasks"]) {
+      const baseDir = join(h, sub);
+      if (!existsSync(join(baseDir, runId))) continue;
+      try {
+        const { RunStore } = await import("./runs.ts");
+        new RunStore(baseDir).appendEvent(runId, "knowledge_search", fields);
+        return { channel: "events" };
+      } catch { /* 该 store 写失败就试下一个；都失败再走证据文件 */ }
+    }
+  }
+  try {
+    const path = new EvidenceStore(join(h, "evidence"), "knowledge").save(
+      "knowledge_search", `knowledge://${fields.base}`, citationText, fields.query,
+    );
+    return { channel: "evidence", path };
+  } catch {
+    return { channel: "none" };
+  }
+}
+
 function atomicWrite(path: string, data: string | Buffer): void {
   mkdirSync(join(path, ".."), { recursive: true });
   const tmp = join(join(path, ".."), `.${basename(path)}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`);
@@ -195,6 +274,14 @@ export function scoreBm25(queryTokens: string[], docTokens: string[][], topK: nu
   }
   scored.sort((a, b) => b[0] - a[0]);
   return scored.slice(0, Math.max(topK, 0));
+}
+
+export interface KnowledgeSearchOptions {
+  topK?: number;
+  minScore?: number;
+  source?: string;
+  dateFrom?: string;
+  dateTo?: string;
 }
 
 export class KnowledgeBase {
@@ -291,9 +378,25 @@ export class KnowledgeBase {
   addFile(name: string, path: string): Note[] {
     this.require(name);
     if (!existsSync(path) || !statSync(path).isFile()) throw new KnowledgeError(`文件不存在：${path}`);
-    if (![".txt", ".md"].includes(extname(path).toLowerCase())) throw new KnowledgeError("只收录 .txt / .md 文件");
+    if (extname(path).toLowerCase() === ".pdf") return this.addPdf(name, path);
+    if (![".txt", ".md"].includes(extname(path).toLowerCase())) throw new KnowledgeError("只收录 .txt / .md / .pdf 文件");
     let text: string;
     try { text = readFileSync(path, "utf-8"); } catch { throw new KnowledgeError(`读文件失败：${path}`); }
+    const date = new Date(statSync(path).mtimeMs).toISOString().slice(0, 10);
+    return this.addText(name, text, basename(path), path, date);
+  }
+
+  /** 缺口 33：PDF 收录——最小文本抽取（见 extractPdfText）。不是 PDF、
+   * 超 20MB、抽不出文本（扫描件/加密）都直接报错，不静默跳过。 */
+  addPdf(name: string, path: string): Note[] {
+    this.require(name);
+    if (!existsSync(path) || !statSync(path).isFile()) throw new KnowledgeError(`文件不存在：${path}`);
+    let buf: Buffer;
+    try { buf = readFileSync(path); } catch { throw new KnowledgeError(`读文件失败：${path}`); }
+    if (buf.length > MAX_PDF_BYTES) throw new KnowledgeError(`PDF 超过 20MB，不收录：${path}`);
+    if (buf.subarray(0, 5).toString("latin1") !== "%PDF-") throw new KnowledgeError(`不是 PDF 文件：${path}`);
+    const text = extractPdfText(buf);
+    if (!text.trim()) throw new KnowledgeError(`PDF 没有可提取的文本（可能是扫描件或加密 PDF）：${path}`);
     const date = new Date(statSync(path).mtimeMs).toISOString().slice(0, 10);
     return this.addText(name, text, basename(path), path, date);
   }
@@ -306,7 +409,7 @@ export class KnowledgeBase {
       for (const e of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
         const p = join(dir, e.name);
         if (e.isDirectory()) walk(p);
-        else if (e.isFile() && [".txt", ".md"].includes(extname(e.name).toLowerCase())) files.push(p);
+        else if (e.isFile() && [".txt", ".md", ".pdf"].includes(extname(e.name).toLowerCase())) files.push(p);
       }
     };
     walk(path);
@@ -336,12 +439,32 @@ export class KnowledgeBase {
     return this.addText(name, text, title || url, url);
   }
 
-  search(name: string, query: string, topK = 5): [number, Note][] {
+  /** 缺口 33：检索参数面（Dify 已验证的三样）——TopK、最低分阈值、
+   * 元数据过滤（来源子串、日期范围）。非法参数直接抛错，不静默回默认。 */
+  searchWithOptions(name: string, query: string, opts: KnowledgeSearchOptions = {}): [number, Note][] {
     const notes = this.loadNotes(name);
     const queryTokens = tokenize(query || "");
     if (!notes.length || !queryTokens.length) return [];
-    const docTokens = notes.map((n) => tokenize(n.text ?? ""));
-    return scoreBm25(queryTokens, docTokens, topK).map(([score, i]) => [score, notes[i]] as [number, Note]);
+    if (opts.topK !== undefined && (!Number.isInteger(opts.topK) || opts.topK < 0)) throw new KnowledgeError("topK 须是不小于 0 的整数");
+    const topK = opts.topK === undefined ? 5 : opts.topK;
+    if (opts.minScore !== undefined && (typeof opts.minScore !== "number" || Number.isNaN(opts.minScore) || opts.minScore < 0)) throw new KnowledgeError("最低分须是不小于 0 的数字");
+    const minScore = opts.minScore === undefined ? 0 : opts.minScore;
+    const dateFrom = opts.dateFrom === undefined ? null : checkDate(opts.dateFrom);
+    const dateTo = opts.dateTo === undefined ? null : checkDate(opts.dateTo);
+    if (dateFrom && dateTo && dateFrom > dateTo) throw new KnowledgeError("开始日期不能晚于结束日期");
+    const filtered = notes.filter((n) =>
+      (opts.source === undefined || opts.source === "" || (n.source ?? "").includes(opts.source)) &&
+      (dateFrom === null || (n.date ?? "") >= dateFrom) &&
+      (dateTo === null || (n.date ?? "") <= dateTo));
+    if (!filtered.length) return [];
+    const docTokens = filtered.map((n) => tokenize(n.text ?? ""));
+    return scoreBm25(queryTokens, docTokens, topK)
+      .filter(([score]) => score >= minScore)
+      .map(([score, i]) => [score, filtered[i]] as [number, Note]);
+  }
+
+  search(name: string, query: string, topK = 5): [number, Note][] {
+    return this.searchWithOptions(name, query, { topK });
   }
 
   /** 笔记数达到阈值时把评分挪到 worker 池，主线程不被 BM25 拖住；
@@ -400,6 +523,23 @@ async function defaultChatFn(messages: Record<string, unknown>[]): Promise<strin
   return ((content[0] as Record<string, unknown>).message as Record<string, unknown>)?.content as string ?? "";
 }
 
+/** 缺口 33：检索测试台的核心——对一批典型问题跑同一组检索参数，
+ * 返回每题的命中与汇总（有命中的题数、命中题的平均最高分）。只读，
+ * 不调模型、不花 token；调参对比就是换一组参数再跑一次（--json 出
+ * 机器可读结果，方便 diff 两次跑法）。 */
+export function runKnowledgeTest(
+  store: KnowledgeBase,
+  name: string,
+  questions: string[],
+  opts: KnowledgeSearchOptions = {},
+): { results: { question: string; hits: [number, Note][] }[]; hitCount: number; avgTopScore: number | null } {
+  const results = questions.map((q) => ({ question: q, hits: store.searchWithOptions(name, q, opts) }));
+  const hitCount = results.filter((r) => r.hits.length).length;
+  const topScores = results.filter((r) => r.hits.length).map((r) => r.hits[0][0]);
+  const avgTopScore = topScores.length ? topScores.reduce((a, b) => a + b, 0) / topScores.length : null;
+  return { results, hitCount, avgTopScore };
+}
+
 export async function knowledgeMain(argv: string[], base?: string | null, chatFn?: (m: Record<string, unknown>[]) => Promise<string> | string): Promise<number> {
   const store = new KnowledgeBase(base ?? undefined);
   const cmd = argv[0];
@@ -433,10 +573,66 @@ export async function knowledgeMain(argv: string[], base?: string | null, chatFn
       const name = argv[1];
       if (!store.exists(name)) throw new KnowledgeError(`知识库不存在：${name}`);
       const topIdx = argv.indexOf("--top-k");
-      const results = store.search(name, argv[2], topIdx >= 0 ? parseInt(argv[topIdx + 1], 10) : 5);
+      const minIdx = argv.indexOf("--min-score");
+      const srcIdx = argv.indexOf("--source");
+      const fromIdx = argv.indexOf("--date-from");
+      const toIdx = argv.indexOf("--date-to");
+      const opts: KnowledgeSearchOptions = {
+        topK: topIdx >= 0 ? parseInt(argv[topIdx + 1], 10) : 5,
+        ...(minIdx >= 0 ? { minScore: parseFloat(argv[minIdx + 1]) } : {}),
+        ...(srcIdx >= 0 ? { source: argv[srcIdx + 1] } : {}),
+        ...(fromIdx >= 0 ? { dateFrom: argv[fromIdx + 1] } : {}),
+        ...(toIdx >= 0 ? { dateTo: argv[toIdx + 1] } : {}),
+      };
+      const results = store.searchWithOptions(name, argv[2], opts);
       if (!results.length) process.stdout.write("没有找到相关笔记。\n");
       for (const [score, note] of results) {
         process.stdout.write(`${score.toFixed(2)}\t${note.title ?? ""}\t来源：${note.source ?? ""}\t日期：${note.date ?? ""}\n`);
+      }
+    } else if (cmd === "test") {
+      // 缺口 33：检索测试台——输一批典型问题，看召回片段与分数，调参对比，
+      // 调好再接入（Dify 知识库的调试体验，成本只是一个 CLI 命令 + 检索）。
+      const name = argv[1];
+      if (!store.exists(name)) throw new KnowledgeError(`知识库不存在：${name}`);
+      const fileIdx = argv.indexOf("--file");
+      if (fileIdx < 0 || !argv[fileIdx + 1]) throw new KnowledgeError("test 须指定 --file <问题文件>（每行一个问题，空行与 # 开头的行跳过）");
+      const topIdx = argv.indexOf("--top-k");
+      const minIdx = argv.indexOf("--min-score");
+      const srcIdx = argv.indexOf("--source");
+      const fromIdx = argv.indexOf("--date-from");
+      const toIdx = argv.indexOf("--date-to");
+      const opts: KnowledgeSearchOptions = {
+        topK: topIdx >= 0 ? parseInt(argv[topIdx + 1], 10) : 5,
+        ...(minIdx >= 0 ? { minScore: parseFloat(argv[minIdx + 1]) } : {}),
+        ...(srcIdx >= 0 ? { source: argv[srcIdx + 1] } : {}),
+        ...(fromIdx >= 0 ? { dateFrom: argv[fromIdx + 1] } : {}),
+        ...(toIdx >= 0 ? { dateTo: argv[toIdx + 1] } : {}),
+      };
+      let questions: string[];
+      try {
+        questions = readFileSync(argv[fileIdx + 1], "utf-8").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
+      } catch { throw new KnowledgeError(`读问题文件失败：${argv[fileIdx + 1]}`); }
+      if (!questions.length) throw new KnowledgeError("问题文件里没有问题");
+      const { results, hitCount, avgTopScore } = runKnowledgeTest(store, name, questions, opts);
+      if (argv.includes("--json")) {
+        process.stdout.write(JSON.stringify({
+          base: name,
+          params: { topK: opts.topK ?? 5, ...(opts.minScore !== undefined ? { minScore: opts.minScore } : {}), ...(opts.source ? { source: opts.source } : {}), ...(opts.dateFrom ? { dateFrom: opts.dateFrom } : {}), ...(opts.dateTo ? { dateTo: opts.dateTo } : {}) },
+          questions: results.map((r) => ({
+            question: r.question,
+            hits: r.hits.map(([score, n]) => ({ score: Number(score.toFixed(2)), title: n.title, source: n.source, date: n.date, excerpt: (n.text ?? "").replace(/\s+/g, " ").slice(0, 200) })),
+          })),
+          summary: { total: questions.length, hit: hitCount, avgTopScore: avgTopScore === null ? null : Number(avgTopScore.toFixed(2)) },
+        }, null, 2) + "\n");
+      } else {
+        for (const r of results) {
+          process.stdout.write(`问题：${r.question}\n`);
+          if (!r.hits.length) process.stdout.write("  （无命中）\n");
+          for (const [score, n] of r.hits) {
+            process.stdout.write(`  ${score.toFixed(2)}\t${n.title ?? ""}\t来源：${n.source ?? ""}\t日期：${n.date ?? ""}\n`);
+          }
+        }
+        process.stdout.write(`汇总：共 ${questions.length} 个问题，${hitCount} 个有命中，命中问题的平均最高分 ${avgTopScore === null ? "—" : avgTopScore.toFixed(2)}（topK=${opts.topK ?? 5}${opts.minScore !== undefined ? `，最低分 ${opts.minScore}` : ""}）\n`);
       }
     } else if (cmd === "ask") {
       const name = argv[1];
@@ -457,7 +653,7 @@ export async function knowledgeMain(argv: string[], base?: string | null, chatFn
       store.remove(name);
       process.stdout.write(`已删除知识库：${name}\n`);
     } else {
-      process.stderr.write("用法：nyra kb <create|list|add|search|ask|remove> …\n");
+      process.stderr.write("用法：nyra kb <create|list|add|search|ask|remove|test> …（nyra knowledge 与 kb 同义）\n");
       return 2;
     }
   } catch (err: unknown) {

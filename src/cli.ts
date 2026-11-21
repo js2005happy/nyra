@@ -245,7 +245,8 @@ nyra bughunt <install|status|scope|template|check>   授权漏洞挖掘技能包
 nyra market <list|show|source|install|uninstall|installed|publish|template>   内置机器人市场：浏览、安装、发布技能包、机器人配置与业务流程模板（第一阶段：静态策展仓库 + 本地客户端，详见 docs/marketplace.md）
 nyra account <status|login|logout|list|revoke|link|suspend|reactivate>   用户账号登录：Google / GitHub / 邮箱 / SSO，账号身份 + 会话（详见 docs/accounts.md）
 nyra sso <provider|login|status|scim>   企业 SSO：OIDC 身份提供方注册与登录、SCIM 账号开通（详见 docs/sso.md）
-nyra kb <create|list|add|search|ask|remove>  本地知识库
+nyra kb <create|list|add|search|ask|remove|test>  本地知识库：外部文档（文本/Markdown/PDF/网页）收录、分块、BM25 检索 + 检索测试台（详见 docs/knowledge.md）
+nyra knowledge test <库名> --file <问题文件> [--top-k N] [--min-score X] [--json]  检索测试台：批量典型问题看召回片段与分数，调参对比（详见 docs/knowledge.md）
 nyra plugin <list|search|install|uninstall|enable|disable|verify|audit|pin|unpin>  插件市场（最小版：技能包，只装带来源、可审计的插件）
 nyra hooks list                列出已安装的钩子（~/.nyra/hooks/<事件>.d/ 下的脚本，详见 docs/hooks.md）
 nyra status                    诊断清单：损坏的配置、不可用沙箱、被忽略的权限设置、永不匹配的 hook matcher（只读，详见 docs/status.md）
@@ -372,7 +373,8 @@ nyra bughunt <install|status|scope|template|check>   authorized bug-hunting skil
 nyra market <list|show|source|install|uninstall|installed|publish|template>   built-in bot marketplace: browse, install and publish skill packs, bot configs and business process templates (phase 1: static curated repo + local client, see docs/marketplace.md)
 nyra account <status|login|logout|list|revoke|link|suspend|reactivate>   user account login: Google / GitHub / email / SSO, account identity + sessions (see docs/accounts.md)
 nyra sso <provider|login|status|scim>   enterprise SSO: OIDC identity provider registration and login, SCIM provisioning (see docs/sso.md)
-nyra kb <create|list|add|search|ask|remove>  local knowledge base
+nyra kb <create|list|add|search|ask|remove|test>  local knowledge base: ingest external docs (text/Markdown/PDF/web pages), chunk, BM25 search + retrieval test bench (see docs/knowledge.md)
+nyra knowledge test <base> --file <questions file> [--top-k N] [--min-score X] [--json]  retrieval test bench: run a batch of typical questions, see recalled snippets and scores, compare params (see docs/knowledge.md)
 nyra plugin <list|search|install|uninstall|enable|disable|verify|audit|pin|unpin>  plugin market (skill packs with source, auditable)
 nyra hooks list                list installed hooks (~/.nyra/hooks/<event>.d/, see docs/hooks.md)
 nyra status                    diagnose broken configs, unavailable sandbox, ignored permission rules, never-matching hook matchers (read-only, see docs/status.md)
@@ -5801,7 +5803,7 @@ export async function main(argv: string[]): Promise<number> {
   if (args.subcommand === "sso") return handleSso(args.subArgs ?? [], home);
   if (args.subcommand === "task") return handleTask(args.subArgs ?? [], resolve(args.workdir));
   if (args.subcommand === "review") return handleReview(args.subArgs ?? [], home);
-  if (args.subcommand === "kb") return knowledgeMain(args.subArgs ?? []);
+  if (args.subcommand === "kb" || args.subcommand === "knowledge") return knowledgeMain(args.subArgs ?? []);
   if (args.subcommand === "plugin") return handlePlugin(args.subArgs ?? [], home);
   if (args.subcommand === "creator") return handleCreator(args.subArgs ?? [], home, resolve(args.workdir));
   if (args.subcommand === "memory") return handleMemory(args.subArgs ?? [], home);

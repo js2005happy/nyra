@@ -693,6 +693,12 @@ export function buildTimeline(store: RunStore, runId: string): Timeline {
         push(at, "event", `晨间简报已生成（${str(ev.date) ?? "?"}）`, ev.quiet ? "无事安静，未打扰" : `进展 ${num(ev.progress_items) ?? 0} 条、待决策 ${num(ev.decision_items) ?? 0} 项、异常 ${num(ev.anomaly_items) ?? 0} 条`, null, null);
         break;
       }
+      // 缺口 33：外部文档知识库检索进证据链（哪个库、问了什么、命中几条、最高分）。
+      case "knowledge_search": {
+        const q = (str(ev.query) ?? "?").slice(0, 40);
+        push(at, "event", `知识库「${str(ev.base) ?? "?"}」检索命中 ${num(ev.hits) ?? 0} 条`, `问题「${q}」，最高分 ${num(ev.top_score) ?? 0}`, null, null);
+        break;
+      }
       case "redline_changed": {
         const connector = str(ev.connector) ?? "未知连接器";
         const action = str(ev.action) ?? "未知动作";

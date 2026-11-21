@@ -99,6 +99,9 @@ responsibility_cancelled: ["responsibility_id", "responsibility_name"],
 responsibility_expired: ["responsibility_id", "responsibility_name"],
 responsibility_escalated: ["responsibility_id", "responsibility_name", "condition", "item_id"],
 briefing_generated: ["date", "progress_items", "decision_items", "anomaly_items", "quiet"],
+// 缺口 33：外部文档知识库检索进证据链——哪个库、问了什么、命中几条、
+// 最高分多少（只记元数据与分数，不记笔记正文、不记绝对路径）。
+knowledge_search: ["base", "query", "hits", "top_score"],
 // 内置机器人市场：安装（哪个条目、哪个版本、哪种、哪个源、Bot Ready 评分、
 // 审查模型）、卸载（哪个条目、哪种）、发布（哪个条目、哪个版本、哪种、
 // 许可证、Bot Ready 评分）。事件里只记名字与来源 id，不记绝对路径——

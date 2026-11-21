@@ -53,6 +53,7 @@ import { loadConfig, resolveHome } from "./config.ts";
 import { LspClient, resolveLspServers, formatDiagnostics, formatSymbols, formatLocations, formatHover, type LspDiagnostic, type LspSymbol, type LspLocation } from "./lsp.ts";
 import { DEFAULT_VISION_CONFIG, loadImageFile, type VisionConfig, type VisionImageInput } from "./vision.ts";
 import { exportOfficeDocument, parseOfficeDocument, resolveOfficeConfig, type OfficeDocument, type OfficeExportResult } from "./office.ts";
+import { KnowledgeBase, recordKnowledgeSearch, type KnowledgeSearchOptions, type Note } from "./knowledge.ts";
 import { ingestMedia, formatMediaTranscript, resolveMediaConfig, type MediaIngestResult } from "./mediaIngest.ts";
 import { type HttpEndpoint } from "./voice.ts";
 
@@ -350,6 +351,13 @@ export const TOOL_SCHEMAS: Record<string, unknown>[] = [
   schema("memory_search", "按需检索长期记忆：按查询词 BM25 检索 MEMORY.md，返回最相关的几条，每条附记忆 id、来源会话、时间戳与文件行号；session_id 有值时只查该会话写的记忆",
     { query: { type: "string" }, limit: { type: "integer", default: 5 }, session_id: { type: "string" }, owner: { type: "string", description: "记忆 owner：global 或 bot:<群>/<机器人>；与当前记忆文件不符时拒绝" } },
     ["query"]),
+  // 缺口 33：外部文档知识库 RAG 管道——检索用户自己的外部文档（文本、
+  // Markdown、PDF、网页收录进来的笔记），不是长期记忆。只读，不需审批；
+  // 每条结果附出处（文档名、章节、分数与 200 字摘录），出处随检索记录进
+  // 证据链；向量检索与 parent-child 分块是第二批，本批只有 BM25 + 全文检索。
+  schema("knowledge_search", "检索外部文档知识库：按查询词 BM25 检索指定知识库里收录的外部文档（文本、Markdown、PDF、网页），返回最相关的几条，每条附出处（文档名、章节、分数与 200 字摘录）；min_score 过滤低分、source 只查某来源、date_from/date_to 只查某段时间内的文档",
+    { base: { type: "string", description: "知识库名（nyra kb list 可看）" }, query: { type: "string" }, top_k: { type: "integer", default: 5, description: "最多返回几条（默认 5）" }, min_score: { type: "number", description: "最低分，低于的不返回（默认 0）" }, source: { type: "string", description: "只查来源含该子串的文档（如某个文件名）" }, date_from: { type: "string", description: "只查该日期及之后的文档（YYYY-MM-DD）" }, date_to: { type: "string", description: "只查该日期及之前的文档（YYYY-MM-DD）" } },
+    ["base", "query"]),
   // 缺口 2：删除长期记忆（memory_forget 与 memory_delete 同义，两个名字都留着：
   // 别家 MCP 叫 forget_session，用户口语也常说“忘记这条”）。与 write_file
   // 同级审批；删错 owner 的不删、进行中会话的记忆拒绝删除；删除本身记进证据链。
@@ -2025,6 +2033,43 @@ async function toolMemorySearch(ctx: ToolContext, query: string, limit: number, 
   return formatMemorySearchResults(results);
 }
 
+// ---- 缺口 33：外部文档知识库检索 ----
+
+async function toolKnowledgeSearch(ctx: ToolContext, args: Record<string, unknown>): Promise<string> {
+  const base = typeof args.base === "string" ? args.base : "";
+  const query = typeof args.query === "string" ? args.query : "";
+  if (!base.trim() || !query.trim()) return "错误：knowledge_search 须指定 base（知识库名）与 query";
+  const opts: KnowledgeSearchOptions = {};
+  if (typeof args.top_k === "number") opts.topK = Math.floor(args.top_k);
+  if (typeof args.min_score === "number") opts.minScore = args.min_score;
+  if (typeof args.source === "string" && args.source) opts.source = args.source;
+  if (typeof args.date_from === "string" && args.date_from) opts.dateFrom = args.date_from;
+  if (typeof args.date_to === "string" && args.date_to) opts.dateTo = args.date_to;
+  let results: [number, Note][];
+  try {
+    const kb = new KnowledgeBase(ctx.home ? join(ctx.home, "knowledge") : undefined);
+    results = kb.searchWithOptions(base, query, opts);
+  } catch (err: unknown) {
+    return `错误：${err instanceof Error ? err.message : String(err)}`;
+  }
+  if (!results.length) return "知识库里没有找到相关内容。";
+  const lines = results.map(([score, n], i) => {
+    const excerpt = (n.text ?? "").replace(/\s+/g, " ").slice(0, 200);
+    return `[${i + 1}] 分数 ${score.toFixed(2)}｜${n.title ?? ""}｜来源：${n.source ?? ""}｜日期：${n.date ?? ""}\n${excerpt}`;
+  });
+  const body = lines.join("\n\n");
+  // 检索记录进证据链：问了什么、命中几条、每条出处与分数（可回溯原文、
+  // 可审计“这句话是模型编的还是文档里有的”）。没有运行上下文时写
+  // evidence/knowledge/ 下的证据文件，有时写该运行的 events.jsonl。
+  const citationText = [`知识库：${base}`, `问题：${query}`, `命中：${results.length} 条`, "", ...lines].join("\n");
+  try {
+    const rec = await recordKnowledgeSearch(ctx.home, null, { base, query, hits: results.length, topScore: Number(results[0][0].toFixed(2)) }, citationText);
+    if (rec.channel === "evidence") return body + "\n\n（检索记录已存入证据链）";
+    if (rec.channel === "events") return body + "\n\n（检索记录已记入本次运行）";
+  } catch { /* 证据写不上不破坏检索结果本身 */ }
+  return body;
+}
+
 async function toolMemoryForget(ctx: ToolContext, toolName: string, args: Record<string, unknown>): Promise<string> {
   const ids = Array.isArray(args.ids)
     ? (args.ids as unknown[]).map((v) => String(v)).filter(Boolean)
@@ -2708,6 +2753,7 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
       case "multi_model_research": return await toolMultiModelResearch(ctx, args.models as string[], String(args.prompt), args.system as string | null ?? null, args.synthesizer as string | null ?? null, args.timeout === undefined ? 120 : Number(args.timeout));
       case "memory_append": return await toolMemoryAppend(ctx, String(args.text));
       case "memory_search": return await toolMemorySearch(ctx, String(args.query), args.limit === undefined ? 5 : Number(args.limit), typeof args.session_id === "string" ? args.session_id : null, typeof args.owner === "string" ? args.owner : null);
+      case "knowledge_search": return await toolKnowledgeSearch(ctx, args);
       case "memory_forget": case "memory_delete": return await toolMemoryForget(ctx, name, args);
       case "gmail_search": return await toolGmailSearch(ctx, String(args.query), typeof args.limit === "number" ? args.limit : undefined, typeof args.page_token === "string" ? args.page_token : undefined);
       case "gmail_read": return await toolGmailRead(ctx, String(args.id));
@@ -2780,7 +2826,7 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
 /** 可安全直接重试的只读工具（无副作用）。截图类工具不在内：每次执行都会在本地多存一个截图文件。 */
 export const READONLY_TOOLS = new Set([
   "read_file", "list_dir", "grep_search", "git_status",
-  "web_fetch", "web_search", "read_skill", "memory_search",
+  "web_fetch", "web_search", "read_skill", "memory_search", "knowledge_search",
   "poppy_discover", "poppy_identity_check", "poppy_permission_check",
   "lsp_diagnostics", "lsp_symbols",
   // 缺口 16：describe_image 只读（不写文件、不改状态）；每次执行都是一次计费
