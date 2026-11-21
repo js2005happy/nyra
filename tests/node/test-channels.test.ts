@@ -29,6 +29,8 @@ import {
 } from "../../src/channels/bindings.ts";
 import { ChannelGateway, readGatewayPid, type ChannelRunner } from "../../src/channels/gateway.ts";
 import { handleChannels } from "../../src/channels/cli.ts";
+import { saveFriendBook } from "../../src/peerCard.ts";
+import { saveCircleBook } from "../../src/circles.ts";
 
 function tempHome(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
@@ -380,6 +382,25 @@ async function waitFor(cond: () => boolean, timeoutMs = 5000): Promise<boolean> 
   return cond();
 }
 
+/** 缺口 34：直接写账本，让这些渠道发件人通过信任圈准入（不走带审计的 invite）。 */
+function seedCircleSenders(home: string, senders: { channel: string; sender: string; identity: string }[]): void {
+  const now = new Date().toISOString();
+  const friends = senders.filter((s) => s.identity !== "owner").map((s) => ({
+    name: s.identity, url: "http://127.0.0.1:9/mcp", card_hash: "seed", circle: "default",
+    tier: "readonly" as const, outbound: "accepted" as const, inbound: "accepted" as const,
+    blocked: false, code_hash: null, created_at: now, updated_at: now,
+  }));
+  saveFriendBook(home, { version: 1, friends, circles: [{ name: "default", created_at: now }] });
+  saveCircleBook(home, {
+    version: 1,
+    circles: [{
+      name: "work", description: "", created_at: now, created_by: "owner",
+      members: friends.map((f) => ({ identity: f.name, kind: "friend" as const, invited_by: "owner", invited_at: now, channel: "test" })),
+    }],
+    bindings: senders.map((s) => ({ channel: s.channel, sender: s.sender, identity: s.identity, bound_at: now, bound_by: "owner" })),
+  });
+}
+
 test("网关：按绑定路由，审计记 routed/dropped，停后删 pidfile", async () => {
   const home = tempHome("nyra-chan-gw-");
   try {
@@ -392,6 +413,12 @@ test("网关：按绑定路由，审计记 routed/dropped，停后删 pidfile", 
         binding({ id: "bd-dc", channel: "discord", chat: "*", sender: "*", agent: "agent-dc" }),
       ],
     });
+    // 缺口 34：发件人 9/5/55 先过信任圈（m5 的发件人 8 故意不种：它走 allowlist 丢弃）。
+    seedCircleSenders(home, [
+      { channel: "telegram", sender: "9", identity: "s9" },
+      { channel: "telegram", sender: "5", identity: "s5" },
+      { channel: "discord", sender: "55", identity: "s55" },
+    ]);
     const tgQueue = [
       gwMsg({ messageId: "m1", chatId: "100", senderId: "9" }),
       gwMsg({ messageId: "m2", chatId: "100", senderId: "5" }),
@@ -487,6 +514,8 @@ test("网关：某个绑定的 runner 建不出来不影响其他绑定", async 
         binding({ id: "bd-good", chat: "200", sender: "*", agent: "agent-good" }),
       ],
     });
+    // 缺口 34：发件人 1 登记为机主，先过信任圈（否则两条消息都会被圈丢弃，测不到 runner 缺失）。
+    seedCircleSenders(home, [{ channel: "telegram", sender: "1", identity: "owner" }]);
     const tgQueue = [
       gwMsg({ messageId: "g1", chatId: "100", senderId: "1" }),
       gwMsg({ messageId: "g2", chatId: "200", senderId: "1" }),

@@ -6,6 +6,7 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync} from "node:fs";
 import { tmpdir} from "node:os";
 import { join} from "node:path";
 import { saveConfig} from "../../src/config.ts";
+import { saveCircleBook } from "../../src/circles.ts";
 import { Gateway} from "../../src/gateway.ts";
 import { RunStore} from "../../src/runs.ts";
 import { defaultSoul, saveSoul} from "../../src/soul.ts";
@@ -346,6 +347,16 @@ test("PeerCardTest.test_share_only_to_friends_via_review", async () => {
     // 握手（好友地址就是这台又回名片、又接 MCP 的假对端）。
     await recordInboundRequest(home, config, { name: "pilot", url: mcpServer.url, code: getFriendCode(home).code, fetchDeps });
     acceptFriend(home, { name: "pilot" });
+    // 缺口 34：直接写账本给 pilot 准入（不走带审计的 invite，避免冲掉既有审计断言）。
+    const now = new Date().toISOString();
+    saveCircleBook(home, {
+      version: 1,
+      circles: [{
+        name: "work", description: "", created_at: now, created_by: "owner",
+        members: [{ identity: "pilot", kind: "friend", invited_by: "owner", invited_at: now, channel: "test" }],
+      }],
+      bindings: [],
+    });
     // 分享给好友：走缺口 12 的交接（假 MCP 回 run_id），只读模式。
     const results = await shareWithFriend(home, config, {
       to: "pilot", runId, deps: { reviewerRunner: allowRunner },

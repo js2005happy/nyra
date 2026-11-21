@@ -10,6 +10,8 @@ import { RunStore} from "../../src/runs.ts";
 import { saveConfig} from "../../src/config.ts";
 import { UNTRUSTED_HEADER} from "../../src/untrusted.ts";
 import { appendBead, beadHash, getBead, listBeads} from "../../src/beads.ts";
+import { saveFriendBook } from "../../src/peerCard.ts";
+import { saveCircleBook } from "../../src/circles.ts";
 import {
   PEER_AUDIT_FILE,
   PeerError,
@@ -43,6 +45,28 @@ function baseConfig(peerUrl: string, enabled = true): Record<string, unknown> {
     peers: { enabled, list: [{ name: "fake", url: peerUrl}]},
     reviewer: { enabled: true},
   };
+}
+
+/** 缺口 34：直接写账本给对端准入（不走带审计的 invite，避免冲掉既有审计断言）。 */
+function seedCircleAdmission(home: string, name: string): void {
+  const now = new Date().toISOString();
+  saveFriendBook(home, {
+    version: 1,
+    friends: [{
+      name, url: "http://127.0.0.1:9/mcp", card_hash: "seed", circle: "default",
+      tier: "readonly", outbound: "accepted", inbound: "accepted",
+      blocked: false, code_hash: null, created_at: now, updated_at: now,
+    }],
+    circles: [{ name: "default", created_at: now }],
+  });
+  saveCircleBook(home, {
+    version: 1,
+    circles: [{
+      name: "work", description: "", created_at: now, created_by: "owner",
+      members: [{ identity: name, kind: "friend", invited_by: "owner", invited_at: now, channel: "test" }],
+    }],
+    bindings: [],
+  });
 }
 
 /** 假对端：本机 HTTP 的 MCP 服务器（只认 JSON-RPC POST）。 */
@@ -178,6 +202,7 @@ test("PeerCollabTest.test_handoff_package", () => {
 
 test("PeerCollabTest.test_ask_peer_ok", async () => {
     const home = tmpHome("nyra-peer-ask-");
+    seedCircleAdmission(home, "fake");
     const fake = startFakePeer("ok");
     try {
       const peer: PeerEntry = { name: "fake", url: fake.url};
@@ -212,6 +237,7 @@ test("PeerCollabTest.test_ask_peer_ok", async () => {
 
 test("PeerCollabTest.test_ask_peer_review_block", async () => {
     const home = tmpHome("nyra-peer-askdeny-");
+    seedCircleAdmission(home, "fake");
     const fake = startFakePeer("ok");
     try {
       const peer: PeerEntry = { name: "fake", url: fake.url};
@@ -263,6 +289,7 @@ test("PeerCollabTest.test_ask_peer_disabled", async () => {
 
 test("PeerCollabTest.test_ask_peer_unreachable", async () => {
     const home = tmpHome("nyra-peer-askdown-");
+    seedCircleAdmission(home, "fake");
     const peer: PeerEntry = { name: "fake", url: "http://127.0.0.1:1/mcp"};
     let caught: unknown = null;
     try {
@@ -282,6 +309,7 @@ test("PeerCollabTest.test_ask_peer_unreachable", async () => {
 
 test("PeerCollabTest.test_ask_peer_answer_error", async () => {
     const home = tmpHome("nyra-peer-askerr-");
+    seedCircleAdmission(home, "fake");
     const fake = startFakePeer("answer-error");
     try {
       const peer: PeerEntry = { name: "fake", url: fake.url};
@@ -306,6 +334,7 @@ test("PeerCollabTest.test_ask_peer_answer_error", async () => {
 
 test("PeerCollabTest.test_handoff_peer_ok", async () => {
     const home = tmpHome("nyra-peer-ho-");
+    seedCircleAdmission(home, "fake");
     const runId = seedRun(home);
     const fake = startFakePeer("ok");
     try {
@@ -334,6 +363,7 @@ test("PeerCollabTest.test_handoff_peer_ok", async () => {
 
 test("PeerCollabTest.test_handoff_peer_rejected", async () => {
     const home = tmpHome("nyra-peer-horej-");
+    seedCircleAdmission(home, "fake");
     const runId = seedRun(home);
     const fake = startFakePeer("block-dispatch");
     try {
@@ -354,6 +384,7 @@ test("PeerCollabTest.test_handoff_peer_rejected", async () => {
 
 test("PeerCollabTest.test_handoff_peer_review_block", async () => {
     const home = tmpHome("nyra-peer-hodeny-");
+    seedCircleAdmission(home, "fake");
     const runId = seedRun(home);
     const fake = startFakePeer("ok");
     try {
@@ -441,6 +472,7 @@ test("PeerCollabTest.test_cli_peer", async () => {
       out = "";
       expect(await handlePeer(["enable"], home)).toBe(0);
       saveConfig(home, { peers: { enabled: true, list: [{ name: "fake", url: fake.url}]}, reviewer: { enabled: true}});
+      seedCircleAdmission(home, "fake");
       out = "";
       expect(await handlePeer(["list"], home)).toBe(0);
       expect(out).toContain("fake");
