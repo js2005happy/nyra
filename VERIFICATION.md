@@ -1,3 +1,9 @@
+## 2026-11-22 — Advisory no-progress observer (static review only)
+
+- Reviewed development README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/Tools and task-contract code; checked branch, prior commit status and open Issues/PR. External user reports reviewed 2026-11-22: [#37800](https://github.com/openai/codex/issues/37800) (2026-08-10), [#47802](https://github.com/openai/codex/issues/47802) (2026-09-24), [#43021](https://github.com/openai/codex/issues/43021) (2026-09-05).
+- Added pure in-memory no-progress observer and regression definitions. Static source inspection only; **no tests, compilation, scripts, CI or cross-platform runtime checks executed**. No assertion of behavioral correctness.
+- Trusted progress classification remains the caller's responsibility. No Agent-loop wiring, cancellation, automatic retry, persistent state, account actions, main merge or production release.
+
 ## 2026-11-22 — Task contract wire envelope (static inspection only)
 
 - Inspected development README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/Tools, task-contract and acceptance modules; reviewed recent commits, open Issues/PR and available commit checks. External facts: [Codex #40646](https://github.com/openai/codex/issues/40646) (2026-08-25) and [#57608](https://github.com/openai/codex/issues/57608) (2026-10-28), reviewed 2026-11-22; these do not establish an Angel defect.
