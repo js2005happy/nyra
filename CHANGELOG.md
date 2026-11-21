@@ -1,3 +1,8 @@
+## 2026-11-22 — Versioned task contract metadata envelope (unreleased, static-only)
+
+- Added bounded, deterministic standard-library JSON encode/decode for validated task-contract metadata. Import rejects duplicate JSON keys, unknown fields, wrong version, oversized payload and attempted injected authority flags; execution verification and automatic resume remain false.
+- Added unexecuted regression definitions. This is not durable storage, confidentiality protection, encryption, a checkpoint or runtime integration. No tests, CI, installs, main merge or release.
+
 ## 2026-11-22 — Metadata-only task contract validation (unreleased, static-only)
 
 - Added `angel/task_contract.py`: strict bounded in-memory task metadata with requirement/prohibition labels, revision and phase; rejects unknown fields, duplicates and conflicts; always reports execution unverified and auto-resume unsafe.
