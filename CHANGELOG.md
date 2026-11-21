@@ -1,3 +1,8 @@
+## 2026-11-22 — Advisory event classification for idle detection (unreleased, untested)
+
+- Added `NoProgressDetector.observe_event()` with a fixed event vocabulary. Model messages, polls and generic tool returns count as idle; only explicitly trusted deliverable/acceptance events reset the counter. Unknown events and invalid trust flags fail closed without changing state.
+- Added three regression test definitions, not executed. Caller trust attestation is not independent evidence; no runtime wiring, automatic cancellation, persistence, dependency, merge or release.
+
 ## 2026-11-22 — Advisory no-progress observer (development, untested)
 
 - Added `angel/no_progress.py` with a pure, bounded consecutive-idle observer and immutable snapshot. It only flags attention; it does not stop, resume, retry or claim task success.
