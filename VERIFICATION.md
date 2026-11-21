@@ -1,3 +1,9 @@
+## 2026-11-22 — Task contract wire envelope (static inspection only)
+
+- Inspected development README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/Tools, task-contract and acceptance modules; reviewed recent commits, open Issues/PR and available commit checks. External facts: [Codex #40646](https://github.com/openai/codex/issues/40646) (2026-08-25) and [#57608](https://github.com/openai/codex/issues/57608) (2026-10-28), reviewed 2026-11-22; these do not establish an Angel defect.
+- Added bounded versioned metadata envelope and unexecuted regression definitions. Source review only; **no tests, compilation, scripts, CI or platform verification run**. Strict decoder rejects duplicate keys and unexpected authority fields. Runtime behavior remains unverified.
+- No file persistence, encryption, prompts, credentials, tool results, runtime wiring, auto-replay, main merge or release. Exported metadata must still be treated as potentially sensitive.
+
 ## 2026-11-22 — Task contract metadata boundary (static inspection only)
 
 - Reviewed README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/Tools and acceptance modules, existing development branch, open Issues/PR and previous commit status (no checks returned). Recent public feedback: [Codex #40646](https://github.com/openai/codex/issues/40646) (2026-08-25), [#36718](https://github.com/openai/codex/issues/36718) (2026-08-03); reviewed 2026-11-22. Reports are not Angel reproductions.
