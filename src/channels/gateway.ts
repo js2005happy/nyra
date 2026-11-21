@@ -40,6 +40,7 @@ import { WhatsAppAdapter } from "../bot/channels/whatsapp.ts";
 import type { ChannelAdapter, InboundMessage } from "../bot/types.ts";
 import { channelKindFor } from "./kind.ts";
 import { defaultBinding, loadBindingStore, routeInbound, type ChannelBinding, type RouteInput } from "./bindings.ts";
+import { checkCircleInbound } from "../circles.ts";
 
 export const CHANNEL_GATEWAY_PID_FILE = "channel-gateway.pid";
 export const CHANNEL_GATEWAY_STATUS_FILE = "channel-gateway-status.json";
@@ -396,6 +397,24 @@ export class ChannelGateway {
         binding_id: decision.bindingId,
         rule: decision.rule,
         reason: decision.reason,
+      });
+      return;
+    }
+    // 缺口 34：信任圈预过滤——圈外发件人的消息在网关层直接丢弃，不进
+    // agent 上下文、不耗 token。认的是 circles.json 里的绑定 + 准入，
+    // 不是绑定的 agent：绑定决定“谁接”，圈决定“接不接”。
+    const admission = checkCircleInbound(this.home, channel, msg.senderId);
+    if (!admission.admitted) {
+      if (state) state.dropped += 1;
+      appendBotAudit(this.home, {
+        ts: new Date().toISOString(),
+        channel,
+        session_key: sessionKey,
+        message_id: msg.messageId,
+        outcome: "dropped:circle",
+        binding_id: decision.bindingId,
+        rule: "circle:admission",
+        reason: admission.reason,
       });
       return;
     }
