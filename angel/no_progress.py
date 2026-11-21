@@ -44,3 +44,23 @@ class NoProgressDetector:
             consecutive_idle=self._idle,
             needs_attention=self._idle >= self._limit,
         )
+
+    def observe_event(self, event: str, *, trusted: bool = False) -> ProgressSnapshot:
+        """Classify a small, explicit event vocabulary without storing payloads.
+
+        Only a caller-attested deliverable event can reset the idle streak.
+        The attestation must come from an independent trusted controller,
+        never from model text or an untrusted tool response.
+        """
+        if type(event) is not str or event not in {
+            "model_message", "status_poll", "tool_returned",
+            "deliverable_committed", "acceptance_confirmed",
+        }:
+            raise ProgressSignalError("unknown progress event")
+        if type(trusted) is not bool:
+            raise ProgressSignalError("trusted must be boolean")
+        if trusted and event not in {"deliverable_committed", "acceptance_confirmed"}:
+            raise ProgressSignalError("event cannot attest progress")
+        return self.observe(
+            progress=trusted and event in {"deliverable_committed", "acceptance_confirmed"}
+        )
