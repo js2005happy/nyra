@@ -13,7 +13,7 @@ class AdvisoryAgentTests(unittest.TestCase):
         agent = Agent(FakeProvider(), mode="readonly", interactive=False)
         self.assertIsNone(agent.no_progress_detector)
 
-    def test_advisory_does_not_interrupt_final(self):
+    def test_terminal_reply_does_not_trigger_idle_alert(self):
         events = []
         agent = Agent(FakeProvider(), mode="readonly", interactive=False,
                       no_progress_detector=NoProgressDetector(idle_limit=1),
@@ -21,9 +21,7 @@ class AdvisoryAgentTests(unittest.TestCase):
         with patch("angel.agent.save_session"):
             self.assertEqual(agent.run("task"), "done")
         alerts = [payload for kind, payload in events if kind == "no_progress_attention"]
-        self.assertEqual(alerts, [{"consecutive_idle": 1,
-                                   "execution_verified": False,
-                                   "safe_to_auto_resume": False}])
+        self.assertEqual(alerts, [])
 
 if __name__ == "__main__":
     unittest.main()
