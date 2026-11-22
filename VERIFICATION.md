@@ -1,3 +1,10 @@
+## 2026-11-22 — Typed tool outcome boundary (static inspection only)
+
+- Reviewed README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/tool dispatch, legacy classifier, observer and regression source; checked repository redirect, development branch, latest commits, open Issues/PR (#113 covers evaluation), and previous workflow metadata (no PR-triggered runs returned).
+- Added immutable validated StructuredToolReport and classifier handling. Unknown is not reported failure but never verification; exceptions override reported success. Plain dictionaries cannot impersonate typed reports. Four regression definitions added, not executed.
+- Public feedback reviewed 2026-11-22: [Codex #60104](https://github.com/openai/codex/issues/60104), opened 2026-11-07, is an individual report of wasted work, not an Angel reproduction. Future adapters must preserve provenance and external side-effect uncertainty.
+- NOT RUN: tests, scripts, compilation, CI, cross-platform checks. No install, account modification, main merge, production release or new dependency.
+
 ## 2026-11-22 — Legacy tool result classifier alignment (static inspection only)
 
 - Read development README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/Tools, observer and regression source; checked current branch, recent commits, open Issues/PR (#113 is evaluation-related), and previous commit status (no statuses returned).
