@@ -1,3 +1,8 @@
+## 2026-11-22 — Local list_dir typed outcome: static review only
+
+- Inspected README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/tools/classifier, commits, open issues/PR and available CI metadata. Added unexecuted regression definitions for empty/missing directories, adversarial filenames, and backend exclusion.
+- No test, compilation, workflow, installation, main merge or production release performed. In-process `reported_ok` is not independent acceptance evidence; no automatic retry/resume.
+
 ## 2026-11-22 — Blank legacy tool report boundary (static inspection only)
 
 - Reviewed README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/Tools, classifier, tests, recent commits, open Issues/PR and prior commit CI metadata. Found via source inspection that blank strings were neither failure nor unknown; optional journal could record result_ok without any outcome signal. Added conservative blank classification and unexecuted regression definitions.
