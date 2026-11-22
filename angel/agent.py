@@ -302,6 +302,10 @@ class Agent:
             + [{"role": "user", "content": task}]
         )
 
+        # The detector is caller-owned and may be reused across run() calls.
+        # Do not carry idle observations from a previous user task forward.
+        if self.no_progress_detector is not None:
+            self.no_progress_detector.reset_run()
         attempted_auto_compact = False
         progress_alerted = False
         for _ in range(self.max_turns):
