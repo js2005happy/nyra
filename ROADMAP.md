@@ -1,3 +1,11 @@
+## 2026-11-22 — Explicit in-process tool outcome metadata (static-only)
+
+- Public report (reviewed 2026-11-22): [Codex #60104](https://github.com/openai/codex/issues/60104) (2026-11-07) describes a long task repeatedly redoing work and reporting stalled progress; one user's report, not a population trend or Angel reproduction.
+- Repository fact: existing classifier uses legacy Chinese error prefixes; no independently verified external outcome is available from text. Open PR [#113](https://github.com/js2005happy/nyra/pull/113) covers fixed-task evaluation; avoid duplicate implementation.
+- Engineering inference: StructuredToolReport offers strict, opt-in in-process outcomes (reported_ok, reported_error, unknown) to future trusted adapters; the classifier accepts the typed value but not arbitrary dict/JSON/text as structured authority. Exceptions override reports. Verification and auto-resume flags remain false. No adapter producers or main-loop wiring this round.
+- Ranked (value / difficulty / risk / dependency): P1 typed outcome boundary high / low / low / existing classifier (implemented, untested); P1 trusted adapter integration high / medium / medium / per-tool provenance (open); P1 independent progress attestation high / medium-high / high / trusted controller (blocked); P1 private task storage high / medium / medium-high / secure cross-platform storage (blocked); P0 claim dispatch high / high / high / sandbox and approval (blocked).
+- No tests, CI, installs, merges, releases, or automatic retries.
+
 ## 2026-11-22 — Conservative legacy tool result status (static-only)
 
 - **External facts (reviewed 2026-11-22):** [Codex #40646](https://github.com/openai/codex/issues/40646) (opened 2026-08-25) reports unsupported execution claims; [Codex #45395](https://github.com/openai/codex/issues/45395) (October 2026 discussion) distinguishes approval-review failure from unsafe-action rejection. Individual external reports, not Angel reproductions or prevalence estimates.
