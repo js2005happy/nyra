@@ -1066,7 +1066,8 @@ def _tool_git_status(ctx: ToolContext, path: str = ".") -> str:
         return _truncate(combined)
     target = _resolve_path(ctx, path)
     if not target.is_dir():
-        return f"错误：目录不存在：{path}"
+        # Caller-supplied paths can contain private names or credentials.
+        return "错误：目录不存在"
     try:
         status = subprocess.run(
             ["git", "-C", str(target), "status", "--short", "--branch"],
