@@ -16,6 +16,8 @@
 
 第一批架子只支持本地 Ollama；用户 2026-11-22 点选用 API 模型跑一轮基线，这里加一条显式通道，默认仍是本地。`--provider deepseek` 时走连接器助手脚本 `deepseek.py`（`chat-tools` 子命令），Key 不出连接器：本模块不读、不存、不打 Key，不把 Key 写进 env、文件、日志、命令参数；助手路径由父进程解析、经 worker 的 stdin 传进去，不进 conditions（报告里不出现机器路径）。模型只认 `deepseek-flash`（峰时 $0.30/$1.20 每百万 token）与 `deepseek-v4-pro`（$1.32/$3.96），单价须与这张表精确一致；每次尝试上限 **$1**；API 模型没有 digest，环境里记 null。与本地基线分开编号、不混算；重跑规则与本地基线相同（同条件才能 rerun）。
 
+两处实测修补（2026-11-22 首轮重跑暴露）：① worker 的隔离环境 `cleanEvalEnv()` 会剥掉出口代理变量，助手脚本直连 api.deepseek.com 会报 `SSL: WRONG_VERSION_NUMBER`、0 次模型调用；现把 8 个代理变量（`https_proxy`/`HTTPS_PROXY`/`http_proxy`/`HTTP_PROXY`/`all_proxy`/`ALL_PROXY`/`no_proxy`/`NO_PROXY`）放行——只是传输配置、不带凭据，`hsurr:` 仍由运行时在代理处换真值。② Agent 主循环重建 assistant 消息时只留了 `content`/`tool_calls`，丢了 `reasoning_content`，DeepSeek 思考模式第二轮报 400；现原样带回（含空字符串——缺字段和空字段在服务端是两种待遇）。单题探针验证：research-01 走通 4 次模型调用、写出 result.json。
+
 ## 固定任务清单
 
 所有任务的准确输入、初始文件和冻结断言在 `src/eval/catalog.ts`，每一项均使用上面的模型和预算。代码任务只让模型修改 `module.mjs`；判题断言由宿主持有，不放进模型可写目录。
