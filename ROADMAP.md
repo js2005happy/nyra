@@ -1,3 +1,11 @@
+## 2026-11-22 — Conservative legacy tool result status (static-only)
+
+- **External facts (reviewed 2026-11-22):** [Codex #40646](https://github.com/openai/codex/issues/40646) (opened 2026-08-25) reports unsupported execution claims; [Codex #45395](https://github.com/openai/codex/issues/45395) (October 2026 discussion) distinguishes approval-review failure from unsafe-action rejection. Individual external reports, not Angel reproductions or prevalence estimates.
+- **Source finding:** Angel's journal recognized only the `错误：` prefix while the advisory detector recognized both `错误：` and `执行失败：`; the same returned text could therefore be logged as successful yet classified as failed in the observer.
+- **Engineering inference / increment:** one conservative standard-library classifier now serves both call sites. Exception state overrides result text; a non-error-looking return never establishes execution verification or safe auto-resume. No parsing of untrusted tool JSON into authority.
+- **Priority (value / difficulty / safety / dependencies):** P1 legacy classifier alignment high / low / low / existing Agent (**implemented, untested**); P1 structured tool result protocol high / medium / medium / tool backend contracts (**open**); P1 independent trusted progress high / medium-high / medium-high / trusted controller (**open**); P1 private task storage high / medium / medium-high / safe cross-platform filesystem (**blocked**); P0 real claim dispatch high / high / high / sandbox and approval (**blocked**).
+- **Boundaries:** no independent verification, automatic retry, pause, resume, test execution, CI, new dependency, main merge or release.
+
 ## 2026-11-22 — Repair escaped-newline advisory source (static-only)
 
 - **Repository fact (reviewed 2026-11-22):** Six literal backslash-n sequences were embedded in a Python comment in the optional post-tool observation block of `angel/agent.py`. The assignments to `failed_report`, `progress_event`, and `state` were commented out, yet `state` was referenced on the next physical line. This is source analysis, not a runtime reproduction.
