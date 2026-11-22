@@ -16,6 +16,11 @@
 //     在 profile 允许范围内仍可运行
 //   - Apple 未把 SBPL 当稳定 API，语法可能随系统版本变化；profile 走最小集
 import { existsSync } from "node:fs";
+/**
+ * 统一取消信号（可靠性打磨第 1 项第一批）。cancel.ts 是叶子模块，
+ * 不 import 任何 src 内模块，这里静态导入不会形成循环导入。
+ */
+import { cancelErrorFromSignal } from "./cancel.ts";
 
 export type SeatbeltMode = "read-only" | "workspace-write" | "danger-full-access";
 
@@ -130,7 +135,7 @@ export class SeatbeltUnavailableError extends Error {
 
 export async function runSeatbelt(
   command: string,
-  opts: { workdir: string; mode: SeatbeltMode; allowNet: boolean; timeout?: number; profileExtra?: string[] },
+  opts: { workdir: string; mode: SeatbeltMode; allowNet: boolean; timeout?: number; profileExtra?: string[]; signal?: AbortSignal },
 ): Promise<SeatbeltRunResult> {
   const bin = seatbeltBinary();
   if (!bin) throw new SeatbeltUnavailableError("sandbox-exec 不可用（仅 macOS 提供）");
@@ -141,6 +146,9 @@ export async function runSeatbelt(
     extraWritable: opts.profileExtra ?? [],
   });
   const timeoutMs = (opts.timeout ?? 60) * 1000;
+  // 可靠性打磨第 1 项第一批：信号已 abort 时不启动，直接以 CancelError
+  // 拒绝（调用方认得出“这是取消”，不记成沙箱失败）。
+  if (opts.signal?.aborted) throw cancelErrorFromSignal(opts.signal, "stop");
   const { spawn } = await import("node:child_process");
   return new Promise<SeatbeltRunResult>((resolvePromise, rejectPromise) => {
     let settled = false;
@@ -151,9 +159,19 @@ export async function runSeatbelt(
     });
     let stdout = "";
     let stderr = "";
+    // 取消：信号 abort 时杀掉子进程，以 CancelError 拒绝（不是超时错）。
+    const onAbort = (): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { child.kill("SIGKILL"); } catch { /* 已经退出 */ }
+      rejectPromise(cancelErrorFromSignal(opts.signal!, "stop"));
+    };
+    opts.signal?.addEventListener("abort", onAbort, { once: true });
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
+      opts.signal?.removeEventListener("abort", onAbort);
       try { child.kill("SIGKILL"); } catch { /* 已经退出 */ }
       rejectPromise(new SeatbeltUnavailableError(`Seatbelt 执行超时（>${opts.timeout ?? 60} 秒），已终止`));
     }, timeoutMs);
@@ -163,12 +181,14 @@ export async function runSeatbelt(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      opts.signal?.removeEventListener("abort", onAbort);
       rejectPromise(new SeatbeltUnavailableError(`sandbox-exec 启动失败：${err.message}`));
     });
     child.on("close", (code: number | null) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      opts.signal?.removeEventListener("abort", onAbort);
       resolvePromise({ code: code ?? 0, stdout, stderr });
     });
   });

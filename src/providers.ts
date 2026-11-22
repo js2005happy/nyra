@@ -8,6 +8,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { plaintextHttpError, resolveProvider, type ResolvedProvider } from "./config.ts";
+import { cancelErrorFromSignal, combineSignals } from "./cancel.ts";
 
 export const RECOVERABLE_KINDS = ["quota", "rate_limit", "server", "timeout", "network"] as const;
 export type ProviderErrorKind =
@@ -225,7 +226,9 @@ export interface ProviderLike {
   model: string;
   baseUrl: string;
   hasCredentials(): boolean;
-  chat(messages: ChatMessage[], tools?: Record<string, unknown>[] | null, timeout?: number): Promise<Record<string, unknown>>;
+  /** opts.signal：取消信号。abort 时在途请求断开并抛 CancelError（不是
+   * 超时、不是网络错）——调用方靠它认出“这是取消”。不传时行为与原来一致。 */
+  chat(messages: ChatMessage[], tools?: Record<string, unknown>[] | null, timeout?: number, opts?: { signal?: AbortSignal }): Promise<Record<string, unknown>>;
   listModels(timeout?: number): Promise<string[]>;
   redact(text: string): string;
 }
@@ -302,13 +305,17 @@ export class Provider implements ProviderLike {
     }
   }
 
-  private async postJson(url: string, payload: unknown, timeout: number, action: string): Promise<Record<string, unknown>> {
+  private async postJson(url: string, payload: unknown, timeout: number, action: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
     const err = plaintextHttpError(this.name, this.baseUrl);
     if (err !== null) throw new ProviderError(err, { kind: "config" });
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     this.applyAuth(headers);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout * 1000);
+    // 可靠性打磨第 1 项第一批：外部取消信号与内部超时信号合并——任一
+    // abort，请求就断。外部 abort 抛 CancelError（不是超时），调用方
+    // 靠它认出“这是取消，不是超时/网络错”。
+    const combined = signal ? combineSignals([signal, controller.signal]) : controller.signal;
     let response: Response;
     try {
       response = await fetch(url, {
@@ -316,10 +323,11 @@ export class Provider implements ProviderLike {
         headers,
         body: JSON.stringify(payload),
         redirect: "manual",
-        signal: controller.signal,
+        signal: combined,
       });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
+      if (signal?.aborted) throw cancelErrorFromSignal(signal, "stop");
       if ((e as Error)?.name === "AbortError" || /aborted|timeout/i.test(msg)) {
         throw new ProviderError("API 请求超时，请稍后重试", { kind: "timeout" });
       }
@@ -349,7 +357,7 @@ export class Provider implements ProviderLike {
     return result as Record<string, unknown>;
   }
 
-  async chat(messages: ChatMessage[], tools?: Record<string, unknown>[] | null, timeout = resolveChatTimeout()): Promise<Record<string, unknown>> {
+  async chat(messages: ChatMessage[], tools?: Record<string, unknown>[] | null, timeout = resolveChatTimeout(), opts?: { signal?: AbortSignal }): Promise<Record<string, unknown>> {
     const payload: Record<string, unknown> = {
       model: this.model,
       messages: normalizeMessages(messages as Record<string, unknown>[]),
@@ -358,7 +366,7 @@ export class Provider implements ProviderLike {
     // 推理档位 / 冗长度（config.reasoning_effort / verbosity）。未配置时这里是空对象，
     // payload 与改动前逐字节一致——零配置零影响。
     Object.assign(payload, this.extraBody ?? {});
-    return this.postJson(`${this.baseUrl}/chat/completions`, payload, timeout, "API 请求");
+    return this.postJson(`${this.baseUrl}/chat/completions`, payload, timeout, "API 请求", opts?.signal);
   }
 
   /** 附加到每次 chat 请求体的字段（推理档位等）。未设置则不加任何键。 */
@@ -635,7 +643,7 @@ export class CliProvider implements ProviderLike {
     return [this.model];
   }
 
-  async chat(messages: ChatMessage[], _tools?: Record<string, unknown>[] | null, timeout = resolveChatTimeout()): Promise<Record<string, unknown>> {
+  async chat(messages: ChatMessage[], _tools?: Record<string, unknown>[] | null, timeout = resolveChatTimeout(), opts?: { signal?: AbortSignal }): Promise<Record<string, unknown>> {
     const binary = findCodexBinary();
     if (!codexAvailable()) {
       const minimum = CODEX_MIN_VERSION.join(".");
@@ -659,19 +667,35 @@ export class CliProvider implements ProviderLike {
           timedOut = true;
           try { process.kill(-child.pid!, "SIGKILL"); } catch { child.kill("SIGKILL"); }
         }, timeout * 1000);
+        // 可靠性打磨第 1 项第一批：外部取消信号 abort 时杀掉整个子进程
+        // 组（与超时同款 killTree），close 回来后以 CancelError 拒绝，
+        // 不把“被取消”当成“调用失败”重试。
+        let cancelled = false;
+        const onAbort = (): void => {
+          cancelled = true;
+          try { process.kill(-child.pid!, "SIGKILL"); } catch { child.kill("SIGKILL"); }
+        };
+        if (opts?.signal) {
+          if (opts.signal.aborted) onAbort();
+          else opts.signal.addEventListener("abort", onAbort, { once: true });
+        }
         child.stdout?.on("data", (d: Buffer) => { stdout += d.toString("utf-8"); });
         child.stderr?.on("data", (d: Buffer) => { stderr += d.toString("utf-8"); });
         child.on("error", () => {
           clearTimeout(timer);
-          resolvePromise({ code: 1, stdout, stderr: stderr || "无法启动 Codex CLI" });
+          opts?.signal?.removeEventListener("abort", onAbort);
+          resolvePromise({ code: 1, stdout, stderr: stderr || "无法启动 Codex CLI", timedOut, cancelled } as never);
         });
         child.on("close", (code) => {
           clearTimeout(timer);
-          resolvePromise({ code, stdout, stderr, timedOut } as never);
+          opts?.signal?.removeEventListener("abort", onAbort);
+          resolvePromise({ code, stdout, stderr, timedOut, cancelled } as never);
         });
         child.stdin?.end(prompt);
         void timedOut;
       });
+      const cancelled = (result as unknown as { cancelled?: boolean }).cancelled;
+      if (cancelled) throw cancelErrorFromSignal(opts!.signal!, "stop");
       const timedOut = (result as unknown as { timedOut?: boolean }).timedOut;
       if (timedOut) {
         throw new ProviderError("Codex CLI 调用超时，请稍后重试", { kind: "timeout" });
@@ -811,6 +835,9 @@ export class FallbackProvider implements ProviderLike {
 
   async chat(messages: ChatMessage[], tools?: Record<string, unknown>[] | null, timeout = resolveChatTimeout(), opts?: { signal?: AbortSignal }): Promise<Record<string, unknown>> {
     const attempted: [string, string][] = [];
+    // 可靠性打磨第 1 项第一批：信号进来时已 abort，直接按取消抛，不再
+    // 尝试任何 provider（与 executeTool 的入口检查同款）。
+    if (opts?.signal?.aborted) throw cancelErrorFromSignal(opts.signal, "stop");
     // 总预算：整条链最多花 2× 单次超时，不让 N 个挂起的 provider 各等满一份超时。
     // 同一 provider 的重试同样受该预算约束：剩余时间不够“一次退避 + 一次
     // 重试（重试超时按剩余预算封顶）”时直接改走切换，免得重试吃光预算。
@@ -826,7 +853,10 @@ export class FallbackProvider implements ProviderLike {
       let logged = false;
       while (true) {
         try {
-          const result = await provider.chat(messages, tools, attemptTimeout);
+          // 可靠性打磨第 1 项第一批：取消信号一路传给底层 provider——
+          // 在途请求 abort 时 CancelError 直接穿过（不是 ProviderError，
+          // 不重试、不切换），调用方认得出“这是取消”。
+          const result = await provider.chat(messages, tools, attemptTimeout, { signal: opts?.signal });
           this.activeIndex = index;
           return result;
         } catch (exc: unknown) {
@@ -861,7 +891,9 @@ export class FallbackProvider implements ProviderLike {
               try {
                 await this.retrySleep(delay, opts?.signal);
               } catch {
-                // 睡眠被中断（用户叫停）：不再重发，立即按原错抛出。
+                // 睡眠被中断（用户叫停）：不再重发。信号已 abort 时按
+                // CancelError 抛（调用方认得出“这是取消”），而不是原错。
+                if (opts?.signal?.aborted) throw cancelErrorFromSignal(opts.signal, "stop");
                 throw exc;
               }
               continue;
@@ -946,6 +978,9 @@ export class KeyRotatingProvider implements ProviderLike {
   async chat(messages: ChatMessage[], tools?: Record<string, unknown>[] | null, timeout = resolveChatTimeout(), opts?: { signal?: AbortSignal }): Promise<Record<string, unknown>> {
     const attempted: [number, string][] = [];
     let lastExc: ProviderError | null = null;
+    // 可靠性打磨第 1 项第一批：信号进来时已 abort，直接按取消抛，不再
+    // 尝试任何 provider（与 FallbackProvider 同款入口检查）。
+    if (opts?.signal?.aborted) throw cancelErrorFromSignal(opts.signal, "stop");
     // 总预算：整条链最多花 2× 单次超时，不让 N 把 Key 各等满一份超时。
     // 同一把 Key 的重试同样受该预算约束（与 FallbackProvider 同款规则）：
     // 剩余时间不够“一次退避 + 一次重试（重试超时按剩余预算封顶）”时直接改走
@@ -961,7 +996,10 @@ export class KeyRotatingProvider implements ProviderLike {
       let logged = false;
       while (true) {
         try {
-          const result = await provider.chat(messages, tools, attemptTimeout);
+          // 可靠性打磨第 1 项第一批：取消信号一路传给底层 provider——
+          // 在途请求 abort 时 CancelError 直接穿过（不是 ProviderError，
+          // 不重试、不换 Key），调用方认得出“这是取消”。
+          const result = await provider.chat(messages, tools, attemptTimeout, { signal: opts?.signal });
           this.activeIndex = index;
           return result;
         } catch (exc: unknown) {
@@ -993,7 +1031,9 @@ export class KeyRotatingProvider implements ProviderLike {
               try {
                 await this.retrySleep(delay, opts?.signal);
               } catch {
-                // 睡眠被中断（用户叫停）：不再重发，立即按原错抛出。
+                // 睡眠被中断（用户叫停）：不再重发。信号已 abort 时按
+                // CancelError 抛（调用方认得出“这是取消”），而不是原错。
+                if (opts?.signal?.aborted) throw cancelErrorFromSignal(opts.signal, "stop");
                 throw exc;
               }
               continue;

@@ -25,6 +25,11 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+/**
+ * 统一取消信号（可靠性打磨第 1 项第一批）。cancel.ts 是叶子模块，
+ * 不 import 任何 src 内模块，这里静态导入不会形成循环导入。
+ */
+import { cancelErrorFromSignal } from "./cancel.ts";
 
 export type JobObjectMode = "read-only" | "workspace-write" | "danger-full-access";
 
@@ -45,6 +50,11 @@ export interface WindowsSandboxRunOptions {
   timeout?: number;
   maxProcesses?: number;
   maxMemoryMB?: number;
+  /**
+   * 取消信号（可靠性打磨第 1 项第一批）：abort 时杀掉 PowerShell 子进程，
+   * 以 CancelError 拒绝（不是超时结果）。不传时行为与原来一致。
+   */
+  signal?: AbortSignal;
 }
 
 export interface WindowsSandboxRunResult {
@@ -245,6 +255,9 @@ export async function runWindowsSandboxed(
     maxProcesses: opts.maxProcesses, maxMemoryMB: opts.maxMemoryMB,
   });
   const timeoutMs = (opts.timeout ?? 60) * 1000;
+  // 可靠性打磨第 1 项第一批：信号已 abort 时不启动，直接以 CancelError
+  // 拒绝（调用方认得出“这是取消”，不记成沙箱失败）。
+  if (opts.signal?.aborted) throw cancelErrorFromSignal(opts.signal, "stop");
   return new Promise<WindowsSandboxRunResult>((resolvePromise, rejectPromise) => {
     const child = spawn(ps, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script], {
       cwd: opts.workdir,
@@ -258,8 +271,19 @@ export async function runWindowsSandboxed(
       if (done) return;
       done = true;
       clearTimeout(timer);
+      opts.signal?.removeEventListener("abort", onAbort);
       resolvePromise(value);
     };
+    // 取消：信号 abort 时杀掉 PowerShell 子进程，以 CancelError 拒绝
+    //（不是超时结果）。finish 的 done 守卫保证只落定一次。
+    const onAbort = (): void => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      try { child.kill("SIGKILL"); } catch { /* 已经退出 */ }
+      rejectPromise(cancelErrorFromSignal(opts.signal!, "stop"));
+    };
+    opts.signal?.addEventListener("abort", onAbort, { once: true });
     const timer = setTimeout(() => {
       timedOut = true;
       try { child.kill("SIGKILL"); } catch { /* 已经退出 */ }
@@ -277,6 +301,7 @@ export async function runWindowsSandboxed(
       clearTimeout(timer);
       if (done) return;
       done = true;
+      opts.signal?.removeEventListener("abort", onAbort);
       rejectPromise(new WindowsSandboxUnavailableError(`PowerShell 启动失败：${err.message}`));
     });
   });

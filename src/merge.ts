@@ -246,7 +246,7 @@ export function formatMergedDeliverable(merged: MergedDeliverable, result: Paral
   lines.push(
     `花费：合并步 ${merged.mergeSpentUsd === null ? "未知（未计价）" : "$" + merged.mergeSpentUsd.toFixed(4)}；` +
     `整批已计价 ${total === null ? "未知（未计价）" : "$" + total.toFixed(4)}` +
-    (result.pendingAfterTimeout > 0 ? `（${result.pendingAfterTimeout} 个超时线程仍在后台跑，上值只是下限）` : "") +
+    (result.pendingAfterTimeout > 0 ? `（${result.pendingAfterTimeout} 个线程宽限期内未确认停下、仍在停止中，上值只是下限）` : "") +
     "。",
   );
   if (merged.file) lines.push(`完整版文件：${merged.file}（~/.nyra 下）。`);

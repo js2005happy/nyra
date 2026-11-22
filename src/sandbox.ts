@@ -9,6 +9,11 @@ import { existsSync, statSync } from "node:fs";
 import { seatbeltAvailable } from "./seatbelt.ts";
 import { windowsSandboxAvailable } from "./windowsSandbox.ts";
 import { delimiter, join } from "node:path";
+/**
+ * 统一取消信号（可靠性打磨第 1 项第一批）。cancel.ts 是叶子模块，
+ * 不 import 任何 src 内模块，这里静态导入不会形成循环导入。
+ */
+import { cancelErrorFromSignal } from "./cancel.ts";
 
 // 调研报告第 9 项：OS 级分级沙箱（学 Codex CLI）——三档模式。
 // read-only：只读，任何写/执行/联网都要审批；
@@ -312,6 +317,11 @@ export interface RunSandboxedOptions {
    * 的变量能进沙箱里的 /bin/sh；不传时行为与原来完全一致。
    */
   env?: Record<string, string>;
+  /**
+   * 取消信号（可靠性打磨第 1 项第一批）：abort 时杀掉整个 bwrap 进程组，
+   * 以 CancelError 拒绝（不是超时结果）。不传时行为与原来一致。
+   */
+  signal?: AbortSignal;
 }
 
 export interface RunSandboxedResult {
@@ -332,6 +342,9 @@ export async function runSandboxed(
   }
   const args = buildBwrapArgs(command, opts);
   const timeoutMs = (opts.timeout ?? 60) * 1000;
+  // 可靠性打磨第 1 项第一批：信号已 abort 时不启动，直接以 CancelError
+  // 拒绝（调用方认得出“这是取消”，不记成沙箱失败）。
+  if (opts.signal?.aborted) throw cancelErrorFromSignal(opts.signal, "stop");
   return new Promise((resolvePromise, rejectPromise) => {
     const child = spawn("bwrap", args.slice(1), {
       cwd: opts.workdir,
@@ -342,11 +355,20 @@ export async function runSandboxed(
     let stderr = "";
     let timedOut = false;
     let done = false;
+    let cancelled = false;
     const finish = (value: RunSandboxedResult): void => {
       if (done) return;
       done = true;
       clearTimeout(timer);
+      opts.signal?.removeEventListener("abort", onAbort);
       resolvePromise(value);
+    };
+    const finishCancelled = (): void => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      opts.signal?.removeEventListener("abort", onAbort);
+      rejectPromise(cancelErrorFromSignal(opts.signal!, "stop"));
     };
     const killTree = (): void => {
       if (child.pid !== undefined && process.platform !== "win32") {
@@ -354,6 +376,11 @@ export async function runSandboxed(
       }
       try { child.kill("SIGKILL"); } catch { /* ignore */ }
     };
+    const onAbort = (): void => {
+      cancelled = true;
+      killTree();
+    };
+    opts.signal?.addEventListener("abort", onAbort, { once: true });
     const timer = setTimeout(() => {
       timedOut = true;
       killTree();
@@ -372,6 +399,7 @@ export async function runSandboxed(
       try { opts.onStream?.("stderr", text); } catch { /* 回显失败不影响执行 */ }
     });
     child.on("close", (code) => {
+      if (cancelled) { finishCancelled(); return; }
       if (timedOut) { finish({ code: -1, stdout, stderr: stderr + `\n错误：沙箱内命令超时（${opts.timeout ?? 60} 秒）` }); return; }
       finish({ code: code ?? -1, stdout, stderr });
     });
@@ -379,6 +407,11 @@ export async function runSandboxed(
       clearTimeout(timer);
       if (done) return;
       done = true;
+      opts.signal?.removeEventListener("abort", onAbort);
+      if (cancelled) {
+        rejectPromise(cancelErrorFromSignal(opts.signal!, "stop"));
+        return;
+      }
       rejectPromise(new SandboxUnavailableError(`bwrap 启动失败：${err.message}。${BWRAP_INSTALL_HINT}`));
     });
   });

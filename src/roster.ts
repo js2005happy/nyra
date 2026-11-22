@@ -63,7 +63,7 @@ function rowFromRegistry(r: SubagentRun, nowMs: number): RosterRow {
   }
   const stopRequested = r.stopRequestedAt !== null;
   if (stopRequested && stage.stage === "working") {
-    stage = { ...stage, waitingFor: "已请求停止，待下一个安全点停下" };
+    stage = { ...stage, waitingFor: "已请求停止，在途调用收到取消信号后 abort，确认停下后标 stopped" };
   }
   return {
     id: r.runId, runId: r.runId, agent: r.agent, kind: "subagent",

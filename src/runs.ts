@@ -180,6 +180,10 @@ subagent_suspended: ["run_id", "restarts"],
 subagent_stop_requested: ["run_id", "by", "step"],
 subagent_stopped: ["run_id", "by", "step"],
 subagent_stop_cancelled: ["run_id", "by"],
+// 可靠性打磨第 1 项第一批：运行因取消停下进证据链——原因（stop/timeout/
+// budget）与来源（stop-request/budget-cap/external-signal/timeout）。
+// 只记原因与来源，不记任务正文、不记绝对路径。
+run_cancelled: ["reason", "source"],
 // H-2：单点引导进证据链——排队（哪个运行、谁发起、哪条引导、引导原文节选）、
 // 消费（哪个运行、哪条引导、谁发起）。引导是用户指令，原文进证据链；
 // 只确认“已排队”，不谎称“已送达”。
@@ -1181,7 +1185,7 @@ if (kind === "voice_input" || kind === "voice_speak") {
     this.voiceSpent = (this.voiceSpent ?? 0) + data.cost_usd;
   }
 }
-if (["tool_start", "tool_result", "final", "max_turns", "snapshot", "restore", "model_switch", "parallel_delegate", "hook_blocked", "reviewer_verdict", "patrol_write_blocked", "delegate_start", "delegate_end", "llm_span", "vision_input", "voice_input", "voice_speak", "office_exported", "media_ingested", "redline_changed", "redline_blocked", "soul_tenet_added", "soul_tenet_removed", "soul_tenet_changed", "soul_invariant_blocked"].includes(kind)) {
+if (["tool_start", "tool_result", "final", "max_turns", "snapshot", "restore", "model_switch", "parallel_delegate", "hook_blocked", "reviewer_verdict", "patrol_write_blocked", "delegate_start", "delegate_end", "llm_span", "vision_input", "voice_input", "voice_speak", "office_exported", "media_ingested", "redline_changed", "redline_blocked", "soul_tenet_added", "soul_tenet_removed", "soul_tenet_changed", "soul_invariant_blocked", "run_cancelled"].includes(kind)) {
 const fields = {...data};
 if (kind === "tool_start" && typeof data.id === "string" && data.arguments !== null && typeof data.arguments === "object" && !Array.isArray(data.arguments)) {
 const key = idempotencyKey(String(data.name ?? ""), data.arguments as Record<string, unknown>);

@@ -17,6 +17,14 @@
 import type { VerificationStatus } from "./reviewQueue.ts";
 /** H-5：合并后的交付物（type-only；merge.ts 只 import 本文件的类型，无循环 import）。 */
 import type { MergedDeliverable } from "./merge.ts";
+/**
+ * 统一取消信号（可靠性打磨第 1 项第一批）。cancel.ts 是叶子模块，
+ * 不 import 任何 src 内模块，这里 import 它不会形成循环导入。
+ */
+import {
+  awaitSettled, CancelController, combineSignals,
+  isCancelError, type CancelReason,
+} from "./cancel.ts";
 
 /** 并行默认并发上限（学 Goose 的硬约束：默认 5，同时也是上限）。 */
 export const DEFAULT_PARALLEL_MAX_CONCURRENCY = 5;
@@ -24,6 +32,12 @@ export const DEFAULT_PARALLEL_MAX_CONCURRENCY = 5;
 export const MAX_PARALLEL_CONCURRENCY = 5;
 /** 单任务默认超时：10 分钟。子任务是 LLM 多轮循环，30 秒（ToolPool 的默认值）不够用。 */
 export const DEFAULT_PARALLEL_TASK_TIMEOUT_MS = 600_000;
+/**
+ * 取消确认宽限（可靠性打磨第 1 项第一批）：超时或整批取消发信号后，
+ * 等底层停下最多 1 秒。宽限到了还没停，线程标“正在停止”
+ *（stopConfirmed: false），槽位照样释放——不无限等、不谎报已停。
+ */
+export const DEFAULT_CANCEL_GRACE_MS = 1_000;
 
 export interface ParallelTaskSpec {
 task: string;
@@ -39,7 +53,7 @@ agent?: string;
 orchestrator?: boolean;
 }
 
-export type ParallelThreadStatus = "ok" | "failed" | "timeout" | "rejected";
+export type ParallelThreadStatus = "ok" | "failed" | "timeout" | "rejected" | "cancelled";
 
 /**
 * 3b review queue 的消费接口：每线程的证据。
@@ -65,15 +79,22 @@ export interface ParallelThreadResult {
 index: number;
 task: string;
 status: ParallelThreadStatus;
-/** 成功时为子任务摘要原文；失败/超时/被拒时为 null。 */
+/** 成功时为子任务摘要原文；失败/超时/被拒/被取消时为 null。 */
 summary: string | null;
-/** 失败/超时/被拒的原因；成功时为 null。 */
+/** 失败/超时/被拒/被取消的原因；成功时为 null。 */
 error: string | null;
 durationMs: number;
 model: string | null;
 evidence: ParallelThreadEvidence;
 /** H-4：结构化输出契约的校验结论（没给契约时为 null；通过 true / 未通过 false）。 */
 schemaValid: boolean | null;
+/**
+ * 停止确认（可靠性打磨第 1 项第一批）：ok/failed/rejected 的线程恒
+ * 为 true（已落定）；timeout/cancelled 的线程为 true 表示宽限期内
+ * 底层确认停下了，false 表示宽限到了仍没停下——任务保持“正在停止”，
+ * 不谎报已停（见 pendingAfterTimeout）。
+ */
+stopConfirmed: boolean;
 }
 
 export interface ParallelDelegateResult {
@@ -82,11 +103,15 @@ succeeded: number;
 failed: number;
 timedOut: number;
 rejected: number;
+/** 整批取消时被取消的线程数（单个线程因取消信号停下，不算 failed）。 */
+cancelled: number;
 /** 全部线程已花美元合计；任一线程未计价时仍为已计价部分之和，调用方不得当成全量。 */
 totalSpentUsd: number | null;
   /**
-   * 仍在后台跑的超时线程数。它们的最终花费事后会计入父级 delegateSpentUsd，
-   * 但不进 totalSpentUsd——>0 时 totalSpentUsd 只是下限（汇总文本写 "≥"）。
+   * 超时/取消后宽限期内仍未确认停下的线程数（stopConfirmed: false 的
+   * 线程）。它们的最终花费事后会计入父级 delegateSpentUsd，但不进
+   * totalSpentUsd——>0 时 totalSpentUsd 只是下限（汇总文本写 "≥"）。
+   * 这些线程不是“已停”，是“正在停止”：槽位已释放，但底层可能还在收尾。
    */
   pendingAfterTimeout: number;
 totalDurationMs: number;
@@ -107,12 +132,22 @@ maxConcurrency?: number;
 timeoutMs?: number;
 /** H-6：每线程结束时回调（per-group 回填用；回调里抛错不影响线程结果）。 */
 onThreadDone?: (result: ParallelThreadResult) => void;
+/**
+ * 整批取消信号（可靠性打磨第 1 项第一批）：abort 时所有在跑线程收到
+ * 取消信号（模型请求 abort、子进程 kill），排队的线程直接标 cancelled
+ * 不再启动。不传时只有单线程超时能触发取消。
+ */
+signal?: AbortSignal;
+/** 取消确认宽限毫秒数（默认 1 秒）；非法值回默认。 */
+cancelGraceMs?: number;
 }
 
 export interface ResolvedParallelOptions {
 maxConcurrency: number;
 timeoutMs: number;
 maxConcurrencyClamped: boolean;
+/** 取消确认宽限毫秒数（已解析，恒为非负数）。 */
+cancelGraceMs: number;
 }
 
 /** 并发与超时解析：并发夹在 [1, 5]，超时必须是正数否则回默认。 */
@@ -129,7 +164,11 @@ let timeoutMs = opts.timeoutMs;
 if (typeof timeoutMs!== "number" ||!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
 timeoutMs = DEFAULT_PARALLEL_TASK_TIMEOUT_MS;
 }
-return { maxConcurrency, timeoutMs: Math.floor(timeoutMs), maxConcurrencyClamped: clamped};
+let cancelGraceMs = opts.cancelGraceMs;
+if (typeof cancelGraceMs!== "number" ||!Number.isFinite(cancelGraceMs) || cancelGraceMs < 0) {
+cancelGraceMs = DEFAULT_CANCEL_GRACE_MS;
+}
+return { maxConcurrency, timeoutMs: Math.floor(timeoutMs), maxConcurrencyClamped: clamped, cancelGraceMs: Math.floor(cancelGraceMs) };
 }
 
 /** 单个线程的执行结果（由调用方把 delegate 的结构化结果适配进来）。 */
@@ -152,6 +191,12 @@ schemaValid?: boolean | null;
 export type ParallelRunner = (
 spec: ParallelTaskSpec,
 index: number,
+/**
+ * 当线程取消信号（可靠性打磨第 1 项第一批）：超时或整批取消时 abort；
+ * runner 须把它传给子任务的 Agent（delegateDetailed 的 opts.signal），
+ * 子任务的在途调用才能被掐断。不传时 runner 按旧行为跑（无信号）。
+ */
+signal?: AbortSignal,
 ) => Promise<ParallelThreadOutcome>;
 
 const NOT_VERIFIED_NOTE =
@@ -172,14 +217,18 @@ spentUsd: null,
 * 并行跑一批子任务。
 *
 * 并发语义：最多 maxConcurrency 个同时在跑，其余排队；每个线程单独计时，
-* 超过 timeoutMs 即判 timeout，不等它跑完。超时不取消底层的子任务——
-* Agent.run 目前没有 AbortSignal，超时的线程仍在后台跑完，它的 worktree
-* 清理与花费记账（delegate 的 recordChildUsage）照常走，只是结果不再等它；
-* 事后多花的钱仍会计入父级的 delegateSpentUsd，但不进本批返回的 totalSpentUsd，
-* 这一点在文档里写明了，不要把 totalSpentUsd 当成最终账单。
+* 超过 timeoutMs 即判 timeout。超时不是只在上层决出胜负就当停了——
+* 可靠性打磨第 1 项第一批：超时先给线程发取消信号（模型请求 abort、
+* 子进程 kill），再等宽限期（cancelGraceMs，默认 1 秒）确认底层停下；
+* 宽限到了还没停，线程标“正在停止”（stopConfirmed: false），槽位照样
+* 释放，但结果里如实记 pendingAfterTimeout，不谎报已停。整批取消信号
+* （opts.signal）同理：abort 时在跑线程收信号、排队线程直接标 cancelled
+* 不再启动。超时/取消线程的花费不进本批返回的 totalSpentUsd，事后多花
+* 的钱仍会计入父级的 delegateSpentUsd，这一点在文档里写明了，不要把
+* totalSpentUsd 当成最终账单。
 *
-* 失败隔离：任一线程抛错/超时只记自己那一项，其余线程照常跑完；主流程
-* 汇总成功者，失败原因与已花成本逐项注明。
+* 失败隔离：任一线程抛错/超时/被取消只记自己那一项，其余线程照常跑完；
+* 主流程汇总成功者，失败原因与已花成本逐项注明。
 */
 export async function runParallelDelegate(
 runOne: ParallelRunner,
@@ -189,7 +238,7 @@ opts: ParallelDelegateOptions = {},
 if (!Array.isArray(tasks) || tasks.length === 0) {
 throw new Error("并行委派至少需要一个子任务");
 }
-const { maxConcurrency, timeoutMs, maxConcurrencyClamped} = resolveParallelOptions(opts);
+const { maxConcurrency, timeoutMs, maxConcurrencyClamped, cancelGraceMs } = resolveParallelOptions(opts);
 const startedAt = Date.now();
 const results: ParallelThreadResult[] = new Array(tasks.length);
 let next = 0;
@@ -197,6 +246,11 @@ let next = 0;
 async function runThread(index: number): Promise<void> {
 const spec = tasks[index];
 const threadStartedAt = Date.now();
+// 每个线程一个取消控制器：超时或整批取消时先 abort 它，再等宽限期
+// 确认底层停下（runThreadWithCancel）。槽位只有线程落定或宽限到期
+// 才释放——“正在停止”的线程不谎报已停。
+const threadCancel = new CancelController();
+const threadSignal = combineSignals([opts.signal, threadCancel.signal]);
 const base: Omit<ParallelThreadResult, "status" | "summary" | "error"> = {
 index,
 task: spec.task,
@@ -204,11 +258,13 @@ durationMs: 0,
 model: null,
 evidence: emptyEvidence(),
 schemaValid: null,
+stopConfirmed: true,
 };
 const finish = (
 status: ParallelThreadStatus,
 summary: string | null,
 error: string | null,
+stopConfirmed: boolean,
 outcome?: ParallelThreadOutcome,
 ): void => {
 const evidence = emptyEvidence();
@@ -228,21 +284,36 @@ durationMs: Date.now() - threadStartedAt,
 model: outcome?.model?? null,
 evidence,
 schemaValid: outcome?.schemaValid?? null,
+stopConfirmed,
 };
 // H-6：per-group 回填钩子——回调里抛错不影响线程结果。
 if (opts.onThreadDone) {
 try { opts.onThreadDone(results[index]); } catch { /* ignore */ }
 }
 };
+// 可靠性打磨第 1 项第一批：整批已取消时排队的线程不再启动，直接标
+// cancelled（不调 runner）；已启动的线程走下面的取消流程。
+if (opts.signal?.aborted) {
+finish("cancelled", null, "整批已取消：取消信号已发出，线程未启动", true);
+return;
+}
 try {
-const outcome = await runWithTimeout(runOne(spec, index), timeoutMs, index);
-if (outcome.ok) finish("ok", outcome.summary, null, outcome);
-else finish("failed", null, outcome.error || "子任务失败（未给原因）", outcome);
-} catch (err: unknown) {
-if (err instanceof ParallelTimeoutError) {
-finish("timeout", null, `子任务超时：${timeoutMs}ms 内未返回（底层任务仍在后台跑完，花费仍计入父级累计，但不进本批返回的合计）`);
+const runner = runOne(spec, index, threadSignal);
+const ran = await runThreadWithCancel(runner, opts.signal ?? null, threadCancel, timeoutMs, cancelGraceMs);
+if (ran.outcome) {
+const outcome = ran.outcome;
+if (outcome.ok) finish("ok", outcome.summary, null, true, outcome);
+else finish("failed", null, outcome.error || "子任务失败（未给原因）", true, outcome);
+} else if (ran.status === "timeout" || ran.status === "cancelled") {
+finish(ran.status, null, ran.error ?? null, ran.stopConfirmed);
 } else {
-finish("failed", null, err instanceof Error? err.message: String(err));
+finish("failed", null, ran.error ?? "未知错误", true);
+}
+} catch (err: unknown) {
+if (isCancelError(err)) {
+finish("cancelled", null, (err as Error).message, true);
+} else {
+finish("failed", null, err instanceof Error? err.message: String(err), true);
 }
 }
 }
@@ -265,25 +336,30 @@ let succeeded = 0;
 let failed = 0;
 let timedOut = 0;
 let rejected = 0;
+let cancelled = 0;
 let totalSpent: number | null = null;
 for (const r of results) {
 if (r.status === "ok") succeeded += 1;
 else if (r.status === "failed") failed += 1;
 else if (r.status === "timeout") timedOut += 1;
+else if (r.status === "cancelled") cancelled += 1;
 else rejected += 1;
 if (typeof r.evidence.spentUsd === "number") {
 totalSpent = (totalSpent?? 0) + r.evidence.spentUsd;
 }
 }
+// 停止确认：宽限期内没确认停下的线程（stopConfirmed: false）才进
+// pendingAfterTimeout——它们是“正在停止”，不是“已停”。
+const pendingAfterTimeout = results.filter((r) => !r.stopConfirmed).length;
 return {
 results,
 succeeded,
 failed,
 timedOut,
 rejected,
+cancelled,
 totalSpentUsd: totalSpent,
-  // 超时线程没有 AbortSignal，底层仍在跑：花费此刻未知，且不进 totalSpent。
-  pendingAfterTimeout: timedOut,
+pendingAfterTimeout,
 totalDurationMs: Date.now() - startedAt,
 maxConcurrency,
 timeoutMs,
@@ -295,28 +371,76 @@ merged: null,
 };
 }
 
-export class ParallelTimeoutError extends Error {
-constructor(public readonly threadIndex: number) {
-super(`并行子任务 ${threadIndex} 超时`);
-this.name = "ParallelTimeoutError";
-}
-}
-
-/** 单线程超时：到点即判失败，不等底层 promise；底层继续跑，挂个 catch 防止未处理 rejection。 */
-function runWithTimeout(
-promise: Promise<ParallelThreadOutcome>,
+/**
+* 跑一个线程，带真取消：超时或整批取消时先给线程发取消信号，再等宽限
+* 期确认底层停下。返回 outcome 为 null 时线程没产出结果（超时/被取消），
+* stopConfirmed 说明宽限期内底层停没停下。
+*
+* 注意：runner 是调用方传进来的 promise，本函数不替它 abort——abort
+* 是 runner 自己的事（它收到的 threadSignal 已接上取消控制器，模型
+* 请求 abort、子进程 kill 都由它内部做）。本函数只负责“发信号 + 等确认”。
+*/
+async function runThreadWithCancel(
+runner: Promise<ParallelThreadOutcome>,
+batchSignal: AbortSignal | null,
+threadCancel: CancelController,
 timeoutMs: number,
-threadIndex: number,
-): Promise<ParallelThreadOutcome> {
+graceMs: number,
+): Promise<{ outcome: ParallelThreadOutcome | null; status: ParallelThreadStatus; stopConfirmed: boolean; error?: string }> {
+// 底层落定后结果不要了，但 rejection 不能没人接。
+void runner.catch(() => undefined);
 let timer: ReturnType<typeof setTimeout> | null = null;
-const timeout = new Promise<never>((_resolve, reject) => {
-timer = setTimeout(() => reject(new ParallelTimeoutError(threadIndex)), timeoutMs);
+const timeout = new Promise<"timeout">((resolve) => {
+timer = setTimeout(() => resolve("timeout"), timeoutMs);
 });
-// 超时后底层仍在跑：结果不要了，但 rejection 不能没人接。
-void promise.catch(() => undefined);
-return Promise.race([promise, timeout]).finally(() => {
+const batchAbort: Promise<"cancelled"> = !batchSignal
+? new Promise<"cancelled">(() => undefined)
+: batchSignal.aborted
+? Promise.resolve("cancelled")
+: new Promise<"cancelled">((resolve) => {
+batchSignal.addEventListener("abort", () => resolve("cancelled"), { once: true });
+});
+const done = runner.then(
+(outcome) => ({ kind: "done" as const, outcome }),
+(error: unknown) => ({ kind: "error" as const, error }),
+);
+const first = await Promise.race([
+done,
+timeout.then(() => ({ kind: "timeout" as const })),
+batchAbort.then(() => ({ kind: "cancelled" as const })),
+]);
 if (timer) clearTimeout(timer);
-});
+if (first.kind === "done") return { outcome: first.outcome, status: "ok", stopConfirmed: true };
+if (first.kind === "error") {
+// runner 自己抛 CancelError：底层已经因取消停下，确认已停。
+if (isCancelError(first.error)) {
+return { outcome: null, status: "cancelled", stopConfirmed: true, error: (first.error as Error).message };
+}
+// 非取消错误原样抛，调用方按失败记。
+throw first.error;
+}
+// 超时或整批取消：先发取消信号，再等宽限期确认底层停下。
+const reason: CancelReason = first.kind === "timeout" ? "timeout" : "stop";
+threadCancel.abort(reason);
+const settled = await awaitSettled(runner, graceMs);
+if (first.kind === "timeout") {
+return {
+outcome: null,
+status: "timeout",
+stopConfirmed: settled.settled,
+error: settled.settled
+? `子任务超时：${timeoutMs}ms 内未返回（已发取消信号，底层已确认停下）`
+: `子任务超时：${timeoutMs}ms 内未返回（已发取消信号，底层在 ${graceMs}ms 宽限期内未确认停下，仍在停止中）`,
+};
+}
+return {
+outcome: null,
+status: "cancelled",
+stopConfirmed: settled.settled,
+error: settled.settled
+? "整批已取消：取消信号已发出，底层已确认停下"
+: `整批已取消：取消信号已发出，底层在 ${graceMs}ms 宽限期内未确认停下，仍在停止中`,
+};
 }
 
 /**
@@ -341,10 +465,11 @@ lines.push(
 `并行委派完成：共 ${result.results.length} 个线程，成功 ${result.succeeded} 个` +
 (result.failed? `，失败 ${result.failed} 个`: "") +
 (result.timedOut? `，超时 ${result.timedOut} 个`: "") +
+(result.cancelled? `，被取消 ${result.cancelled} 个`: "") +
 (result.rejected? `，被拒 ${result.rejected} 个`: "") +
 `；总耗时 ${(result.totalDurationMs / 1000).toFixed(1)} 秒` +
     `；已计价花费合计 ${result.totalSpentUsd === null ? "未知（未计价）" : (result.pendingAfterTimeout > 0 ? "≥" : "") + "$" + result.totalSpentUsd.toFixed(4)}` +
-    `（${result.pendingAfterTimeout > 0 ? `${result.pendingAfterTimeout} 个超时线程仍在后台跑，其花费未结算——上值只是下限` : "无超时线程，上值为全部"}）` +
+    `（${result.pendingAfterTimeout > 0 ? `${result.pendingAfterTimeout} 个线程宽限期内未确认停下、仍在停止中，其花费未结算——上值只是下限` : "无正在停止的线程，上值为全部"}）` +
 `；并发上限 ${result.maxConcurrency}（${result.maxConcurrencyClamped? "调用方要求更高，已按硬顶 5 夹住": "默认"}）` +
 `，单任务超时 ${Math.round(result.timeoutMs / 1000)} 秒。`,
 );
@@ -367,7 +492,12 @@ lines.push(
 } else if (r.status === "timeout") {
 lines.push(
 `${head}超时；耗时 ${(r.durationMs / 1000).toFixed(1)} 秒` +
-`；花费未知（超时前未结算）；原因：${r.error?? ""}`,
+`；花费未知（超时前未结算）；停止确认：${r.stopConfirmed ? "底层已确认停下" : "宽限期内未确认停下，仍在停止中"}；原因：${r.error?? ""}`,
+);
+} else if (r.status === "cancelled") {
+lines.push(
+`${head}被取消；耗时 ${(r.durationMs / 1000).toFixed(1)} 秒` +
+`；花费未知（取消前未结算）；停止确认：${r.stopConfirmed ? "底层已确认停下" : "宽限期内未确认停下，仍在停止中"}；原因：${r.error?? ""}`,
 );
 } else if (r.status === "rejected") {
 lines.push(`${head}被拒；原因：${r.error?? ""}`);

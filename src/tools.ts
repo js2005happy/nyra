@@ -38,6 +38,11 @@ import { checkScriptFastPath } from "./scriptPreauth.ts";
 // 会让 creator.ts 在 TOOL_SCHEMAS 初始化前求值，直接 ReferenceError。
 // checkApproval 是 async，团队门在运行时动态 import（模块已初始化完，不循环）。
 import { effectiveStringList, effectiveValue } from "./enforcedConfig.ts";
+/**
+ * 统一取消信号（可靠性打磨第 1 项第一批）。cancel.ts 是叶子模块，
+ * 不 import 任何 src 内模块，这里静态导入不会形成循环导入。
+ */
+import { cancelErrorFromSignal, combineSignals, isCancelError } from "./cancel.ts";
 // 调研报告第 9 项：OS 级分级沙箱（学 Codex CLI）——shell 的两处执行点统一走这里解析后端。
 // 审批仍在 checkApproval，钩子仍在宿主机跑（hooks.ts 不动），沙箱内只跑命令本身。
 import {
@@ -145,6 +150,12 @@ export interface DelegateOptions {
    * 只由父级本次委派显式授予；子 agent 不能给自己开，也不能替别人开。
    */
   orchestrator?: boolean;
+  /**
+   * 取消信号（可靠性打磨第 1 项第一批）：父级本次运行的信号，子任务
+   * 收到后在途调用能被掐断（模型请求 abort、子进程 kill）。父级在
+   * delegateDetailed 里把当轮信号传进来；不传时子任务只认自己的信号。
+   */
+  signal?: AbortSignal;
 }
 
 export interface ToolContext {
@@ -216,6 +227,14 @@ export interface ToolContext {
    * executeToolIdempotent 在 finally 里恢复原值。外部调用方不要直接设。
    */
   idempotentRetry?: boolean;
+  /**
+   * 统一取消信号（可靠性打磨第 1 项第一批）：/stop、超时、预算触顶三处
+   * 都发到这里。工具执行前先查它（已 abort 直接抛 CancelError，不动手）；
+   * 长耗时工具（shell、web_fetch）在执行中监听它，abort 时掐断底层
+   * （子进程 kill、请求 abort）。Agent 每轮开始前把当轮信号填进来，
+   * 轮结束清掉；不传时行为与原来一致。
+   */
+  cancelSignal?: AbortSignal;
   poppyEnabled?: boolean;
   streamToolOutput?: boolean;
   onEvent?: ((kind: string, data: Record<string, unknown>) => void) | null;
@@ -1343,9 +1362,12 @@ export function wrapShellCommand(command: string): string {
   return command;
 }
 
-async function runShellStreaming(ctx: ToolContext, command: string, resolvedCwd: string, timeout: number): Promise<string> {
+async function runShellStreaming(ctx: ToolContext, command: string, resolvedCwd: string, timeout: number, signal?: AbortSignal): Promise<string> {
+  // 可靠性打磨第 1 项第一批：信号已 abort 时不启动，直接以 CancelError
+  // 拒绝（调用方认得出“这是取消”，不记成工具失败）。
+  if (signal?.aborted) throw cancelErrorFromSignal(signal, "stop");
   const started = Date.now();
-  return new Promise((resolvePromise) => {
+  return new Promise((resolvePromise, rejectPromise) => {
     const child = spawn(wrapShellCommand(command), { shell: defaultShell(), cwd: resolvedCwd, detached: process.platform !== "win32" });
     const outLines: string[] = [];
     const errLines: string[] = [];
@@ -1362,6 +1384,22 @@ async function runShellStreaming(ctx: ToolContext, command: string, resolvedCwd:
     let outBuf = "";
     let errBuf = "";
     let timedOut = false;
+    // 取消：信号 abort 时杀掉整个进程组（与超时同款 killTree），close
+    // 回来后以 CancelError 拒绝，不把“被取消”当成超时文本返回。
+    // timer 先声明再赋值——onAbort 在 timer 初始化前绝不会被调用
+    //（入口已查过 signal，未 abort 才进到这里；之后是同步代码，无交错），
+    // 但闭包引用后声明的 const 会踩 TDZ，所以用 let。
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let cancelled = false;
+    const onAbort = (): void => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      killTree(child);
+    };
+    if (signal) {
+      if (signal.aborted) onAbort();
+      else signal.addEventListener("abort", onAbort, { once: true });
+    }
     child.stdout?.on("data", (d: Buffer) => {
       outBuf += d.toString("utf-8");
       const parts = outBuf.split("\n");
@@ -1375,7 +1413,7 @@ async function runShellStreaming(ctx: ToolContext, command: string, resolvedCwd:
       errBuf = parts.pop() ?? "";
       for (const rawLine of parts) { const line = rawLine.replace(/\r$/, ""); errLines.push(line + "\n"); emit(line, "stderr"); }
     });
-    const timer = setTimeout(() => {
+    timer = setTimeout(() => {
       timedOut = true;
       killTree(child);
       setTimeout(() => {
@@ -1392,7 +1430,12 @@ async function runShellStreaming(ctx: ToolContext, command: string, resolvedCwd:
       }, 1000);
     }, timeout * 1000);
     child.on("close", () => {
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      if (cancelled) {
+        rejectPromise(cancelErrorFromSignal(signal!, "stop"));
+        return;
+      }
       if (outBuf) { outLines.push(outBuf); emit(outBuf, "stdout"); }
       if (errBuf) { errLines.push(errBuf); emit(errBuf, "stderr"); }
       if (timedOut) {
@@ -1417,7 +1460,12 @@ async function runShellStreaming(ctx: ToolContext, command: string, resolvedCwd:
       resolvePromise(truncate(combined) || "（无输出）");
     });
     child.on("error", (err: Error) => {
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      if (cancelled) {
+        rejectPromise(cancelErrorFromSignal(signal!, "stop"));
+        return;
+      }
       resolvePromise(`错误：无法启动命令：${err.message}`);
     });
   });
@@ -1477,6 +1525,7 @@ async function toolShell(ctx: ToolContext, command: string, cwd?: string | null,
       const result = await runSeatbelt(command, {
         workdir: resolvedCwd, allowNet: sandbox.allowNet,
         mode: sandbox.mode as "read-only" | "workspace-write", timeout,
+        signal: ctx.cancelSignal,
       });
       return formatSandboxResult(result);
     } catch (err) {
@@ -1494,6 +1543,7 @@ async function toolShell(ctx: ToolContext, command: string, cwd?: string | null,
       const result = await runWindowsSandboxed(command, {
         workdir: resolvedCwd,
         mode: sandbox.mode as "read-only" | "workspace-write", timeout,
+        signal: ctx.cancelSignal,
       });
       return formatSandboxResult(result);
     } catch (err) {
@@ -1516,6 +1566,7 @@ async function toolShell(ctx: ToolContext, command: string, cwd?: string | null,
         : undefined;
       const result = await runSandboxed(command, {
         workdir: resolvedCwd, allowNet: sandbox.allowNet, mode: sandbox.mode, timeout, onStream,
+        signal: ctx.cancelSignal,
       });
       return formatSandboxResult(result);
     } catch (err) {
@@ -1531,14 +1582,35 @@ async function toolShell(ctx: ToolContext, command: string, cwd?: string | null,
     console.error(toolLevelFallbackNotice(sandbox));
   }
   if (ctx.streamToolOutput && ctx.onEvent) {
-    return runShellStreaming(ctx, command, resolvedCwd, timeout);
+    return runShellStreaming(ctx, command, resolvedCwd, timeout, ctx.cancelSignal);
   }
-  return new Promise((resolvePromise) => {
+  return new Promise((resolvePromise, rejectPromise) => {
+    // 可靠性打磨第 1 项第一批：信号已 abort 时不启动，直接以 CancelError
+    // 拒绝；执行中 abort 时杀掉整个进程组，close 回来后以 CancelError
+    // 拒绝，不把“被取消”当成超时文本返回。
+    if (ctx.cancelSignal?.aborted) {
+      rejectPromise(cancelErrorFromSignal(ctx.cancelSignal, "stop"));
+      return;
+    }
     const child = spawn(wrapShellCommand(command), { shell: defaultShell(), cwd: resolvedCwd, detached: process.platform !== "win32" });
     let stdout = "";
     let stderr = "";
     let timedOut = false;
     let done = false;
+    let cancelled = false;
+    const onAbort = (): void => {
+      cancelled = true;
+      killTree(child);
+    };
+    ctx.cancelSignal?.addEventListener("abort", onAbort, { once: true });
+    const finishCancelled = (): void => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      if (grace) clearTimeout(grace);
+      ctx.cancelSignal?.removeEventListener("abort", onAbort);
+      rejectPromise(cancelErrorFromSignal(ctx.cancelSignal!, "stop"));
+    };
     const timeoutMessage = (): string => {
       let partial = stdout;
       if (stderr) {
@@ -1554,6 +1626,7 @@ async function toolShell(ctx: ToolContext, command: string, cwd?: string | null,
       done = true;
       clearTimeout(timer);
       if (grace) clearTimeout(grace);
+      ctx.cancelSignal?.removeEventListener("abort", onAbort);
       resolvePromise(value);
     };
     let grace: ReturnType<typeof setTimeout> | null = null;
@@ -1567,6 +1640,7 @@ async function toolShell(ctx: ToolContext, command: string, cwd?: string | null,
     child.stdout?.on("data", (d: Buffer) => { stdout += d.toString("utf-8"); });
     child.stderr?.on("data", (d: Buffer) => { stderr += d.toString("utf-8"); });
     child.on("close", () => {
+      if (cancelled) { finishCancelled(); return; }
       if (timedOut) { finish(timeoutMessage()); return; }
       let combined = stdout;
       if (stderr) {
@@ -1576,6 +1650,7 @@ async function toolShell(ctx: ToolContext, command: string, cwd?: string | null,
       finish(truncate(combined) || "（无输出）");
     });
     child.on("error", (err: Error) => {
+      if (cancelled) { finishCancelled(); return; }
       finish(`错误：无法启动命令：${err.message}`);
     });
   });
@@ -1588,7 +1663,7 @@ function stripTags(htmlText: string): string {
 
 /** 带 SSRF 检查的 fetch：起跳 URL 与重定向每一跳都先过 assertPublicUrl（审查报告第 5 项），
 // 最多跟 5 跳；302/303 转 GET 时去掉 body。 */
-async function fetchChecked(url: string, init: RequestInit, timeoutMs?: number): Promise<Response> {
+async function fetchChecked(url: string, init: RequestInit, timeoutMs?: number, signal?: AbortSignal): Promise<Response> {
   let current = url;
   let method = init.method ?? "GET";
   let body: RequestInit["body"] = init.body;
@@ -1597,9 +1672,15 @@ async function fetchChecked(url: string, init: RequestInit, timeoutMs?: number):
     await assertPublicUrl(current);
     const controller = new AbortController();
     const timer = timeoutMs === undefined ? undefined : setTimeout(() => controller.abort(), timeoutMs);
+    // 可靠性打磨第 1 项第一批：外部取消信号与内部超时信号合并——任一
+    // abort，请求就断。外部 abort 抛 CancelError（不是超时/网络错）。
+    const combined = signal ? combineSignals([signal, controller.signal]) : controller.signal;
     let res: Response;
     try {
-      res = await fetch(current, { ...init, method, body, headers, redirect: "manual", signal: controller.signal });
+      res = await fetch(current, { ...init, method, body, headers, redirect: "manual", signal: combined });
+    } catch (err: unknown) {
+      if (signal?.aborted) throw cancelErrorFromSignal(signal, "stop");
+      throw err;
     } finally {
       if (timer !== undefined) clearTimeout(timer);
     }
@@ -1620,15 +1701,15 @@ async function fetchChecked(url: string, init: RequestInit, timeoutMs?: number):
   throw new Error("重定向次数过多（超过 5 次）");
 }
 
-async function fetchText(url: string, headers: Record<string, string>, timeoutMs = 30000): Promise<string> {
-  const res = await fetchChecked(url, { headers }, timeoutMs);
+async function fetchText(url: string, headers: Record<string, string>, timeoutMs = 30000, signal?: AbortSignal): Promise<string> {
+  const res = await fetchChecked(url, { headers }, timeoutMs, signal);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return await res.text();
 }
 
 async function toolWebFetch(ctx: ToolContext, url: string): Promise<string> {
   try {
-    const text = await fetchText(url, { "User-Agent": "Nyra/0.2" });
+    const text = await fetchText(url, { "User-Agent": "Nyra/0.2" }, 30000, ctx.cancelSignal);
     const cleaned = stripTags(text);
     const { cleaned: sanitized, intercepted } = sanitizeUntrustedText(cleaned);
     let body = truncate(sanitized.replace(/\s+/g, " ").trim());
@@ -1639,6 +1720,9 @@ async function toolWebFetch(ctx: ToolContext, url: string): Promise<string> {
     }
     return body;
   } catch (err: unknown) {
+    // 可靠性打磨第 1 项第一批：取消不是抓取失败，CancelError 原样抛，
+    // 不吞成错误文本（调用方认得出“这是取消”）。
+    if (isCancelError(err)) throw err;
     return `错误：抓取失败：${err instanceof Error ? err.message : String(err)}`;
   }
 }
@@ -1692,7 +1776,7 @@ async function toolWebSearch(ctx: ToolContext, query: string, count = 8): Promis
       const results = parser(await fetchText(url, {
         "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-      }), count);
+      }, 30000, ctx.cancelSignal), count);
       if (results.length) {
         const rawBody = results.join("\n\n");
         let body = wrapUntrusted(rawBody, url);
@@ -1704,6 +1788,9 @@ async function toolWebSearch(ctx: ToolContext, query: string, count = 8): Promis
     }
       errors.push(`${name}：未返回可解析的结果`);
     } catch (err: unknown) {
+      // 可靠性打磨第 1 项第一批：取消不是搜索失败，CancelError 原样抛，
+      // 不吞进来源错误汇总里。
+      if (isCancelError(err)) throw err;
       errors.push(`${name}：${err instanceof ToolError ? err.message : `请求失败（${err instanceof Error ? err.message : String(err)}）`}`);
     }
   }
@@ -2466,10 +2553,12 @@ async function toolHttpPost(ctx: ToolContext, url: string, body = "", contentTyp
       method: "POST",
       headers: { "Content-Type": contentType, "User-Agent": "Nyra/0.2" },
       body,
-    });
+    }, undefined, ctx.cancelSignal);
     const text = await res.text();
     return `HTTP ${res.status}\n${truncate(text)}`;
   } catch (err: unknown) {
+    // 可靠性打磨第 1 项第一批：取消不是请求失败，CancelError 原样抛。
+    if (isCancelError(err)) throw err;
     return `错误：POST 请求失败：${err instanceof Error ? err.message : String(err)}`;
   }
 }
@@ -2709,6 +2798,9 @@ async function runPermissionRequestHook(
 }
 
 export async function executeTool(name: string, args: Record<string, unknown>, ctx: ToolContext): Promise<string> {
+  // 可靠性打磨第 1 项第一批：工具执行前先查取消信号——已 abort 就不动手，
+  // 直接抛 CancelError（调用方认得出“这是取消”，不记成工具失败）。
+  if (ctx.cancelSignal?.aborted) throw cancelErrorFromSignal(ctx.cancelSignal, "stop");
   try {
     // 调研报告第 1 项：Hooks 确定性钩子层（学 Claude Code）。
     // 钩子在审批之前跑：钩子先拦下危险操作，省一次人工审批打扰；审批流程本身不变。
@@ -2808,6 +2900,9 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
     return result;
   } catch (err: unknown) {
     if (err instanceof ApprovalRequired) throw err;
+    // 可靠性打磨第 1 项第一批：取消不是工具失败——原样上抛，调用方
+    // （Agent 主循环）才能认出“这是取消”而不是记成一次失败后继续跑。
+    if (isCancelError(err)) throw err;
     if (err instanceof ToolError) return `错误：${err.message}`;
     if (err instanceof TypeError) return `错误：工具参数不正确：${err.message}`;
     return `执行失败：${(err as Error)?.name ?? "Error"}: ${err instanceof Error ? err.message : String(err)}`;

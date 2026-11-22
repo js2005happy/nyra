@@ -64,8 +64,16 @@ import {
 } from "./verifier.ts";
 import {
   consumeSteers, finishSubagentRun, getSubagentRun, heartbeatSubagent, isStopRequested,
-  registerSubagentRun, type QueuedSteer,
+  markSubagentStopped, registerSubagentRun, type QueuedSteer,
 } from "./resume.ts";
+/**
+ * 统一取消信号（可靠性打磨第 1 项第一批）。cancel.ts 是叶子模块，
+ * 不 import 任何 src 内模块，这里静态导入不会形成循环导入。
+ */
+import {
+  CancelController, cancelErrorFromSignal, combineSignals, isCancelError,
+  type CancelError, type CancelReason,
+} from "./cancel.ts";
 import { checkOutputSchema, validateOutputSchema } from "./outputSchema.ts";
 import {
   runParallelDelegate, formatParallelResults, parallelConvergenceNote,
@@ -272,6 +280,13 @@ export interface AgentOptions {
    */
   tieredCapCheck?: ((runSpentUsd: number | null, runTokens: number) => { exceeded: boolean; message: string } | null) | null;
   /**
+   * 取消信号（可靠性打磨第 1 项第一批）：父级本次运行的信号，传给子
+   * Agent 时子任务的在途调用能被掐断（模型请求 abort、子进程 kill）。
+   * 只由 delegateDetailed 在构造子 Agent 时传；根 agent 不设。
+   * Bot 队列与 CLI 的 /stop 走 Agent.run(task, { signal })，不走这里。
+   */
+  cancelSignal?: AbortSignal;
+  /**
    * 工具检索（延迟加载）。两档行为：
    * - 默认：MCP 工具 > MCP_LAZY_LOAD_THRESHOLD 个时自动开（见 toolSchemas）
    * - 显式开启（config.tool_search.enabled 或 features.tool_search=true）：
@@ -438,6 +453,12 @@ export class Agent {
   autoCompactThreshold: number;
   autoCompactCount = 0;
   turn = 0;
+  /**
+   * 最近一次运行是否因取消停下（可靠性打磨第 1 项第一批）：cancelledText
+   * 设它，beginRun 清它。父级 delegateDetailed 靠它认出子任务是“被取消”
+   * 而不是“失败/完成”——被取消的子任务不验收、不重做、不标 completed。
+   */
+  lastCancelledReason: CancelReason | null = null;
   // 调研报告第 3 项：上下文补齐（学 Claude Code）——最近一次 run 的任务文本，
   // /context 无参数时按它算技能注入（与下一轮相同的注入口径）。
   lastTask = "";
@@ -461,6 +482,18 @@ export class Agent {
   delegateChain: string[];
   private maxCostUsd: number | null;
   private pricing: Pricing | null;
+  /**
+   * 统一取消信号（可靠性打磨第 1 项第一批）：父级传进来的外部信号
+   *（delegateDetailed 构造子 Agent 时给），与本轮自己的控制器合并后
+   * 才是当轮信号。根 agent 为 null。
+   */
+  private externalCancelSignal: AbortSignal | null;
+  /** 当轮的取消控制器（runLoop 开始时建，结束时清）。 */
+  private runCancel: CancelController | null = null;
+  /** 当轮的取消信号（控制器 + 外部信号 + run/resume 传入的信号合并）。 */
+  private runSignal: AbortSignal | null = null;
+  /** 停止监视定时器（runLoop 开始时起，结束时清；500ms 一查）。 */
+  private stopWatch: ReturnType<typeof setInterval> | null = null;
   /** 缺口 29：月度上限与本月已花（不含本次运行）；见 AgentOptions。 */
   private monthlyCostLimitUsd: number | null;
   private monthlySpentBeforeUsd: AgentOptions["monthlySpentBeforeUsd"];
@@ -583,6 +616,8 @@ export class Agent {
     // H-2/H-3：委派检查点认这个 id——delegateDetailed 派子 agent 时传 taskId。
     this.subagentRunId = opts.subagentRunId ?? null;
     this.maxCostUsd = typeof opts.maxCostUsd === "number" ? opts.maxCostUsd : null;
+    // 可靠性打磨第 1 项第一批：父级传进来的外部取消信号（子 Agent 用）。
+    this.externalCancelSignal = opts.cancelSignal ?? null;
     this.pricing = opts.pricing ?? null;
     this.monthlyCostLimitUsd = typeof opts.monthlyCostLimitUsd === "number" ? opts.monthlyCostLimitUsd : null;
     this.monthlySpentBeforeUsd = opts.monthlySpentBeforeUsd ?? null;
@@ -732,7 +767,7 @@ export class Agent {
       },
       { role: "user", content: `${input.prompt}\n\n事件载荷：\n${JSON.stringify(input.payload)}` },
     ];
-    const resp = await provider.chat(messages as never, [] as never);
+    const resp = await provider.chat(messages as never, [] as never, undefined, { signal: this.runSignal ?? undefined });
     const msg = ((resp.choices as Record<string, unknown>[])?.[0]?.message ?? {}) as Record<string, unknown>;
     return typeof msg.content === "string" ? msg.content : "";
   }
@@ -1385,15 +1420,129 @@ export class Agent {
     return sections.join("\n\n");
   }
 
-  async run(task: string): Promise<string> {
-    return this.runLoop(task, false);
+  async run(task: string, opts?: { signal?: AbortSignal }): Promise<string> {
+    return this.runLoop(task, false, opts?.signal ?? null);
   }
 
-  async resume(task: string): Promise<string> {
-    return this.runLoop(task, true);
+  async resume(task: string, opts?: { signal?: AbortSignal }): Promise<string> {
+    return this.runLoop(task, true, opts?.signal ?? null);
   }
 
-  private async runLoop(task: string, resume: boolean): Promise<string> {
+  /**
+   * 运行循环外壳（可靠性打磨第 1 项第一批）：建当轮取消控制器、合并
+   * 外部信号、起停止监视；CancelError 在这里收敛成“已取消”的部分成果
+   * 文本（不往上抛），底层确认停下后才释放执行槽位（endRun 在 finally
+   * 里清监视器与信号）。正常路径的行为不变。
+   */
+  private async runLoop(task: string, resume: boolean, signal?: AbortSignal | null): Promise<string> {
+    this.beginRun(signal ?? null);
+    try {
+      return await this.runLoopInner(task, resume);
+    } catch (err: unknown) {
+      if (isCancelError(err)) return this.cancelledText(err as CancelError);
+      throw err;
+    } finally {
+      this.endRun();
+    }
+  }
+
+  /**
+   * 当轮取消信号就绪（可靠性打磨第 1 项第一批）：本轮控制器 + 父级
+   * 传进来的外部信号 + run/resume 传入的信号，三者合并成当轮信号，
+   * 同时填进 ToolContext（工具执行前查它）。监视器每 500ms 查一次：
+   * 子 agent 注册表里的停止请求（/stop、subagent stop）与成本上限
+   * 触顶——任一命中就发取消信号。监视器读注册表/算成本出错时绝不
+   * abort（读失败不等于该停），只跳过这一轮。
+   */
+  private beginRun(signal: AbortSignal | null): void {
+    const cancel = new CancelController();
+    this.runCancel = cancel;
+    this.lastCancelledReason = null;
+    this.runSignal = combineSignals([cancel.signal, this.externalCancelSignal, signal]);
+    if (this.ctx) this.ctx.cancelSignal = this.runSignal;
+    this.stopWatch = setInterval(() => {
+      const c = this.runCancel;
+      if (!c || c.aborted) return;
+      try {
+        if (this.subagentRunId && isStopRequested(this.home, this.subagentRunId)) {
+          c.abort("stop");
+          return;
+        }
+      } catch { /* 注册表读失败不 abort，只跳过这一轮 */ }
+      try {
+        if (this.costCapTripped()) c.abort("budget");
+      } catch { /* 成本判定出错不 abort，只跳过这一轮 */ }
+    }, 500);
+  }
+
+  private endRun(): void {
+    if (this.stopWatch) { clearInterval(this.stopWatch); this.stopWatch = null; }
+    this.runCancel = null;
+    this.runSignal = null;
+    if (this.ctx) this.ctx.cancelSignal = undefined;
+  }
+
+  /**
+   * 成本上限是否已触顶（可靠性打磨第 1 项第一批）：与 checkCost 同口径
+   * 的“只读判定”——单次上限（--max-cost）与月度上限都算，不抛错、
+   * 不记事件，只回答超没超。金额算不出（未配单价 / provider 未报用量）
+   * 时返回 false，不假装封顶（与 checkCost 同一条诚实边界；严格的
+   * “金额未知则暂停”是第 2 项并发预算预留的事，本批不做）。
+   * 分层上限（tieredCapCheck 回调）不进这里：回调只在用量上报后跑，
+   * 在途调用还没上报，判不了——仍由 checkCost 在调用返回后硬停。
+   */
+  private costCapTripped(): boolean {
+    if (this.maxCostUsd === null && this.monthlyCostLimitUsd === null) return false;
+    const e = estimateCost(this.usage.snapshot(), this.pricing, this.maxCostUsd);
+    const voiceUsd = this.voiceSpentUsd;
+    if (this.maxCostUsd !== null) {
+      if (e.status === "priced" && typeof e.spentUsd === "number") {
+        if (e.spentUsd + this.delegateSpentUsd + voiceUsd > this.maxCostUsd) return true;
+      } else if (voiceUsd > 0 && this.delegateSpentUsd + voiceUsd > this.maxCostUsd) {
+        return true;
+      }
+    }
+    if (this.monthlyCostLimitUsd !== null && ((e.status === "priced" && e.spentUsd !== null) || voiceUsd > 0)) {
+      const before = this.monthlySpentBeforeUsd?.() ?? null;
+      const check = checkMonthlyCap(before?.spentUsd ?? null, (e.spentUsd ?? 0) + voiceUsd, this.monthlyCostLimitUsd);
+      if (check.exceeded && check.monthSpentUsd !== null) return true;
+    }
+    return false;
+  }
+
+  /**
+   * 取消收敛（可靠性打磨第 1 项第一批）：CancelError 到这里就不再往上
+   * 抛——运行以“已取消”的部分成果文本收尾。来源按原因定：budget →
+   * budget-cap；timeout → timeout；stop 时外部信号已 abort 说明是
+   * 父级/Bot 队列掐的（external-signal），否则是注册表里的停止请求
+   *（stop-request）。事件 run_cancelled 经 onEvent 进证据链；子 agent
+   * 行在确认底层真的停了之后才标 stopped（markSubagentStopped）——
+   * 能走到这里，模型请求已 abort、子进程已退出、工具已收尾，就是
+   * “真的停了”。写事件/注册表失败不改变取消结论（只吞错，不谎报）。
+   */
+  private cancelledText(err: CancelError): string {
+    const reason: CancelReason = err.reason;
+    this.lastCancelledReason = reason;
+    const source = reason === "budget"
+      ? "budget-cap"
+      : reason === "timeout"
+        ? "timeout"
+        : this.externalCancelSignal?.aborted
+          ? "external-signal"
+          : "stop-request";
+    try {
+      this.emit("run_cancelled", { reason, source });
+    } catch { /* 事件写失败不改变取消结论 */ }
+    if (this.subagentRunId) {
+      try {
+        markSubagentStopped(this.home, this.subagentRunId, { by: "agent", step: `第 ${this.turn} 轮后停下` });
+      } catch { /* 注册表写失败不改变取消结论 */ }
+    }
+    const reasonText = reason === "budget" ? "成本上限已触顶" : reason === "timeout" ? "超时" : "收到停止请求";
+    return `已取消（${reasonText}）：在途调用已 abort、子进程已退出、工具已收尾，运行在第 ${this.turn} 轮后停下。已做的部分成果保留，未做的步骤不再继续。`;
+  }
+
+  private async runLoopInner(task: string, resume: boolean): Promise<string> {
     if (!resume && this.voiceInputs.length > 0) {
       // 缺口 15：首轮带语音——先转写（本地 whisper 优先、云端兜底；失败直接
       // 报错，不静默降级），转写文本当任务文本；转写只记元数据与文本指纹进证据链。
@@ -1482,7 +1631,10 @@ export class Agent {
       };
       let resp: Record<string, unknown>;
       try {
-        resp = await actModel.chat(current as never, schemas as never);
+        // 可靠性打磨第 1 项第一批：当轮取消信号传给模型请求——abort 时
+        // 在途请求断开并抛 CancelError（不是 ProviderError，原样上抛，
+        // 外壳 runLoop 收敛成“已取消”的部分成果文本）。
+        resp = await actModel.chat(current as never, schemas as never, undefined, { signal: this.runSignal ?? undefined });
       } catch (err: unknown) {
         emitLlmSpan(false);
         if (err instanceof ProviderError) throw new AgentError(String(err));
@@ -1853,7 +2005,9 @@ export class Agent {
     const gate = modelSupportsVision(model, provider.name);
     if (!gate.supported) throw new AgentError(visionGateMessage(model, provider.name));
     const msg = buildVisionUserMessage(prompt, images);
-    const resp = await provider.chat([msg] as never, null);
+    // 可靠性打磨第 1 项第一批：当轮取消信号传给视觉模型请求（runLoop 外
+    // 调用时 runSignal 为 null，不传信号，行为与原来一致）。
+    const resp = await provider.chat([msg] as never, null, undefined, { signal: this.runSignal ?? undefined });
     this.usage.record(resp as never);
     this.checkCost();
     this.emitVisionInput(images, model);
@@ -2168,6 +2322,9 @@ export class Agent {
       // H-2/H-3：子 agent 的注册表行 id——检查点（引导消费 + 停止响应 +
       // 心跳）认它；没注册成功时传 null，检查点不跑。
       subagentRunId: registered ? taskId : null,
+      // 可靠性打磨第 1 项第一批：父级当轮信号 + 本次委派传入的信号，
+      // 合并后传给子 Agent——父级被取消时子任务的在途调用跟着 abort。
+      cancelSignal: combineSignals([this.runSignal, opts.signal]),
       // 缺口 3a：并行线程的收敛规则写进子任务的系统提示（只做自己那件任务、
       // 不碰别线程的文件、收尾写收敛小结）；串行 delegate 不受影响。
       systemInstructions: childSystemInstructions,
@@ -2312,6 +2469,20 @@ export class Agent {
           ? task + schemaNote
           : `${task}\n\n（验收打回重做：上一次验收未通过——${firstFailNote}请只改这些问题，不要重做已通过的部分。）${schemaNote}`;
         summary = await child.run(taskText);
+        // 可靠性打磨第 1 项第一批：子任务因取消停下——不验收、不重做、
+        // 不标 completed/failed。行已由子任务自己在确认底层停下后标
+        // stopped（markSubagentStopped）；这里只记账、发结束事件、清
+        // worktree，交回“已取消”的结果（摘要里是子任务留下的部分成果）。
+        if (child.lastCancelledReason) {
+          recordChildUsage();
+          try {
+            this.emit("delegate_end", { task_id: taskId, ok: false, turns: child.turn, spent_usd: childSpentUsd, verification: "not-verified" });
+          } catch { /* 观察器故障绝不破坏主流程 */ }
+          await this.runSubagentStopHook(taskId, task, false);
+          if (worktreePath) spawnSync("git", ["worktree", "remove", "--force", worktreePath], { cwd: this.workdir, windowsHide: true });
+          const reasonText = child.lastCancelledReason === "budget" ? "成本上限已触顶" : child.lastCancelledReason === "timeout" ? "超时" : "收到停止请求";
+          return { ...delegateFailed(`子任务已取消（${reasonText}）：在途调用已 abort、子进程已退出，运行在第 ${child.turn} 轮后停下。已做的部分成果保留，未做的步骤不再继续。\n${summary}`), spentUsd: childSpentUsd, model: child.provider.model ?? null };
+        }
         // 缺口 19：SubagentStop 钩子——只通知，不拦截；失败只警告。
         await this.runSubagentStopHook(taskId, task, true);
         if (worktreePath) {
@@ -2418,6 +2589,23 @@ export class Agent {
       );
     } catch (err: unknown) {
       recordChildUsage();
+      // 可靠性打磨第 1 项第一批：子任务因取消停下（正常走 child.run 的
+      // 收敛文本，这里是兜底——例如取消发生在验收/重做环节）——不标
+      // failed，行在确认底层停下后标 stopped。
+      if (isCancelError(err)) {
+        if (registered) {
+          try {
+            markSubagentStopped(this.home, taskId, { by: "agent", step: `第 ${child.turn} 轮后停下` });
+          } catch { /* 注册表写失败不改变取消结论 */ }
+        }
+        try {
+          this.emit("delegate_end", { task_id: taskId, ok: false, turns: child.turn, spent_usd: childSpentUsd, verification: "not-verified" });
+        } catch { /* 观察器故障绝不破坏主流程 */ }
+        await this.runSubagentStopHook(taskId, task, false);
+        if (worktreePath) spawnSync("git", ["worktree", "remove", "--force", worktreePath], { cwd: this.workdir, windowsHide: true });
+        const reasonText = (err as CancelError).reason === "budget" ? "成本上限已触顶" : (err as CancelError).reason === "timeout" ? "超时" : "收到停止请求";
+        return { ...delegateFailed(`子任务已取消（${reasonText}）：在途调用已 abort、子进程已退出，运行在第 ${child.turn} 轮后停下。已做的部分成果保留，未做的步骤不再继续。`), spentUsd: childSpentUsd, model: child.provider.model ?? null };
+      }
       if (registered) finishSubagentRun(this.home, taskId, "failed");
       // 缺口 21：子任务结束（失败路径）。
       try {
@@ -2470,7 +2658,7 @@ export class Agent {
    */
   async delegateParallel(
     tasks: ParallelTaskSpec[],
-    opts: { maxConcurrency?: number; timeoutMs?: number; enqueueReview?: boolean; merge?: boolean; mergeTitle?: string; mergeFormat?: MergeFormat; onThreadDone?: (r: ParallelThreadResult) => void } = {},
+    opts: { maxConcurrency?: number; timeoutMs?: number; enqueueReview?: boolean; merge?: boolean; mergeTitle?: string; mergeFormat?: MergeFormat; onThreadDone?: (r: ParallelThreadResult) => void; signal?: AbortSignal } = {},
   ): Promise<ParallelDelegateResult> {
     const resolved = resolveParallelOptions(opts);
     if (!Array.isArray(tasks) || tasks.length === 0) {
@@ -2490,9 +2678,10 @@ export class Agent {
         model: null,
         evidence: emptyParallelThreadEvidence(),
         schemaValid: null,
+        stopConfirmed: true,
       }));
       return {
-        results, succeeded: 0, failed: 0, timedOut: 0, rejected: tasks.length,
+        results, succeeded: 0, failed: 0, timedOut: 0, rejected: tasks.length, cancelled: 0,
         totalSpentUsd: null, totalDurationMs: 0,
           pendingAfterTimeout: 0,
         maxConcurrency: resolved.maxConcurrency, timeoutMs: resolved.timeoutMs,
@@ -2515,9 +2704,10 @@ export class Agent {
         model: null,
         evidence: emptyParallelThreadEvidence(),
         schemaValid: null,
+        stopConfirmed: true,
       }));
       return {
-        results, succeeded: 0, failed: 0, timedOut: 0, rejected: tasks.length,
+        results, succeeded: 0, failed: 0, timedOut: 0, rejected: tasks.length, cancelled: 0,
         totalSpentUsd: null, totalDurationMs: 0,
           pendingAfterTimeout: 0,
         maxConcurrency: resolved.maxConcurrency, timeoutMs: resolved.timeoutMs,
@@ -2531,7 +2721,7 @@ export class Agent {
     // 被拒的线程不占预算。
     const startable = Math.min(tasks.length, this.delegateBudget.remaining(this.delegateDepth));
     const ran = await runParallelDelegate(
-      async (spec, index): Promise<ParallelThreadOutcome> => {
+      async (spec, index, signal): Promise<ParallelThreadOutcome> => {
         const d = await this.delegateDetailed(spec.task, spec.maxTurns ?? 6, {
           isolation: spec.isolation,
           ...(Array.isArray(spec.tools) ? { tools: spec.tools } : {}),
@@ -2541,6 +2731,9 @@ export class Agent {
           ...(typeof spec.agent === "string" && spec.agent.trim() ? { agent: spec.agent.trim() } : {}),
           // H-7：并行线程的 orchestrator 授予（只认 true；没给就是 flat）。
           ...(spec.orchestrator === true ? { orchestrator: true } : {}),
+          // 可靠性打磨第 1 项第一批：线程取消信号传给子任务（超时/整批
+          // 取消时子任务的在途调用跟着 abort）。
+          ...(signal ? { signal } : {}),
           parallel: { index, total: tasks.length },
         });
         return {
@@ -2558,7 +2751,9 @@ export class Agent {
         };
       },
       tasks.slice(0, startable),
-      { maxConcurrency: opts.maxConcurrency, timeoutMs: opts.timeoutMs, onThreadDone: opts.onThreadDone },
+      // 可靠性打磨第 1 项第一批：整批取消信号传进去——abort 时在跑线程
+      // 收信号、排队线程直接标 cancelled 不再启动。
+      { maxConcurrency: opts.maxConcurrency, timeoutMs: opts.timeoutMs, onThreadDone: opts.onThreadDone, signal: opts.signal },
     );
     const results: ParallelThreadResult[] = [...ran.results];
     for (let i = startable; i < tasks.length; i++) {
@@ -2572,17 +2767,20 @@ export class Agent {
         model: null,
         evidence: emptyParallelThreadEvidence(),
         schemaValid: null,
+        stopConfirmed: true,
       });
     }
     let succeeded = 0;
     let failed = 0;
     let timedOut = 0;
     let rejected = 0;
+    let cancelled = 0;
     let totalSpent: number | null = null;
     for (const r of results) {
       if (r.status === "ok") succeeded += 1;
       else if (r.status === "failed") failed += 1;
       else if (r.status === "timeout") timedOut += 1;
+      else if (r.status === "cancelled") cancelled += 1;
       else rejected += 1;
       if (typeof r.evidence.spentUsd === "number") totalSpent = (totalSpent ?? 0) + r.evidence.spentUsd;
     }
@@ -2593,9 +2791,12 @@ export class Agent {
       max_concurrency: resolved.maxConcurrency,
     });
     const result: ParallelDelegateResult = {
-      results, succeeded, failed, timedOut, rejected,
+      results, succeeded, failed, timedOut, rejected, cancelled,
       totalSpentUsd: totalSpent, totalDurationMs: ran.totalDurationMs,
-        pendingAfterTimeout: timedOut,
+        // 可靠性打磨第 1 项第一批：pendingAfterTimeout 是“宽限期内未确认
+        // 停下的线程数”（runParallelDelegate 里按 stopConfirmed 算），
+        // 不是超时线程数——别再拿 timedOut 冒充。
+        pendingAfterTimeout: ran.pendingAfterTimeout,
       maxConcurrency: ran.maxConcurrency, timeoutMs: ran.timeoutMs,
       maxConcurrencyClamped: ran.maxConcurrencyClamped,
       reviewEnqueued: [], reviewEnqueueError: null, merged: null,
@@ -2767,7 +2968,7 @@ export class Agent {
             try {
               appendInbox(
                 fanout.id, "fanout-thread",
-                `后台扇出 ${fanout.id}：线程 ${r.index + 1}${r.status === "ok" ? "完成" : r.status === "timeout" ? "超时" : r.status === "failed" ? "失败" : "被拒"}（${(r.task ?? "").slice(0, 60)}）`,
+                `后台扇出 ${fanout.id}：线程 ${r.index + 1}${r.status === "ok" ? "完成" : r.status === "timeout" ? "超时" : r.status === "failed" ? "失败" : r.status === "cancelled" ? "已取消" : "被拒"}（${(r.task ?? "").slice(0, 60)}）`,
                 this.home,
               );
             } catch { /* 回填写失败不挡主流程 */ }
@@ -2779,18 +2980,20 @@ export class Agent {
       let current;
       try { current = getFanout(this.home, fanout.id); } catch { return; }
       if (current.status === "interrupted") return;
-      const failedCount = result.failed + result.timedOut + result.rejected;
+      // 可靠性打磨第 1 项第一批：被取消的线程不算“失败”，但也不算成功——
+      // 计入未完成数，扇出状态按 partial/failed 判，不谎报 done。
+      const failedCount = result.failed + result.timedOut + result.rejected + result.cancelled;
       const status = result.succeeded === 0 ? "failed" : failedCount === 0 ? "done" : "partial";
       const reviewItemIds = [...(result.reviewEnqueued ?? [])];
       if (result.merged?.reviewItemId) reviewItemIds.push(result.merged.reviewItemId);
       if (kanbanTaskId) {
         try {
           if (status === "failed") {
-            failKanbanTask(this.home, kanbanTaskId, `后台扇出失败：成功 0/${tasks.length}（失败 ${result.failed}、超时 ${result.timedOut}、被拒 ${result.rejected}）`);
+            failKanbanTask(this.home, kanbanTaskId, `后台扇出失败：成功 0/${tasks.length}（失败 ${result.failed}、超时 ${result.timedOut}、被拒 ${result.rejected}${result.cancelled ? `、被取消 ${result.cancelled}` : ""}）`);
           } else {
             verifyKanbanTask(this.home, kanbanTaskId, {
               method: "fanout",
-              summary: `成功 ${result.succeeded}/${tasks.length}${failedCount ? `，失败 ${result.failed}、超时 ${result.timedOut}、被拒 ${result.rejected}` : ""}；合并${result.merged ? (result.merged.verified ? "已核验" : "核验未通过") : "未启用"}`,
+              summary: `成功 ${result.succeeded}/${tasks.length}${failedCount ? `，失败 ${result.failed}、超时 ${result.timedOut}、被拒 ${result.rejected}${result.cancelled ? `、被取消 ${result.cancelled}` : ""}` : ""}；合并${result.merged ? (result.merged.verified ? "已核验" : "核验未通过") : "未启用"}`,
               passed: true,
             });
             completeKanbanTask(this.home, kanbanTaskId);
@@ -2799,7 +3002,7 @@ export class Agent {
       }
       const head = `后台扇出 ${fanout.id} ${status === "done" ? "已完成" : status === "partial" ? "部分完成" : "失败"}：` +
         `成功 ${result.succeeded}/${tasks.length}` +
-        (failedCount ? `（失败 ${result.failed}、超时 ${result.timedOut}、被拒 ${result.rejected}）` : "") +
+        (failedCount ? `（失败 ${result.failed}、超时 ${result.timedOut}、被拒 ${result.rejected}${result.cancelled ? `、被取消 ${result.cancelled}` : ""}）` : "") +
         `，花费 ${result.totalSpentUsd === null ? "未知（未计价）" : "$" + result.totalSpentUsd.toFixed(4)}。`;
       const tail = result.merged
         ? `合并交付物「${result.merged.title}」${result.merged.verified ? "确定性检查全过" : "确定性检查未通过，须人批复后再用"}，` +

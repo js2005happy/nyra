@@ -1050,6 +1050,14 @@ export function buildTimeline(store: RunStore, runId: string): Timeline {
       case "interrupted":
         push(at, "event", "运行中断", null, false, null);
         break;
+      case "run_cancelled": {
+        // 可靠性打磨第 1 项第一批：运行因取消停下——原因与来源都写清，
+        // 不记任务正文。reason/source 是英文码，这里翻成中文再展示。
+        const reasonText = str(ev.reason) === "timeout" ? "超时" : str(ev.reason) === "budget" ? "成本上限已触顶" : "收到停止请求";
+        const sourceText = str(ev.source) === "budget-cap" ? "成本上限" : str(ev.source) === "external-signal" ? "父级/队列取消" : str(ev.source) === "timeout" ? "超时" : "停止请求";
+        push(at, "event", `运行已取消（${reasonText}，来源：${sourceText}）`, null, false, null);
+        break;
+      }
       case "final":
         push(at, "run", "运行结束（模型给出最终回答）", null, null, null);
         break;

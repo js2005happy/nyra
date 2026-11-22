@@ -433,12 +433,12 @@ export function suspendSubagentRun(home: string, runId: string, reason = "人工
 //
 // 语义是“请求停止”，不是“已停止”：requestSubagentStop 只在注册表上记
 // 一笔请求（stopRequestedAt/By/Note），并把绑了同一运行的 working 任务
-// 板任务送 review（partial 路径：部分成果留着，等人看）；子 agent 本身
-// 在下一个安全点停下——停没停下来，以 acknowledgeSubagentStop 的确认
-// 为准，停不下来就如实写“仍在跑”，不谎称已停。模型调用本身不能真中断
-// （与 Bot /stop 同一限制），已发出去的外部动作也停不掉。
-// 委派主循环里的检查点调 isStopRequested（下一批接线：delegate 调用点
-// 自动注册 + 检查点，本批只留钩子与注册表/任务板侧的完整语义）。
+// 板任务送 review（partial 路径：部分成果留着，等人看）；子 agent 的
+// 运行循环收到请求后发取消信号——在途模型调用 abort、在途工具与子进程
+// 被掐断（可靠性打磨第 1 项第一批，见 docs/cancellation.md），底层确认
+// 停下后运行自己调 markSubagentStopped 标 stopped；没停下来就保持
+// running，行如实写“正在停止”，不谎称已停。已发出去的外部动作停不掉。
+// 人工确认仍走 acknowledgeSubagentStop（confirm-stopped）。
 export interface StopReport {
   requested: string[];
   alreadyRequested: string[];
@@ -602,7 +602,11 @@ export function requestSubagentStop(
 /** 确认停下：running/resume_pending 的行标 stopped（stopReason cancelled），
  * 停在哪一步以心跳检查点为准，调用方给了 --step 就以给的为准。确认是
  * 对“已经停了”这个事实的断言——没停下来不要调它，调了就是谎报。
- * 绑的任务板任务留在 review，等人看部分成果再定去向（不停任务板的状态机）。 */
+ * 绑的任务板任务留在 review，等人看部分成果再定去向（不停任务板的状态机）。
+ *
+ * 可靠性打磨第 1 项第一批：运行循环自己确认停下时调 markSubagentStopped
+ *（同一语义，只是调用方是运行本身——它已确认底层真的停了；人工确认
+ * 仍走本函数）。 */
 export function acknowledgeSubagentStop(
   home: string,
   runId: string,
@@ -618,6 +622,36 @@ export function acknowledgeSubagentStop(
   row.status = "stopped";
   row.stopReason = "cancelled";
   row.stoppedAt = nowIso();
+  row.updatedAt = nowIso();
+  saveSubagentRegistry(home, registry);
+  appendStopEvent(home, runId, "subagent_stopped", { run_id: runId, by, step: row.lastStep ?? "" });
+  return row;
+}
+
+/**
+ * 运行自己确认停下（可靠性打磨第 1 项第一批）：与 acknowledgeSubagentStop
+ * 同一语义、同一事件，只是调用方是运行循环本身——它在取消信号发出后已
+ * 确认底层真的停了（模型请求已 abort、子进程已退出、工具已收尾），才调
+ * 本函数标 stopped。调用时若行上还有待处理的停止请求，一并清掉（请求
+ * 已兑现）；行已终态时不做任何事（返回当前行，不抛错——运行收尾路径
+ * 不应因注册表状态再炸一次）。
+ */
+export function markSubagentStopped(
+  home: string,
+  runId: string,
+  opts?: { by?: string; step?: string },
+): SubagentRun {
+  const by = (opts?.by ?? "agent").slice(0, 60);
+  const registry = loadSubagentRegistry(home);
+  const row = getRun(registry, runId);
+  if (row.status !== "running" && row.status !== "resume_pending") return row;
+  if (opts?.step) row.lastStep = String(opts.step).slice(0, 300);
+  row.status = "stopped";
+  row.stopReason = "cancelled";
+  row.stoppedAt = nowIso();
+  row.stopRequestedAt = null;
+  row.stopRequestedBy = null;
+  row.stopNote = null;
   row.updatedAt = nowIso();
   saveSubagentRegistry(home, registry);
   appendStopEvent(home, runId, "subagent_stopped", { run_id: runId, by, step: row.lastStep ?? "" });
@@ -649,7 +683,7 @@ const USAGE =
   "  sweep [--auto]        启动扫荡：running 的行按心跳标 resume_pending/挂起；--auto 只续跑 autoResume=true 的行\n" +
   "  resume <运行 id> [--force]   先验状态再续跑；无人值守的行强制只读；挂起的行须 --force\n" +
   "  suspend <运行 id>\n" +
-  "  stop <运行 id> --yes [--reason \"<原因>\"] [--by <名字>]   请求停止（沿 parentRunId 递归停子树；只记请求，停没停下以 confirm-stopped 为准）\n" +
+  "  stop <运行 id> --yes [--reason \"<原因>\"] [--by <名字>]   请求停止（沿 parentRunId 递归停子树；在途调用收到取消信号后 abort，停没停下以 confirm-stopped 为准）\n" +
   "  confirm-stopped <运行 id> [--step \"<停在哪一步>\"] [--by <名字>]   确认已停下（只对已停的事实断言，没停不要调）\n" +
   "  cancel-stop <运行 id> [--by <名字>]   取消停止请求（任务板任务若已进 review，等人用 kanban decide 定）\n" +
   "  steer <运行 id> \"<引导文本>\" --yes [--by <名字>]   排队引导（只确认“已排队”，子 agent 在下一个检查点消费；在跑的工具调用不会被打断）\n";
@@ -754,7 +788,7 @@ export async function handleSubagent(argv: string[], home: string): Promise<numb
       if (report.requested.length) parts.push(`已请求停止 ${report.requested.length} 个：${report.requested.join("、")}`);
       if (report.alreadyRequested.length) parts.push(`早已请求过 ${report.alreadyRequested.length} 个：${report.alreadyRequested.join("、")}`);
       for (const s of report.skipped) parts.push(`${s.runId} 未停：${s.reason}`);
-      parts.push("注意：这只是“请求停止”，子 agent 在下一个安全点停下后，须用 nyra subagent confirm-stopped 确认。");
+      parts.push("注意：这只是“请求停止”，在途调用收到取消信号后 abort、确认停下后行才标 stopped；若宽限内没停下来，行保持 running、如实写“正在停止”，须用 nyra subagent confirm-stopped 确认。");
       process.stdout.write(parts.join("\n") + "\n");
       return 0;
     }
