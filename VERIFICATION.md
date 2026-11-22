@@ -1,3 +1,10 @@
+## 2026-11-23 — Web fetch exception privacy (static inspection only)
+
+- Reviewed README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/Tools and prior privacy tests, recent commits, open Issues/PR #113 and available commit status (no statuses returned). Source finding: `_tool_web_fetch` exposed arbitrary network exception text. This is an inferred risk, not a reproduced incident.
+- Changed only the exception return to a fixed message; added two unexecuted regression definitions covering sensitive exception text and successful fetch preservation. No project network request was executed.
+- External feedback reviewed 2026-11-23: [Codex #31015](https://github.com/openai/codex/issues/31015) (2026-07-03), [Codex #34233](https://github.com/openai/codex/issues/34233) (2026-07-19). These external reports do not prove an Angel incident or frequency.
+- **NOT RUN:** tests, compilation, builds, CI, cross-platform checks. Normal fetched content, URL metadata, HTTP POST responses and other tools remain outside this change; no comprehensive secret-scanning claim.
+
 ## 2026-11-23 — Web search exception privacy (static inspection only)
 
 - Reviewed development README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, core Agent/Tools and structured status classifier, latest commits, open Issues/PR and available CI status before editing. Source finding: `web_search` interpolated ToolError and arbitrary network exception strings into model-visible error summaries; these may include user queries, URLs or credentials. This is a source-derived risk, not a reproduced incident.
