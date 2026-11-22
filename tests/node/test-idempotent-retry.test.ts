@@ -11,6 +11,7 @@ import {
   sleepMs, MAX_SAME_PROVIDER_RETRIES,
   type ProviderLike,
 } from "../../src/providers.ts";
+import { isCancelError } from "../../src/cancel.ts";
 import {
   executeTool, executeToolIdempotent, verifyWriteApplied, READONLY_TOOLS,
   newToolContext, workspaceShellCwd,
@@ -147,7 +148,9 @@ test("IdempotentRetry.test_sleep_is_interruptible", async () => {
   let caught: unknown = null;
   try { await sleepMs(5000, controller.signal); } catch (e) { caught = e; }
   expect(caught).toBeInstanceOf(Error);
-  // 退避睡眠被中断时 FallbackProvider 不再重发，直接抛原错。
+  // 退避睡眠被中断时 FallbackProvider 不再重发：信号已 abort 就是取消，
+  // 直接抛 CancelError（不是原错）；进来时已 abort 的信号连 provider
+  // 都不再尝试（可靠性打磨第 1 项第一批的新口径，旧口径“抛原错”已作废）。
   let calls = 0;
   const flaky = fakeProvider("flaky", async () => {
     calls += 1;
@@ -158,8 +161,8 @@ test("IdempotentRetry.test_sleep_is_interruptible", async () => {
   ac.abort();
   let caught2: unknown = null;
   try { await fb.chat([{ role: "user", content: "hi" }], undefined, 60, { signal: ac.signal }); } catch (e) { caught2 = e; }
-  expect((caught2 as ProviderError).kind).toBe("server");
-  expect(calls).toBe(1);
+  expect(isCancelError(caught2)).toBe(true);
+  expect(calls).toBe(0);
 });
 
 // ---- 工具侧 ----

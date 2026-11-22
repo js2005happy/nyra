@@ -9,7 +9,7 @@ import { spawnSync } from "node:child_process";
 import { Agent, parsePorcelainChangedFiles } from "../../src/agent.ts";
 import {
   runParallelDelegate, formatParallelResults, parallelConvergenceNote,
-  resolveParallelOptions, DEFAULT_PARALLEL_TASK_TIMEOUT_MS,
+  resolveParallelOptions, DEFAULT_PARALLEL_TASK_TIMEOUT_MS, DEFAULT_CANCEL_GRACE_MS,
   type ParallelThreadOutcome,
 } from "../../src/parallelDelegate.ts";
 import { echoProvider, fakeProvider } from "./fake-provider.ts";
@@ -40,7 +40,7 @@ function okOutcome(summary = "完成。"): ParallelThreadOutcome {
 
 test("选项解析：并发超过 5 夹到 5 并注明，小于 1 夹到 1，超时非法回默认", () => {
   expect(resolveParallelOptions({})).toEqual(
-    { maxConcurrency: 5, timeoutMs: DEFAULT_PARALLEL_TASK_TIMEOUT_MS, maxConcurrencyClamped: false },
+    { maxConcurrency: 5, timeoutMs: DEFAULT_PARALLEL_TASK_TIMEOUT_MS, maxConcurrencyClamped: false, cancelGraceMs: DEFAULT_CANCEL_GRACE_MS },
   );
   expect(resolveParallelOptions({ maxConcurrency: 8 }).maxConcurrency).toBe(5);
   expect(resolveParallelOptions({ maxConcurrency: 8 }).maxConcurrencyClamped).toBe(true);
