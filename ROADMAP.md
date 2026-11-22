@@ -1,3 +1,10 @@
+## 2026-11-22 — P1 trusted local list_dir structured report (static-only)
+
+- **Repository fact (source inspection):** the local `list_dir` handler has direct filesystem control-flow information, but Agent previously classified its returned text. A filename starting with `错误：` can therefore be mistaken for a failed listing when it is simply data. This is a static inference, not a runtime reproduction.
+- **External report reviewed 2026-11-22:** [Codex #60104](https://github.com/openai/codex/issues/60104), opened 2026-11-07, describes repeated work and confusing progress claims. This individual report does not establish prevalence or prove the local filename issue.
+- **Priority ranking (value / difficulty / safety risk / dependency):** P1 local read-only typed adapter high / medium / low / existing StructuredToolReport (**implemented, untested**); P1 additional trusted adapters high / medium / medium / provenance-safe source (**open**); P1 independent side-effect receipts high / high / high / external authority (**blocked**); P1 private task persistence high / medium / medium-high / secure storage (**blocked**).
+- The local-only adapter reports outcomes from filesystem operations, not text. Model-visible listing remains a string; remote backend and MCP paths are unchanged. This is not independent verification or authorization for retry/resume. No tests/CI run.
+
 ## 2026-11-22 — P1 blank legacy tool outcome fail-closed (static-only)
 
 - **Repository fact:** blank and whitespace-only string tool returns were classified as neither failure nor unknown; the optional ToolJournal could therefore record them as reported success. Source analysis only, not runtime reproduction.
