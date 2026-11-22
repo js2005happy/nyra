@@ -20,6 +20,7 @@ import { loadConfig, saveConfig, resolveProvider } from "./config.ts";
 import { Provider } from "./providers.ts";
 import type { ProviderLike } from "./providers.ts";
 import { formatBytes } from "./bot/attachments.ts";
+import { getRealtimeVoiceProvider, listRealtimeVoiceProviders, resolveRealtimeVoiceProviderName } from "./realtimeVoice.ts";
 
 /** 缺口 15：语音的配置（config.json 的 voice 一节，未配用默认值）。 */
 export interface VoiceConfig {
@@ -499,7 +500,64 @@ export async function handleVoice(argv: string[], home: string, input?: VoiceCli
       return 1;
     }
   }
-  process.stderr.write("用法：nyra voice <status|speak <文字>|enable-tts|disable-tts>；通话：nyra voice call <start|answer|decline|end|status|list|segment|confirm>\n");
+  // 第 1 批 G-P1-36：实时语音服务商管理（只改配置 + 列注册表，不接新服务）。
+  if (cmd === "realtime") {
+    const sub = argv[1];
+    if (sub === "list") {
+      const providers = listRealtimeVoiceProviders();
+      if (!providers.length) { process.stdout.write("没有已注册的实时语音服务商。\n"); return 0; }
+      const current = resolveRealtimeVoiceProviderName(config);
+      for (const p of providers) {
+        process.stdout.write(`${p.name === current ? "* " : "  "}${p.name}：${p.description}\n`);
+      }
+      return 0;
+    }
+    if (sub === "use") {
+      const name = argv[2];
+      if (!name) { process.stderr.write("用法：nyra voice realtime use <服务商名>\n"); return 2; }
+      if (!getRealtimeVoiceProvider(name)) {
+        process.stderr.write(`实时语音服务 ${name} 没注册（已注册：${listRealtimeVoiceProviders().map((p) => p.name).join("、") || "无"}）。\n`);
+        return 1;
+      }
+      saveConfig(home, { voice: { ...((config.voice as Record<string, unknown>) ?? {}), realtime_provider: name } });
+      process.stdout.write(`实时语音服务已切到 ${name}（通话转写走它；换服务不用重接通话逻辑）。\n`);
+      return 0;
+    }
+    if (sub === "status" || !sub) {
+      const current = resolveRealtimeVoiceProviderName(config);
+      const provider = getRealtimeVoiceProvider(current);
+      process.stdout.write(`实时语音服务：${current}${provider ? `（${provider.description}）` : "（没注册——转写会直接报错，请先切到已注册的服务）"}\n`);
+      process.stdout.write(`已注册：${listRealtimeVoiceProviders().map((p) => p.name).join("、") || "无"}\n`);
+      return 0;
+    }
+    process.stderr.write("用法：nyra voice realtime <list|use <服务商名>|status>\n");
+    return 2;
+  }
+  // 第 1 批 G-P2-17：只转写、不跑任务——转写文字先看一眼的独立入口
+  //（`nyra voice transcribe <音频路径>`：打出来就完事，不当任务跑）。
+  if (cmd === "transcribe") {
+    const audioPath = argv[1];
+    if (!audioPath) {
+      process.stderr.write("用法：nyra voice transcribe <音频路径>\n");
+      return 2;
+    }
+    try {
+      const audio = loadAudioFile(audioPath, process.cwd(), cfg);
+      let endpoint: HttpEndpoint | null = null;
+      try {
+        const primary = resolveProvider({ home, config });
+        if (primary.auth !== "cli" && primary.apiKey) endpoint = httpEndpointOf(new Provider(primary));
+      } catch { endpoint = null; }
+      const out = await transcribeAudio({ input: audio, config: cfg, endpoint, runCommand: input?.runCommand, fetchFn: input?.fetchFn });
+      process.stdout.write(`${out.text}\n`);
+      process.stderr.write(`（转写引擎：${out.engine}；只转写，没跑任务）\n`);
+      return 0;
+    } catch (err: unknown) {
+      process.stderr.write(`转写失败：${err instanceof Error ? err.message : String(err)}\n`);
+      return 1;
+    }
+  }
+  process.stderr.write("用法：nyra voice <status|speak <文字>|enable-tts|disable-tts|realtime <list|use|status>|transcribe <音频路径>>；通话：nyra voice call <start|answer|decline|end|status|list|segment|confirm>\n");
   return 2;
 }
 

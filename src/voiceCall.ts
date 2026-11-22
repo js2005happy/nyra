@@ -30,10 +30,14 @@ import { Provider } from "./providers.ts";
 import {
   estimateSttCostUsd, estimateTtsCostUsd, httpEndpointOf, loadAudioFile,
   localSttAvailable, playAudioFile, resolveVoiceConfig, shortTextHash, synthesizeSpeech,
-  transcribeCloud, transcribeLocal,
   type CommandRunner, type HttpEndpoint, type VoiceConfig,
 } from "./voice.ts";
 import type { UsageSnapshot } from "./usage.ts";
+import { localRealtimeVoiceProvider, resolveRealtimeVoiceProvider } from "./realtimeVoice.ts";
+// 第 1 批 G-P0-1：只 import 类型（编译时擦掉）——videoCall.ts 静态 import
+// 了本文件，值 import 会形成运行时循环；WebRtcTransport 的值在
+// startVoiceCall / runVoiceSession 里函数内动态 import。
+import type { IceTransport, VideoCallConfig, VideoSignalingClient, WebRtcTransport } from "./videoCall.ts";
 
 export class VoiceCallError extends Error {}
 
@@ -191,13 +195,16 @@ export function vadGateWav(bytes: Buffer, minRatio = DEFAULT_VOICE_CALL_CONFIG.v
   return { ratio, frames, parsed: true, speech: ratio >= minRatio };
 }
 
-// ---- 传输层接口（本批只有本机回环；WebRTC + TURN 实现下一批接这里） ----
+// ---- 传输层接口（第 1 批：回环 + 真 WebRTC 两实现） ----
 
 /**
  * 实时媒体传输接口：start/stop 只管媒体通道的开关，不管转写与任务。
- * 本批的实现是 LoopbackTransport（空操作：音频靠喂文件段落进来，不走网络）。
- * 下一批接真 WebRTC 时：实现这个接口、在 startVoiceCall 里按配置选实现，
- * 其余代码（账本、VAD、转写、扣下、回读）不用动。
+ * 两个实现：LoopbackTransport（空操作：音频靠喂文件段落进来，不走网络，
+ * 默认）；WebRtcTransport（videoCall.ts 里的真实现：信令 + ICE +
+ * STUN/TURN，startVoiceCall 传 transport: "webrtc" 时用它）。
+ * 注意：videoCall.ts 静态 import 了本文件（VoiceCallTransport 接口），
+ * 所以这里只做 `import type`（编译时擦掉，不形成运行时循环）；运行时
+ * 拿 WebRtcTransport 用函数内动态 import（见 startVoiceCall）。
  */
 export interface VoiceCallTransport {
   kind: "loopback" | "webrtc";
@@ -210,6 +217,51 @@ export const LoopbackTransport: VoiceCallTransport = {
   start(_callId: string): void {},
   stop(_callId: string): void {},
 };
+
+/**
+ * 本进程里跑着的语音传输（callId → 实例）。回环是单例无状态，不用记；
+ * WebRtcTransport 每通电话一个实例——挂断/拒绝时要停同一台，所以记
+ * 在这里；进程退出即丢，账本里的 transport 字段只记 kind，不记实例。
+ * 测试可直接读它，确认挂断后实例已停、已摘掉。
+ */
+const voiceTransports = new Map<string, VoiceCallTransport>();
+
+export function getVoiceCallTransport(callId: string): VoiceCallTransport | null {
+  return voiceTransports.get(callId) ?? null;
+}
+
+function stopVoiceCallTransport(callId: string): void {
+  const t = voiceTransports.get(callId);
+  if (t) {
+    voiceTransports.delete(callId);
+    try { t.stop(callId); } catch { /* 停失败不破坏挂断 */ }
+    return;
+  }
+  LoopbackTransport.stop(callId);
+}
+
+/**
+ * WebRtcTransport 的 onEvent 接线（startVoiceCall 与 runVoiceSession
+ * 共用）：连通/失败进审计 + 镜像进运行事件链（只记 ICE 对、是否中转、
+ * 往返毫秒与失败原因，不记音频内容）。
+ */
+function voiceTransportOnEvent(home: string, call: VoiceCall): (event: string, detail: Record<string, unknown>) => void {
+  return (event, detail) => {
+    if (event === "connected") {
+      appendVoiceCallAudit(home, { op: "transport-connected", call_id: call.id, relayed: detail.relayed, rtt_ms: detail.rtt_ms });
+      mirrorEvent(home, call.runId, "voice_call_transport_connected", {
+        call_id: call.id,
+        ice_pair: String(detail.remote ?? ""),
+        relayed: Boolean(detail.relayed),
+        rtt_ms: typeof detail.rtt_ms === "number" ? detail.rtt_ms : 0,
+      });
+    }
+    if (event === "failed") {
+      appendVoiceCallAudit(home, { op: "transport-failed", call_id: call.id, reason: String(detail.reason ?? "") });
+      mirrorEvent(home, call.runId, "voice_call_transport_failed", { call_id: call.id, reason: String(detail.reason ?? "").slice(0, 100) });
+    }
+  };
+}
 
 // ---- 通话账本与审计 ----
 
@@ -250,7 +302,7 @@ export interface VoiceCall {
   id: string;
   agent: string;
   peer: string | null;
-  transport: "loopback";
+  transport: "loopback" | "webrtc";
   status: VoiceCallStatus;
   startedAt: string;
   endedAt: string | null;
@@ -394,30 +446,67 @@ function recomputeTotals(call: VoiceCall): void {
  * 发起一通电话（状态 ringing）。
  * 机主发起 = 在本机 CLI 上执行即视为机主；呼叫有名有姓的对方（--peer）
  * 须 --yes（对外可见的动作，显式确认才做）。Bot/远端发起不在本批。
+ *
+ * transport（第 1 批 G-P0-1）：默认 "loopback"（本机回环，不走网络，
+ * 行为与以前一致）；传 "webrtc" 时走真 WebRTC——动态 import videoCall.ts
+ * 的 WebRtcTransport（信令 + ICE + STUN/TURN），协商是异步的，start
+ * 返回时还没连上，连通与否看 connect 会话里的 waitConnected 与
+ * voice_call_transport_connected / failed 事件。回环是回退：信令连不上
+ * 时通话本身不崩，只是传输停在 failed，段落仍可用 segment 喂。
  */
-export function startVoiceCall(home: string, opts: {
+export async function startVoiceCall(home: string, opts: {
   agent?: string;
   peer?: string | null;
   yes?: boolean;
   runId?: string | null;
-}): VoiceCall {
+  transport?: "loopback" | "webrtc";
+  /** 覆盖配置里的信令地址（CLI --signaling 用）；不给就用配置。 */
+  signalingUrl?: string;
+  /** 发起方 caller / 应答方 callee（默认 caller）。 */
+  role?: "caller" | "callee";
+  /** 测试注入：信令客户端 / ICE 传输（见 videoCall.ts 的 WebRtcTransportOptions）。 */
+  signaling?: VideoSignalingClient;
+  ice?: IceTransport;
+  /** 测试注入：ICE 身份；注入 ice 时须同时给。 */
+  identity?: { ufrag: string; password: string };
+  /** 测试注入：视频通话配置（不给就从 config 的 video 一节解析）。 */
+  videoCfg?: VideoCallConfig;
+}): Promise<VoiceCall> {
   const agent = typeof opts.agent === "string" && /^[a-z][a-z0-9_-]{0,31}$/.test(opts.agent) ? opts.agent : "nyra";
   const peer = typeof opts.peer === "string" && opts.peer.trim() ? opts.peer.trim().slice(0, 100) : null;
   if (peer && !opts.yes) {
     throw new VoiceCallError(`呼叫 ${peer} 须加 --yes 确认（对外可见的动作，须显式确认）`);
   }
+  const kind = opts.transport === "webrtc" ? "webrtc" : "loopback";
   const store = loadVoiceCallStore(home);
   const call: VoiceCall = {
-    id: newCallId(), agent, peer, transport: "loopback", status: "ringing",
+    id: newCallId(), agent, peer, transport: kind, status: "ringing",
     startedAt: nowIso(), endedAt: null, segments: [],
     sttSeconds: 0, ttsChars: 0, costUsd: 0, costUnpriced: false,
     runId: opts.runId ?? null,
   };
   store.calls.push(call);
   saveVoiceCallStore(home, store);
-  LoopbackTransport.start(call.id);
-  appendVoiceCallAudit(home, { op: "started", call_id: call.id, agent, peer, transport: "loopback" });
-  mirrorEvent(home, call.runId, "voice_call_started", { call_id: call.id, agent, peer, transport: "loopback" });
+  if (kind === "loopback") {
+    LoopbackTransport.start(call.id);
+  } else {
+    const { WebRtcTransport, resolveVideoCallConfig } = await import("./videoCall.ts");
+    const videoCfg = opts.videoCfg ?? resolveVideoCallConfig(loadConfig(home));
+    const transport = new WebRtcTransport({
+      home,
+      config: videoCfg,
+      role: opts.role ?? "caller",
+      signalingUrl: opts.signalingUrl,
+      onEvent: voiceTransportOnEvent(home, call),
+      ...(opts.signaling ? { signaling: opts.signaling } : {}),
+      ...(opts.ice ? { ice: opts.ice } : {}),
+      ...(opts.identity ? { identity: opts.identity } : {}),
+    });
+    voiceTransports.set(call.id, transport);
+    transport.start(call.id);
+  }
+  appendVoiceCallAudit(home, { op: "started", call_id: call.id, agent, peer, transport: kind });
+  mirrorEvent(home, call.runId, "voice_call_started", { call_id: call.id, agent, peer, transport: kind });
   return call;
 }
 
@@ -441,7 +530,7 @@ export function declineVoiceCall(home: string, callId: string): VoiceCall {
   call.status = "declined";
   call.endedAt = nowIso();
   saveVoiceCallStore(home, store);
-  LoopbackTransport.stop(call.id);
+  stopVoiceCallTransport(call.id);
   appendVoiceCallAudit(home, { op: "declined", call_id: call.id });
   mirrorEvent(home, call.runId, "voice_call_declined", { call_id: call.id });
   return call;
@@ -456,7 +545,7 @@ export function endVoiceCall(home: string, callId: string): VoiceCall {
   call.endedAt = nowIso();
   recomputeTotals(call);
   saveVoiceCallStore(home, store);
-  LoopbackTransport.stop(call.id);
+  stopVoiceCallTransport(call.id);
   const duration = Math.round((Date.parse(call.endedAt) - Date.parse(call.startedAt)) / 1000);
   appendVoiceCallAudit(home, {
     op: "ended", call_id: call.id, duration_seconds: duration,
@@ -593,32 +682,42 @@ export async function feedCallSegment(opts: {
     }
   }
 
-  // 转写：本地优先；云端只在显式配了 call_cloud_enabled 才走。
+  // 转写：走实时语音插件层（第 1 批 G-P1-36，默认 local：whisper.cpp
+  // 优先、云端兜底；换实时语音服务只换 voice.realtime_provider，通话
+  // 逻辑不用动）。云端开关仍归通话管：没开 call_cloud_enabled / 没过
+  // 月度硬顶时 endpoint 传 null，provider 只能走本地，绝不悄悄花云端钱。
   let text: string;
   let seconds: number | null;
   let engine: string;
+  let providerName = "local";
   let local: { binary: string } | null = null;
   try {
     local = localSttAvailable(opts.voiceCfg, run);
   } catch (err: unknown) {
     throw new VoiceCallError(err instanceof Error ? err.message : String(err));
   }
-  if (local !== null) {
-    const out = await transcribeLocal(input, opts.voiceCfg, local.binary, run);
-    text = out.text;
-    seconds = out.seconds;
-    engine = out.engine;
-  } else if (opts.callCfg.callCloudEnabled && opts.endpoint !== null) {
+  let endpoint: HttpEndpoint | null = null;
+  if (local === null && opts.callCfg.callCloudEnabled && opts.endpoint !== null) {
     const est = estimateSttCostUsd(input.durationSeconds, opts.voiceCfg);
     const cap = checkCallCloudCap(opts.home, opts.config, est);
     if (!cap.allowed) throw new VoiceCallError(cap.reason ?? "月度硬顶已触发，云端转写已停");
-    const out = await transcribeCloud(input, opts.voiceCfg, opts.endpoint, opts.fetchFn);
-    text = out.text;
-    seconds = out.seconds;
-    engine = out.engine;
-  } else {
+    endpoint = opts.endpoint;
+  }
+  const provider = resolveRealtimeVoiceProvider(opts.config);
+  providerName = provider.name;
+  // 内置 local 的“没路”在这里判（保持老文案：本地没装、云端没开时指路
+  // 清晰）；自定义 provider 自己决定能不能转写——它可能有自己的实时
+  // 路，不依赖本地 whisper 与通话云端开关，调用方不替它判死刑。
+  if (provider === localRealtimeVoiceProvider && local === null && endpoint === null) {
     throw new VoiceCallError(cloudSttUnavailableMessage(opts.callCfg.callCloudEnabled));
   }
+  const out = await provider.transcribe({
+    audio: input, config: opts.voiceCfg, endpoint,
+    runCommand: run, fetchFn: opts.fetchFn,
+  });
+  text = out.text;
+  seconds = out.seconds;
+  engine = out.engine;
   const costUsd = engine === "whisper.cpp" ? 0 : estimateSttCostUsd(seconds, opts.voiceCfg);
   recordVoiceSpend(opts.home, costUsd, engine, opts.agentId ?? call.agent);
   const textHash = shortTextHash(text);
@@ -634,11 +733,12 @@ export async function feedCallSegment(opts: {
   appendVoiceCallAudit(opts.home, {
     op: "transcribed", call_id: call.id, segment_id: segId, vad: base.vad,
     seconds, chars: text.length, engine, cost_usd: costUsd, text_hash: textHash,
-    status: segment.status,
+    status: segment.status, realtime_provider: providerName,
   });
   mirrorEvent(opts.home, call.runId, "voice_call_transcribed", {
     call_id: call.id, segment_id: segId, vad: base.vad, seconds,
     chars: text.length, engine, cost_usd: costUsd, text_hash: textHash,
+    realtime_provider: providerName,
   });
   if (intent) {
     appendVoiceCallAudit(opts.home, { op: "blocked", call_id: call.id, segment_id: segId, reason: intent, text_hash: textHash });
@@ -705,6 +805,7 @@ export interface VoiceCallSummary {
   id: string;
   agent: string;
   peer: string | null;
+  transport: "loopback" | "webrtc";
   status: VoiceCallStatus;
   durationSeconds: number | null;
   segments: number;
@@ -723,7 +824,7 @@ export function summarizeVoiceCall(call: VoiceCall): VoiceCallSummary {
     ? Math.round((Date.parse(call.endedAt) - Date.parse(call.startedAt)) / 1000)
     : null;
   return {
-    id: call.id, agent: call.agent, peer: call.peer, status: call.status,
+    id: call.id, agent: call.agent, peer: call.peer, transport: call.transport, status: call.status,
     durationSeconds: duration, segments: call.segments.length,
     transcribed: call.segments.filter((s) => s.status === "transcribed").length,
     skippedSilence: call.segments.filter((s) => s.status === "skipped_silence").length,
@@ -744,10 +845,106 @@ export function formatCallSummary(call: VoiceCall): string {
     `段落：共 ${s.segments} 段（转写 ${s.transcribed} · 静音跳过 ${s.skippedSilence} · 待确认 ${s.held} · 已确认 ${s.confirmed}）`,
     `理解（STT）：${(s.sttSeconds / 60).toFixed(1)} 分钟，花费 ${money(s.costUsd)}${s.costUnpriced ? "（有未计价部分，花费只是下界）" : ""}`,
     `回读（TTS）：${s.ttsChars} 字`,
-    "传输：本批是本机回环，不走网络、不花 token；实时 WebRTC 传输是下一批。",
+    s.transport === "webrtc"
+      ? "传输：真 WebRTC（信令 + ICE + STUN/TURN；两台真机打通、断线重连待真机验证，见 docs/voice.md）。"
+      : "传输：本机回环，不走网络、不花 token；要真打通两台机器，用 nyra voice call start --transport webrtc（见 docs/voice.md）。",
     "模型调用（LLM）：本次通话未调用 LLM，无 token 花费。",
   ];
   return lines.join("\n");
+}
+
+// ---- 前台语音会话（`nyra voice call connect`，照 runVideoSession 的结构） ----
+
+export interface VoiceSessionOptions {
+  home: string;
+  callId: string;
+  role?: "caller" | "callee";
+  signalingUrl?: string;
+  /** 测试注入：视频通话配置（不给就从 config 的 video 一节解析）。 */
+  videoCfg?: VideoCallConfig;
+  /** 测试注入已建好的传输（不给就用 startVoiceCall 时注册的那台）。 */
+  transport?: WebRtcTransport;
+  /** 等连通的超时（毫秒），默认 60000。 */
+  connectTimeoutMs?: number;
+}
+
+/**
+ * 前台语音会话：把通话守住，直到挂断或 Ctrl+C。
+ *
+ * 回环：直接守住（段落用 `segment` 子命令喂文件进来）。WebRTC：复用
+ * startVoiceCall 时注册的那台传输（没注册就现建一台），等 ICE 连通后
+ * 守住；连不上时 waitConnected 抛错，会话返回 1，通话记录本身还在，
+ * 可重连或挂断。
+ *
+ * 诚实边界：这里只守住媒体通道（协商 → 连通 → 等挂断）；实时音频流
+ * （麦克风采音/扬声器放音、音频帧经 mediaPlane 收发）本批没做，段落
+ * 仍用 `segment` 喂文件。两台真机打通、断线重连、字幕对账待真机验证。
+ */
+export async function runVoiceSession(opts: VoiceSessionOptions): Promise<number> {
+  const { home, callId } = opts;
+  const role = opts.role ?? "caller";
+  const call = getCall(loadVoiceCallStore(home), callId);
+  if (call.status !== "active") {
+    process.stderr.write(`语音通话 ${callId} 现在是 ${call.status}，连不了（先接听）\n`);
+    return 1;
+  }
+  let transport: WebRtcTransport | null = opts.transport ?? null;
+  let stopped = false;
+  let stopResolve: (() => void) | null = null;
+  const stopPromise = new Promise<void>((r) => { stopResolve = r; });
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    stopResolve?.();
+    try { transport?.stop(callId); } catch { /* ignore */ }
+  };
+  process.once("SIGINT", () => {
+    process.stdout.write("\n收到 Ctrl+C，正在挂断……\n");
+    stop();
+  });
+  try {
+    if (call.transport === "loopback") {
+      process.stdout.write(`语音通话 ${callId}：本机回环已连通（不走网络，段落用 segment 喂进来）\n`);
+    } else {
+      if (!transport) {
+        const existing = getVoiceCallTransport(callId);
+        if (existing && existing.kind === "webrtc") transport = existing as unknown as WebRtcTransport;
+      }
+      if (!transport) {
+        const { WebRtcTransport: WebRtc, resolveVideoCallConfig } = await import("./videoCall.ts");
+        const videoCfg = opts.videoCfg ?? resolveVideoCallConfig(loadConfig(home));
+        transport = new WebRtc({
+          home,
+          config: videoCfg,
+          role,
+          signalingUrl: opts.signalingUrl,
+          onEvent: voiceTransportOnEvent(home, call),
+        });
+        voiceTransports.set(callId, transport);
+        transport.start(callId);
+      }
+      process.stdout.write(`语音通话 ${callId}：正在协商（等对方 ${role === "caller" ? "接听" : "发起"}）……\n`);
+      const pair = await Promise.race([
+        transport.waitConnected(opts.connectTimeoutMs ?? 60000),
+        stopPromise.then(() => { throw new VoiceCallError("会话已停止"); }),
+      ]);
+      process.stdout.write(`已连通：${pair.remote.address}:${pair.remote.port}${pair.relayed ? "（经 TURN 中转）" : "（直连）"}，往返 ${pair.rttMs}ms\n`);
+    }
+    while (!stopped) {
+      await new Promise((r) => setTimeout(r, 500));
+      const current = getCall(loadVoiceCallStore(home), callId);
+      if (current.status === "ended" || current.status === "declined") {
+        process.stdout.write("通话已结束，正在收尾……\n");
+        break;
+      }
+    }
+    return 0;
+  } catch (err: unknown) {
+    process.stderr.write(`语音会话失败：${err instanceof Error ? err.message : String(err)}\n`);
+    return 1;
+  } finally {
+    stop();
+  }
 }
 
 // ---- `nyra voice call` 子命令 ----
@@ -771,7 +968,7 @@ function resolveCallEndpoint(home: string, config: Record<string, unknown>): Htt
 
 function usageError(msg: string): number {
   process.stderr.write(`${msg}\n`);
-  process.stderr.write("用法：nyra voice call <start [--peer <名字>] [--agent <id>] [--yes]|answer <通话 id>|decline <通话 id>|end <通话 id>|status [通话 id]|list|segment <通话 id> <音频路径> [--speak-reply \"<文字>\"]|confirm <通话 id> <段落 id>>\n");
+  process.stderr.write("用法：nyra voice call <start [--peer <名字>] [--agent <id>] [--yes] [--transport loopback|webrtc] [--signaling <ws 地址>] [--role caller|callee]|connect <通话 id> [--signaling <ws 地址>] [--role caller|callee]|answer <通话 id>|decline <通话 id>|end <通话 id>|status [通话 id]|list|segment <通话 id> <音频路径> [--speak-reply \"<文字>\"]|confirm <通话 id> <段落 id>>\n");
   return 2;
 }
 
@@ -817,15 +1014,32 @@ export async function handleVoiceCall(argv: string[], home: string, input?: Voic
       return 0;
     }
     if (cmd === "start") {
-      const call = startVoiceCall(home, {
+      const transportFlag = flag("--transport");
+      const transport = transportFlag === "webrtc" ? "webrtc" as const : "loopback" as const;
+      const roleFlag = flag("--role");
+      const call = await startVoiceCall(home, {
         agent: flag("--agent") ?? undefined,
         peer: flag("--peer"),
         yes: has("--yes"),
         runId: flag("--run"),
+        transport,
+        signalingUrl: flag("--signaling") ?? undefined,
+        role: roleFlag === "callee" ? "callee" : "caller",
       });
-      process.stdout.write(`通话已建立：${call.id}（${call.peer ?? "本机回环"}，响铃中）\n`);
-      process.stdout.write("接听：nyra voice call answer <通话 id>\n");
+      process.stdout.write(`通话已建立：${call.id}（${call.peer ?? "无指定对方"}，响铃中，传输 ${call.transport}）\n`);
+      process.stdout.write("接听：nyra voice call answer <通话 id>，接通后前台守住：nyra voice call connect <通话 id>\n");
       return 0;
+    }
+    if (cmd === "connect") {
+      const id = rest[0];
+      if (!id) return usageError("用法：nyra voice call connect <通话 id> [--signaling <ws 地址>] [--role caller|callee]");
+      const roleFlag = flag("--role");
+      return runVoiceSession({
+        home,
+        callId: id,
+        role: roleFlag === "callee" ? "callee" : "caller",
+        signalingUrl: flag("--signaling") ?? undefined,
+      });
     }
     if (cmd === "answer" || cmd === "decline" || cmd === "end") {
       const id = rest[0];

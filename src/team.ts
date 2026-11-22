@@ -56,6 +56,7 @@ import { checkAutoAllowed } from "./governance.ts";
 import { businessActionForTool, BUSINESS_ACTION_LABELS } from "./businessRedlines.ts";
 import { checkHandoverContract, getHandoverContract, linkHandoverPackage } from "./handoverContract.ts";
 import { resolveNyraHome } from "./memory.ts";
+import { listWriteLeases, normalizeGateFile, releaseWriteLease, transferWriteLease } from "./writeGate.ts";
 
 export class TeamError extends Error {
   constructor(message: string) {
@@ -737,6 +738,14 @@ return { team, chief: team.chief, members: [...team.members], task: trimmed, cap
 * 成的缺口）；成员交付须对着各自 Charter 的输出格式抽查（charter_valid
 * 行会贴在交回文本末尾）。
 */
+/**
+ * 第 1 批 G-P0-5：零工具编排者——参谋长/lead 角色从工具层面只剩这
+ * 两个工具。agent.ts 构造 chief Agent 时按这份名单过滤（其余全部
+ * 禁用，MCP 与 Poppy 只读工具也不发）；提示词里写“不写代码”只是
+ * 第二道防线，不靠它。
+ */
+export const ORCHESTRATOR_TOOLS: string[] = ["delegate", "delegate_parallel"];
+
 export function buildChiefTask(plan: TeamDispatchPlan): string {
 const memberLines = plan.members.map((m) => `- ${m}（Soul 身份，Charter 见其 Soul 文件）`).join("\n");
 return [
@@ -746,11 +755,12 @@ memberLines,
 `任务：${plan.task}`,
 `做法：`,
 `1. 把任务拆成互不依赖的子任务，每件交给最合适的成员（delegate 工具，agent 填成员名，output_schema 能给就给）；`,
-`2. 下游之间不直接互发指令——成员之间要交接只通过你或 beads 交接，成员自己调 delegate 默认会被拒绝（flat）；只有被授予 orchestrator 角色的成员才能再往下分派（H-7 嵌套编排 opt-in，分派时传 orchestrator: true 显式开启）；`,
-`3. 只收各成员的简报，不要全文（你的上下文是瓶颈）；`,
-`4. 最后合成为一份汇总：各成员的结论、谁负责了哪部分、没完成/没把握的缺口写清楚，不要编造没发生的结论；`,
-`5. 成员的对外动作（发消息、采购、删除、发布）会自动回你/人批，不要替成员绕过审批；`,
-`6. 拆错了全队白跑：拆之前先想一步——这件任务是不是真的能拆？不能拆就直接说，不要硬拆。`,
+`2. 要让成员写某个文件，分派时把文件列进 delegate 的 write_files（写者名额就从你这里移交给成员，子任务结束时自动还回来）；不给 write_files，成员第一次写该文件会被单写者门拦下；`,
+`3. 下游之间不直接互发指令——成员之间要交接只通过你或 beads 交接，成员自己调 delegate 默认会被拒绝（flat）；只有被授予 orchestrator 角色的成员才能再往下分派（H-7 嵌套编排 opt-in，分派时传 orchestrator: true 显式开启）；`,
+`4. 只收各成员的简报，不要全文（你的上下文是瓶颈）；`,
+`5. 最后合成为一份汇总：各成员的结论、谁负责了哪部分、没完成/没把握的缺口写清楚，不要编造没发生的结论；`,
+`6. 成员的对外动作（发消息、采购、删除、发布）会自动回你/人批，不要替成员绕过审批；`,
+`7. 拆错了全队白跑：拆之前先想一步——这件任务是不是真的能拆？不能拆就直接说，不要硬拆。`,
 ].join("\n");
 }
 
@@ -768,6 +778,9 @@ const TEAM_USAGE = "用法：\n"
 + " nyra team remove <团队名或 id> <成员> 移除成员（至少留一个）\n"
 + " nyra team dissolve <团队名或 id> [--yes] 解散团队（终态）\n"
 + " nyra team dispatch <团队名或 id> \"<任务>\" [--dry-run] 参谋长分派：拆解、分派、汇总（--dry-run 只出计划，不跑模型）\n"
++ " nyra team writer status <团队名或 id> 看谁拿着写者名额（单写者门）\n"
++ " nyra team writer transfer <团队名或 id> <文件> <成员> 参谋长把某文件的写者名额移交给成员\n"
++ " nyra team writer release <团队名或 id> <文件> [--by <agent>] 把某文件的写者名额还回去（默认参谋长收回；--by 填持有者本人）\n"
 + " nyra team handover send --from <agent> --to <agent> --task \"一句话\" [--note \"备注\"] [--file <相对路径>...] [--contract <契约 id>] 文件交接（落对方电脑 workspace 的 inbox；挂契约时对方 ack 先程序验收）\n"
 + " nyra team handover list <agent> [--box inbox|outbox] 列出某 agent 的收件/发件箱\n"
 + " nyra team handover show <agent> <id> 看一个交接包\n"
@@ -992,6 +1005,43 @@ emitTeamEvent(input, "team_dispatched", { team_id: plan.team.id, chief: plan.chi
 appendTeamAudit(home, { kind: "dispatched", team_id: plan.team.id, chief: plan.chief, members: plan.members.length});
 const output = await input.runChief(plan, chiefTask);
 process.stdout.write(output + "\n");
+return 0;
+}
+if (cmd === "writer") {
+const sub = argv[1];
+const idOrName = argv[2];
+if (sub !== "status" && sub !== "transfer" && sub !== "release") {
+process.stderr.write("用法：nyra team writer <status|transfer|release> <团队名或 id> [<文件> <成员>] [--by <agent>]\n");
+return 2;
+}
+if (!idOrName) { process.stderr.write("用法：nyra team writer " + sub + " <团队名或 id> ...\n"); return 2; }
+const team = getTeam(home, idOrName);
+if (!team) { process.stderr.write(`找不到团队 ${idOrName}\n`); return 1; }
+if (sub === "status") {
+const leases = listWriteLeases(home, team.id);
+if (!leases.length) { process.stdout.write(`团队 ${team.name}：现在没有人拿着写者名额。\n`); return 0; }
+process.stdout.write(`团队 ${team.name} 的写者名额（${leases.length} 个）：\n` + leases.map((l) => ` ${l.file} ← ${l.holder}（${l.grantedAt} 拿的）`).join("\n") + "\n");
+return 0;
+}
+const file = argv[3];
+if (!file) { process.stderr.write(`用法：nyra team writer ${sub} <团队名或 id> <文件>${sub === "transfer" ? " <成员>" : " [--by <agent>]"}\n`); return 2; }
+const key = normalizeGateFile(file);
+if (!key) { process.stderr.write(`文件 ${file} 不在工作区内（写者名额只认 workspace 相对路径）。\n`); return 2; }
+if (sub === "transfer") {
+const to = argv[4];
+if (!to) { process.stderr.write("用法：nyra team writer transfer <团队名或 id> <文件> <成员>\n"); return 2; }
+if (!team.members.includes(to) && to !== team.chief) { process.stderr.write(`${to} 不是团队 ${team.name} 的成员（参谋长 ${team.chief}，成员 ${team.members.join("、")}）。\n`); return 1; }
+const res = transferWriteLease(home, team.id, key, team.chief, to, team.chief);
+if (!res.granted) { process.stderr.write(res.reason + "\n"); return 1; }
+emitTeamEvent(input, "write_gate_transferred", { team_id: team.id, file: key, from: team.chief, to });
+process.stdout.write(`已把 ${key} 的写者名额移交给 ${to}。\n`);
+return 0;
+}
+const by = flagValue(argv, "--by") ?? team.chief;
+const released = releaseWriteLease(home, team.id, key, by);
+if (!released) { process.stderr.write(`${key} 现在没有租约（或 ${by} 不是持有者也不是参谋长）。\n`); return 1; }
+emitTeamEvent(input, "write_gate_released", { team_id: team.id, file: key, by });
+process.stdout.write(`已把 ${key} 的写者名额还回去。\n`);
 return 0;
 }
 if (cmd === "handover") {

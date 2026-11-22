@@ -16,7 +16,7 @@ import {
   listProfiles, validateMode, resolveSandbox, PROVIDERS, VERSION, envVar, getProviderPresets, saveConfig,
 } from "./config.ts";
 import { Provider, FallbackProvider, buildProviderChain, makeModelFactory, ProviderError, switchTriggerFor, type RetryRecord, type SwitchRecord } from "./providers.ts";
-import { Agent, AgentError, resolveMaxDelegateDepth, type ContextUsage } from "./agent.ts";
+import { Agent, AgentError, resolveMaxDelegateDepth, type ContextUsage, type VoiceReviewResult } from "./agent.ts";
 import { RunStore, RunRecorder, prepareResume, loadCompletedWriteKeys, resolveVerifyOrigin, acceptVerifyCommand, resolveVerifySettings, downgradeCompletionClaim, formatRunReport, verifyEvidenceChain, formatEvidenceReport, computeRunStats } from "./runs.ts";
 import { buildTimeline, formatTimelineText, formatReplayText, exportTimelineMarkdown } from "./timeline.ts";
 import { resolvePricing, resolveMonthlyLimit } from "./cost.ts";
@@ -131,7 +131,7 @@ import { budgetMain } from "./budgetCli.ts";
 import { aguiMain } from "./agui.ts";
 import { handleScreen } from "./botScreen.ts";
 import { handleScreenTakeover } from "./botTakeover.ts";
-import { handleInit, handleTemplates, handleWake } from "./onboarding.ts";
+import { handleInit, handleTemplates, handleWake, makeLineAsker } from "./onboarding.ts";
 import { reviewBusinessAction, appendBusinessRedlineAudit } from "./businessRedlines.ts";
 import { handleVoice, loadAudioFile, resolveVoiceConfig } from "./voice.ts";
 import { handleVoiceCall } from "./voiceCall.ts";
@@ -471,6 +471,8 @@ export interface CliArgs {
   voice?: string | null;
   /** 缺口 15：任务跑完后把结果读出来（--speak；默认关）。 */
   speak: boolean;
+  /** 第 1 批 G-P2-17：显式确认跳过审阅（--yes；只对 --voice 的先审后发生效）。 */
+  yes: boolean;
   workdir: string; trust: boolean;
   sandbox?: string | null; sandboxId?: string | null; sandboxTemplate?: string | null; sandboxTimeout: number | null;
   doctor: boolean; setup: boolean; example: boolean; exampleFile?: string;
@@ -492,7 +494,7 @@ export function parseArgs(argv: string[]): CliArgs {
     autoCompactThreshold: null, poppy: false, fallback: false, noFallback: false,
     discoverPoppy: null, inspectPoppyIdentity: null,
     maxTurns: null, contextWindow: null, channel: null, images: [], videos: [],
-    voice: null, speak: false,
+    voice: null, speak: false, yes: false,
     workdir: ".", trust: false, sandboxTimeout: null,
     doctor: false, setup: false, example: false,
   };
@@ -541,6 +543,7 @@ export function parseArgs(argv: string[]): CliArgs {
     else if (a === "--no-fallback") args.noFallback = true;
     else if (a === "--trust") args.trust = true;
     else if (a === "--speak") args.speak = true;
+    else if (a === "--yes") args.yes = true;
     else if (a === "--example") args.example = true;
     else if (valueFlags.has(a)) {
       const value = argv[++i];
@@ -4627,6 +4630,11 @@ async function runJson(args: CliArgs): Promise<number> {
     // 缺口 15：语音只跟单次正向运行走，组合不对直接报错。
     const voiceComboError = validateVoiceArgs(args);
     if (voiceComboError) return invalidArguments(process.stdout, voiceComboError);
+    // 第 1 批 G-P2-17：--voice 先审后发——JSON 模式没法交互提问，没给
+    // --yes 就直接拒绝（不静默跑）；要跑就加 --yes 明确跳过审阅，或走交互模式。
+    if (args.voice && !args.yes) {
+      return lines.failed("voice_review_required", "--voice 在 --json 模式下须加 --yes 才能跑（非交互模式没法先审后发：转写文字没人看一眼就直接当任务跑，误转写会变成误操作；加 --yes 是明确跳过审阅）", EXIT_RUNTIME, { class: "tool_error", retryable: false, errorName: "VoiceReviewRequired" });
+    }
     const built = await buildAgent(args, {
         interactive: false,
         // 缺口 20：429 冷却以 JSON 事件报出（delay_ms 是本次计划等待的毫秒数）。
@@ -4757,6 +4765,37 @@ export function validateVoiceArgs(args: CliArgs): string | null {
 async function attachVoiceInput(args: CliArgs, agent: Agent, config: Record<string, unknown>): Promise<void> {
   if (!args.voice) return;
   agent.voiceInputs = [loadAudioFile(args.voice, resolve(args.workdir), resolveVoiceConfig(config))];
+}
+
+/**
+ * 第 1 批 G-P2-17：语音输入先审后发——交互提问版 review 钩子。
+ * 转写文字先打印出来让人看一眼，再问一句：直接发（回车）/ 改了再发
+ *（输入新文字）/ 丢弃（输入 drop）。用 makeLineAsker（行缓冲提问器；
+ * Bun readline 到 EOF 会丢回调，交互提问须用它）。EOF 时提问器放行
+ * 空串 = 直接发——管道喂空输入时不卡住；真要丢弃须显式输入 drop。
+ */
+/**
+ * 第 1 批 G-P2-17：先审后发的回答映射（纯函数，测试直接验）：回车 =
+ * 直接发；drop（大小写不敏感）= 丢弃；其他输入 = 改后的文字再发。
+ */
+export function mapVoiceReviewAnswer(answer: string): VoiceReviewResult {
+  const trimmed = answer.trim();
+  if (trimmed.toLowerCase() === "drop") return { decision: "drop" };
+  if (trimmed === "") return { decision: "accept" };
+  return { decision: "edit", text: trimmed };
+}
+
+function makeInteractiveVoiceReview(): (text: string) => Promise<VoiceReviewResult> {
+  return async (text: string): Promise<VoiceReviewResult> => {
+    process.stdout.write(`语音转写（先审后发——看一眼再发）：${text}\n`);
+    const asker = makeLineAsker();
+    try {
+      const answer = await asker.ask("直接发按回车，改了再发输入新文字，丢弃输入 drop：");
+      return mapVoiceReviewAnswer(answer);
+    } finally {
+      asker.close();
+    }
+  };
 }
 
 /** 缺口 15：测试用——attachVoiceInput 的同款入口（runOneShot / runJson 共用）。 */
@@ -4952,6 +4991,11 @@ async function runOneShot(args: CliArgs): Promise<number> {
     } catch (err: unknown) {
       process.stderr.write(`错误：${err instanceof Error ? err.message : String(err)}\n`);
       return 1;
+    }
+    // 第 1 批 G-P2-17：--voice 先审后发——交互模式下没给 --yes 就接交互
+    // 提问钩子（转写文字先给人看一眼再发）；给了 --yes = 明确跳过审阅，老行为。
+    if (args.voice && !args.yes) {
+      agent.voiceReview = makeInteractiveVoiceReview();
     }
     const flusher = makeUsageFlusher(built);
     if (args.resume) {

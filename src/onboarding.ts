@@ -694,7 +694,7 @@ function flagValue(argv: string[], flag: string): string | undefined {
  * 个就永远等不到（交互 init 用管道喂答案时复现过；最小复现见测试）。
  * 这个提问器把到来的行先排队、按需取，EOF 时把挂起的提问以 "" 放行。
  */
-function makeLineAsker(input?: OnboardingCliInput): { ask: (prompt: string) => Promise<string>; close: () => void } {
+export function makeLineAsker(input?: OnboardingCliInput): { ask: (prompt: string) => Promise<string>; close: () => void } {
   if (input?.ask) return { ask: input.ask, close: () => {} };
   const lines: string[] = [];
   const waiters: Array<(line: string) => void> = [];

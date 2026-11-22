@@ -152,6 +152,12 @@ export interface DelegateOptions {
    */
   orchestrator?: boolean;
   /**
+   * 第 1 批 G-P0-4：单写者门——委派时把这些文件的写者名额从参谋长移交给
+   * 子 agent（只认工作区相对路径；子任务结束时名额自动还回去）。不给 =
+   * 成员第一次写该文件会被门拦下（须参谋长再移交）。
+   */
+  writeFiles?: string[];
+  /**
    * 取消信号（可靠性打磨第 1 项第一批）：父级本次运行的信号，子任务
    * 收到后在途调用能被掐断（模型请求 abort、子进程 kill）。父级在
    * delegateDetailed 里把当轮信号传进来；不传时子任务只认自己的信号。
@@ -185,6 +191,18 @@ export interface ToolContext {
   soulAgent?: string;
   /** GROK-1：当前 Agent 跑在哪个团队里（null = 不在团队里）；团队审批门（GROK-3）按它判定。 */
   teamId?: string | null;
+  /**
+   * 第 1 批 G-P0-4：单写者门——最近一次写工具调用被拦下时的结构化记录
+   *（文件、持有者、原因），agent.ts 读到后进 `write_gate_denied` 事件；
+   * 每次写工具执行前清掉，不跨调用残留。
+   */
+  lastWriteGateDenial?: { file: string; holder: string | null; reason: string } | null;
+  /**
+   * 第 1 批 G-P0-4：单写者门——最近一次写工具调用刚拿到新租约时的结构化
+   * 记录（文件），agent.ts 读到后进 `write_gate_granted` 事件；已持有者
+   * 续写不置这笔，不刷事件链。每次写工具执行前清掉，不跨调用残留。
+   */
+  lastWriteGateGrant?: { file: string } | null;
   /**
    * Pi Bot 借鉴第 1 条：当前调用跑在哪个例行里（工作流步骤设为
    * `workflow:<名字>`；聊天/单次运行不设）。只有设了它，shell 的
@@ -419,7 +437,7 @@ export const TOOL_SCHEMAS: Record<string, unknown>[] = [
   schema("read_skill", "按名读取一个技能的全文（描述、适用时机与完整步骤）。只读，不改文件、不需审批；不存在的技能名会返回可用技能列表",
     { name: { type: "string", description: "技能名，如 debugging" } },
     ["name"]),
-  schema("delegate", "把子任务交给子 agent 执行并返回摘要；每层最多 8 个子 agent（每层独立记账），最多嵌套 2 层（config.delegate_max_depth 可配 1–5），单个子任务最多 12 轮。子 agent 默认不能再委派（flat）：委派时传 orchestrator: true 才允许它再派子 agent（嵌套编排 opt-in）；循环委派（派回已在委派链里的人）直接拒绝。isolation=worktree 时子 agent 在独立 git worktree 里干活，主工作区不受影响；output_schema 给了时子 agent 的最终回答里必须包含符合该 JSON Schema 的 JSON，父级校验、失败给一次有界纠正轮。GROK-1：团队模式下 agent 填成员名（只认团队成员），分派给该成员的 Soul 跑；团队模式不填 agent 会被拒绝",
+  schema("delegate", "把子任务交给子 agent 执行并返回摘要；每层最多 8 个子 agent（每层独立记账），最多嵌套 2 层（config.delegate_max_depth 可配 1–5），单个子任务最多 12 轮。子 agent 默认不能再委派（flat）：委派时传 orchestrator: true 才允许它再派子 agent（嵌套编排 opt-in）；循环委派（派回已在委派链里的人）直接拒绝。isolation=worktree 时子 agent 在独立 git worktree 里干活，主工作区不受影响；output_schema 给了时子 agent 的最终回答里必须包含符合该 JSON Schema 的 JSON，父级校验、失败给一次有界纠正轮。GROK-1：团队模式下 agent 填成员名（只认团队成员），分派给该成员的 Soul 跑；团队模式不填 agent 会被拒绝。第 1 批 G-P0-4：团队模式下要让成员写某个文件，分派时把文件列进 write_files（写者名额就移交过去了），不给时成员第一次写该文件会被单写者门拦下",
     {
       task: { type: "string", minLength: 1 },
       max_turns: { type: "integer", default: 6, minimum: 1, maximum: 12 },
@@ -429,6 +447,7 @@ export const TOOL_SCHEMAS: Record<string, unknown>[] = [
       output_schema: { type: "object", description: "结构化输出契约（JSON Schema 对象）" },
       agent: { type: "string", description: "团队模式下分派给哪个成员（Soul agent 名）；只认团队成员" },
       orchestrator: { type: "boolean", default: false, description: "H-7：授予这个子 agent 的 orchestrator 角色，允许它再委派（嵌套编排 opt-in）；默认 false，子 agent 是 flat 的" },
+      write_files: { type: "array", items: { type: "string" }, description: "第 1 批 G-P0-4：这次委派要写的 workspace 相对路径；给了就把写者名额从参谋长移交给这个成员，子任务结束时名额自动还回去" },
     },
     ["task"]),
   schema("delegate_parallel", "把多个互不依赖的子任务并行交给子 agent 跑并汇总结果（缺口 3a，opt-in：只有显式调这个工具才并行）。默认最多 5 个同时跑（硬顶，给再大也只按 5 跑）、单个子任务 10 分钟超时；失败/超时的线程不拖垮其他线程，只返回成功者的结果并注明失败原因与已花成本。每个线程继承 delegate 的工具白名单与 worktree 隔离，收敛规则写进子任务系统提示；本批不做自动验证，验证结论待 review queue 验收。H-6：background 默认 true——立即回 handle（后台跑，等回填），不阻塞聊天，全部跑完以单条消息回填收件箱（nyra fanout show <id> 查进度，任务板上有行）；要等结果传 background: false。H-5：merge: true 时批跑完再跑一个合并步（只读合成子 agent 把各线程结果合成为一份交付物，确定性检查后进审阅队列），合并要花一次模型调用，成本如实记账",
@@ -446,9 +465,10 @@ export const TOOL_SCHEMAS: Record<string, unknown>[] = [
             output_schema: { type: "object", description: "结构化输出契约（JSON Schema 对象），与 delegate 同义" },
             agent: { type: "string", description: "团队模式下这条线程分派给哪个成员（Soul agent 名），与 delegate 的 agent 同义" },
             orchestrator: { type: "boolean", default: false, description: "H-7：授予这条线程的子 agent 的 orchestrator 角色，允许它再委派，与 delegate 的 orchestrator 同义" },
+            write_files: { type: "array", items: { type: "string" }, description: "第 1 批 G-P0-4：这条线程要写的 workspace 相对路径，与 delegate 的 write_files 同义" },
           },
         },
-        description: "并行子任务列表（每项至少含 task；isolation/tools/model/output_schema/agent/orchestrator 与 delegate 同义）",
+        description: "并行子任务列表（每项至少含 task；isolation/tools/model/output_schema/agent/orchestrator/write_files 与 delegate 同义）",
       },
       max_concurrency: { type: "integer", default: 5, minimum: 1, maximum: 5, description: "同时跑的线程数上限，默认 5，也是硬顶" },
       timeout_ms: { type: "integer", default: 600000, minimum: 1000, description: "单个子任务超时（毫秒），默认 600000（10 分钟），到点即判该线程超时" },
@@ -2492,6 +2512,11 @@ async function toolDelegateParallel(
     if (typeof raw.agent === "string" && raw.agent.trim()) spec.agent = raw.agent.trim();
     // H-7：并行线程的 orchestrator 授予（只认 true；没给就是 flat）。
     if (raw.orchestrator === true) spec.orchestrator = true;
+    // 第 1 批 G-P0-4：并行线程的写者名额文件（与 delegate 的 write_files 同义）。
+    if (Array.isArray(raw.write_files)) {
+      const files = (raw.write_files as unknown[]).map((f) => String(f)).filter(Boolean);
+      if (files.length) spec.writeFiles = files;
+    }
     tasks.push(spec);
   }
   const merge = extra.merge === true;
@@ -2979,6 +3004,34 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
     if (ctx.idempotentRetry !== true) {
       await runToolJudge(ctx, name, args);
     }
+    // 第 1 批 G-P0-4：单写者门——团队模式下写文件前先查门。门外路径（绝对路径 /
+    // `..`）不归门管，交给 workspaceWritePath 拦。重试不跳过这道门：移交后
+    // 重试能放行，没移交重试也照样拦。被拦返回带标记的错误文案，幂等重试
+    // 认标记绝不重试（见 APPROVAL_REFUSAL_MARKERS）。
+    // 注意：writeGate 只能运行时动态 import——它要读团队账本（team.ts →
+    // governance → marketplace → creator → tools.ts），静态 import 会
+    // 在 tools.ts 还没初始化完时就跑 creator 的顶层代码，直接炸掉
+    //（TOOL_SCHEMAS 还在 TDZ 里）；团队门同款做法，见文件头注释。
+    // pendingGateGrant：参谋长首次写某文件——查门只放行、租约在写成功
+    // 后才记（见 switch 后的补记），被拦下的写不占名额。
+    let pendingGateGrant: { home: string; teamId: string; file: string } | null = null;
+    if ((name === "write_file" || name === "edit_file" || name === "apply_patch") && ctx.teamId && ctx.home) {
+      const { appendWriteGateAudit, checkWriteGate, normalizeGateFile } = await import("./writeGate.ts");
+      const gateFile = typeof args.path === "string" ? args.path : "";
+      const verdict = checkWriteGate(ctx.home, ctx.teamId, gateFile, ctx.soulAgent ?? "default");
+      ctx.lastWriteGateDenial = null;
+      ctx.lastWriteGateGrant = null;
+      if (verdict.decision === "deny") {
+        const key = normalizeGateFile(gateFile) ?? gateFile;
+        ctx.lastWriteGateDenial = { file: key, holder: verdict.holder, reason: verdict.reason };
+        appendWriteGateAudit(ctx.home, { op: "denied", team_id: ctx.teamId, file: key, agent: ctx.soulAgent ?? "default", holder: verdict.holder });
+        return `错误：单写者门拦截：${verdict.reason}`;
+      }
+      if (verdict.grantOnWrite) {
+        const key = normalizeGateFile(gateFile) ?? gateFile;
+        pendingGateGrant = { home: ctx.home, teamId: ctx.teamId, file: key };
+      }
+    }
     const result = await (async (): Promise<string> => {
       switch (name) {
       case "read_file": return await toolReadFile(ctx, String(args.path));
@@ -3024,6 +3077,8 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
           ...(typeof args.agent === "string" && args.agent.trim() ? { agent: args.agent.trim() } : {}),
           // H-7：orchestrator 授予（只认 true；没给就是 flat）。
           ...(args.orchestrator === true ? { orchestrator: true } : {}),
+          // 第 1 批 G-P0-4：写者名额文件（只认字符串数组；脏项在 agent.ts 里过滤）。
+          ...(Array.isArray(args.write_files) ? { writeFiles: (args.write_files as unknown[]).map((f) => String(f)).filter(Boolean) } : {}),
         },
       );
       case "delegate_parallel": return await toolDelegateParallel(
@@ -3051,6 +3106,14 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
         return `错误：未知工具 ${name}`;
     }
     })();
+    // 第 1 批 G-P0-4：参谋长首次写某文件——租约只在写操作真落地后才记。
+    // 写被模式/审批/审查拦下时（结果是错误）不占名额、不发 granted 事件，
+    // 否则被拒的写白白占租约一小时，别人写同一文件要等租约过期。
+    if (pendingGateGrant !== null && !isToolErrorResult(result)) {
+      const { acquireWriteLease } = await import("./writeGate.ts");
+      const acquired = acquireWriteLease(pendingGateGrant.home, pendingGateGrant.teamId, pendingGateGrant.file, ctx.soulAgent ?? "default", ctx.soulAgent ?? "default");
+      if (acquired.granted) ctx.lastWriteGateGrant = { file: pendingGateGrant.file };
+    }
     // 调研报告第 1 项：Hooks 确定性钩子层（学 Claude Code）。
     // 工具执行成功后跑 PostToolUse：只通知、不拦截，失败只警告（PostToolUse 是只通知事件）。
     // 幂等重试不重跑 PostToolUse（同 PreToolUse 的理由：首次调用已通知过）。
@@ -3257,6 +3320,10 @@ const APPROVAL_REFUSAL_MARKERS = [
   // （2026-11-22 探针实证：审查层 BLOCK 的 write_file 经重试被写出去了）。
   "独立审查拦截",
   "意向验证 judge 拒绝",
+  // 第 1 批 G-P0-4：单写者门同样是硬拒绝——被拦的写操作绝不重试，重试
+  // 只会再被同一道门拦下；跳过门去执行等于把两个 agent 同时写同一文件
+  // 的竞态放进来。
+  "单写者门拦截",
 ];
 
 /** 该工具结果是不是一次审批拒绝（是就绝不重试，见 executeToolIdempotent）。 */

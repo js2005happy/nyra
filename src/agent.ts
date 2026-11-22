@@ -46,7 +46,8 @@ import { runHooks, type RunHooksContext } from "./hooks.ts";
 import type { ReviewerLike } from "./reviewer.ts";
 import { loadConfig } from "./config.ts";
 import { buildSoulSection, loadSoul } from "./soul.ts";
-import { getTeam, requireCharter, verifyCharterCompliance, formatCharterCheckLine } from "./team.ts";
+import { getTeam, requireCharter, verifyCharterCompliance, formatCharterCheckLine, ORCHESTRATOR_TOOLS } from "./team.ts";
+import { normalizeGateFile, transferWriteLease, releaseAllWriterLeases } from "./writeGate.ts";
 import { buildRepoMap, isCodeRelatedTask, listRepoMapFiles, computeFingerprint, type RepoMapCache } from "./repoMap.ts";
 import {
   buildVisionUserMessage, DEFAULT_VISION_CONFIG, modelSupportsVision, visionGateMessage,
@@ -203,6 +204,17 @@ export const MODE_NOTES: Record<string, string> = {
 
 export type AgentEventHandler = (kind: string, data: Record<string, unknown>) => void;
 export type ApproveFn = (tool: string, summary: string, details?: Record<string, unknown>) => Promise<ApproveResult> | ApproveResult;
+
+/**
+ * 第 1 批 G-P2-17：语音输入先审后发的审阅结论——accept 照原样发、
+ * edit 按改后的文字发（text 必填）、drop 这段转写不发。
+ */
+export type VoiceReviewDecision = "accept" | "edit" | "drop";
+export interface VoiceReviewResult {
+  decision: VoiceReviewDecision;
+  /** edit 时改后的文字；accept/drop 时不用给。 */
+  text?: string;
+}
 
 export interface AgentOptions {
   workdir?: string;
@@ -384,6 +396,13 @@ export interface AgentOptions {
    * Agent 的测试也可传）。只在首轮、非续跑时先转写再当任务文本；用完即清。
    */
   voiceInputs?: VoiceAudioInput[] | null;
+  /**
+   * 第 1 批 G-P2-17：语音输入先审后发——转写文字先过这道钩子再当任务跑。
+   * 钩子返回 accept（照原样发）/ edit（按改后的文字发，text 必填）/
+   * drop（这段转写不发，运行直接收尾，不烧模型 token）。不设 = 老行为，
+   * 转写完直接当任务跑。钩子本身抛错时转写不发、运行报错（不静默跑）。
+   */
+  voiceReview?: ((text: string) => Promise<VoiceReviewResult>) | null;
   /** 缺口 15：语音的配置（上限、模型、单价等）；不传用默认值，CLI 从 config.json 解析后传入。 */
   voiceConfig?: VoiceConfig | null;
   /**
@@ -594,6 +613,11 @@ export class Agent {
   private visionConfig: VisionConfig = DEFAULT_VISION_CONFIG;
   /** 缺口 15：本次运行附带的语音（首轮先转写再当任务文本，用完即清）。 */
   voiceInputs: VoiceAudioInput[] = [];
+  /**
+   * 第 1 批 G-P2-17：语音输入先审后发——转写文字先过这道钩子再当任务跑
+   *（见 AgentOptions.voiceReview；不设 = 老行为，直接跑）。
+   */
+  voiceReview: ((text: string) => Promise<VoiceReviewResult>) | null = null;
   /** 缺口 15：语音的配置（上限、模型、单价等）。 */
   private voiceConfig: VoiceConfig = DEFAULT_VOICE_CONFIG;
   /** 缺口 15：测试注入——语音的外部命令执行器与云端 fetch。 */
@@ -619,6 +643,13 @@ export class Agent {
   ctx: ToolContext;
   home: string;
   disabledTools: Set<string>;
+  /**
+   * 第 1 批 G-P0-5：零工具编排者加进 disabledTools 的那部分（参谋长角色
+   * 专属）。委派时不继承给子 agent——限制是参谋长这个角色的，成员
+   * 要拿回完整的工具集（再按 opts.tools 白名单收紧）；显式传的
+   * disabledTools 不在这里，照常继承。
+   */
+  orchestratorDisabled: Set<string> = new Set();
 
   constructor(provider: ProviderLike, opts: AgentOptions = {}) {
     this.provider = provider;
@@ -689,6 +720,8 @@ export class Agent {
     this.visionConfig = opts.visionConfig ?? DEFAULT_VISION_CONFIG;
     /** 缺口 15：本次运行附带的语音（首轮先转写再当任务文本，用完即清）。 */
     this.voiceInputs = opts.voiceInputs ? [...opts.voiceInputs] : [];
+    // 第 1 批 G-P2-17：语音输入先审后发（不设 = 老行为，直接跑）。
+    this.voiceReview = opts.voiceReview ?? null;
     /** 缺口 15：语音的配置（上限、模型、单价等）。 */
     this.voiceConfig = opts.voiceConfig ?? DEFAULT_VOICE_CONFIG;
     this.voiceRunner = opts.voiceRunner ?? null;
@@ -713,7 +746,20 @@ export class Agent {
       ? opts.shadowSnapshotStore
       : (this.backend === null ? new ShadowSnapshotStore(this.home, this.workdir) : null);
     this.evidence = new EvidenceStore(join(this.home, "evidence"), this.sessionId);
+    // 第 1 批 G-P0-5：零工具编排者——参谋长/lead 从工具层面拿掉写工具，
+    // 只剩委派工具。不是提示词里写一句“不写代码”：toolSchemas 按
+    // disabledTools 过滤，拿掉的工具模型根本调不到；显式传的
+    // disabledTools 也一并保留（两边取并集，不互相覆盖）。
     this.disabledTools = new Set(opts.disabledTools ?? []);
+    if (opts.teamRole === "chief") {
+      for (const s of TOOL_SCHEMAS) {
+        const name = (s.function as Record<string, unknown>).name as string;
+        if (!ORCHESTRATOR_TOOLS.includes(name)) {
+          this.disabledTools.add(name);
+          this.orchestratorDisabled.add(name);
+        }
+      }
+    }
     this.ctx = newToolContext({
       workdir: this.workdir,
       mode: this.mode,
@@ -1143,8 +1189,12 @@ export class Agent {
       if (this.backend !== null && name === "apply_patch") return false;
       return true;
     });
-    if (this.poppyEnabled) schemas.push(POPPY_TOOL_SCHEMA, POPPY_PERMISSION_SCHEMA, POPPY_IDENTITY_SCHEMA);
-    const mcpSchemas = this.mcpManager?.hasTools() ? [...this.mcpManager.toolSchemas] : [];
+    // 第 1 批 G-P0-5：参谋长连 Poppy 只读工具也不发——编排者只剩委派工具，
+    // 字面意思：除了 delegate / delegate_parallel，什么工具都不给模型看。
+    if (this.poppyEnabled && this.teamRole !== "chief") schemas.push(POPPY_TOOL_SCHEMA, POPPY_PERMISSION_SCHEMA, POPPY_IDENTITY_SCHEMA);
+    // 第 1 批 G-P0-5：参谋长连 MCP 工具也不给——编排者只剩委派工具，MCP
+    // 不在 TOOL_SCHEMAS 里，构造时的 disabledTools 拦不住它，这里直接不发。
+    const mcpSchemas = this.teamRole === "chief" ? [] : (this.mcpManager?.hasTools() ? [...this.mcpManager.toolSchemas] : []);
     // 延迟加载的开关：默认开，NYRA_LAZY_TOOLS=0 显式关闭（逃生口）。
     // 三个来源，优先级：NYRA_LAZY_TOOLS=0（显式关）> tool_search 开关/配置（显式开）> MCP 数量阈值。
     const envOff = (process.env.NYRA_LAZY_TOOLS ?? "").trim() === "0";
@@ -1794,7 +1844,22 @@ export class Agent {
       // 报错，不静默降级），转写文本当任务文本；转写只记元数据与文本指纹进证据链。
       // 转写在 toolSchemas / buildSystemPrompt 之前：技能匹配要看到转写后的任务。
       const transcript = await this.transcribeVoiceInput(this.voiceInputs[0]);
-      task = task.trim() ? `${task}\n\n语音转写：${transcript}` : transcript;
+      // 第 1 批 G-P2-17：语音输入先审后发——转写文字先过 review 钩子
+      //（CLI 默认接交互提问；没接钩子 = 老行为，直接当任务跑）。drop =
+      // 这段转写不发，运行直接收尾（不烧模型 token）；edit = 按改后的
+      // 文字跑。结论进 voice_input_reviewed 事件（只记结论与文本指纹）。
+      let finalTranscript = transcript;
+      if (this.voiceReview) {
+        const reviewed = await this.voiceReview(transcript);
+        const reviewedText = reviewed.decision === "edit" ? (reviewed.text ?? transcript) : transcript;
+        try { this.emit("voice_input_reviewed", { decision: reviewed.decision, chars: reviewedText.length, text_hash: shortTextHash(reviewedText) }); } catch { /* 记账失败绝不破坏主循环 */ }
+        if (reviewed.decision === "drop") {
+          this.voiceInputs = [];
+          return "语音转写已丢弃（先审后发：转写文字没发出去，任务没跑）。";
+        }
+        finalTranscript = reviewedText;
+      }
+      task = task.trim() ? `${task}\n\n语音转写：${finalTranscript}` : finalTranscript;
       this.voiceInputs = [];
     }
     this.lastTask = task;
@@ -1989,6 +2054,13 @@ export class Agent {
         } else if (refusal !== null) {
           // 被拒的调用不执行，直接把纸条当工具结果回填给模型。
           result = refusal;
+        } else if (this.disabledTools.has(fnName) || (this.teamRole === "chief" && fnName.startsWith("mcp_"))) {
+          // 第 1 批 G-P0-5：工具层面拿掉的工具——模型就算幻觉调出来也
+          // 执行不了。参谋长的写工具、子任务白名单外的工具都走这里；
+          // MCP 工具不在 TOOL_SCHEMAS 里，参谋长的那份单独按前缀拦。
+          // 只返回错误文案给模型，不进 executeTool、不产生副作用；
+          // S4-1 白名单的本意也是“其余全部禁用”，这里把它落到执行层。
+          result = `错误：工具 ${fnName} 对当前 agent 不可用（已被禁用）。`;
         } else if (fnName === "search_tools") {
           // 延迟加载的检索：只读、无副作用、不走审批（也不进 executeTool）。
           result = this.handleSearchTools(args, schemas);
@@ -2032,6 +2104,20 @@ export class Agent {
           }
         }
         this.emit("tool_result", { id: (tc.id as string) ?? "", name: fnName, result });
+        // 第 1 批 G-P0-4：单写者门刚拦下的写调用，进事件链——拦了谁、
+        // 拦了哪个文件、当时谁拿着名额，事后能查（事件里只记相对路径）。
+        if (this.ctx.lastWriteGateDenial) {
+          const denial = this.ctx.lastWriteGateDenial;
+          this.ctx.lastWriteGateDenial = null;
+          try { this.emit("write_gate_denied", { team_id: this.teamId, file: denial.file, agent: this.soulAgent, holder: denial.holder }); } catch { /* 观察器故障绝不破坏主流程 */ }
+        }
+        // 同款：刚拿到新租约（参谋长首次写某文件）也进事件链；已持有者
+        // 续写不发，不刷事件链。
+        if (this.ctx.lastWriteGateGrant) {
+          const grant = this.ctx.lastWriteGateGrant;
+          this.ctx.lastWriteGateGrant = null;
+          try { this.emit("write_gate_granted", { team_id: this.teamId, file: grant.file, agent: this.soulAgent }); } catch { /* 观察器故障绝不破坏主流程 */ }
+        }
         messages.push({ role: "tool", tool_call_id: (tc.id as string) ?? "", content: result });
         saveSession(this.sessionId, messages.slice(1), this.home);
       }
@@ -2462,7 +2548,10 @@ export class Agent {
 
     // S4-1：工具白名单。子 Agent 默认继承父级工具集；给了 tools 就只保留名单内的，
     // 其余全部禁用——这样"只读调研"这类子任务拿不到 shell / 写文件能力。
-    let disabledTools = [...this.disabledTools];
+    // 第 1 批 G-P0-5：参谋长的编排者限制不继承——那是参谋长这个角色的，
+    // 成员要拿回完整工具集（显式传的 disabledTools 照常继承，只去掉
+    // orchestratorDisabled 那部分）。
+    let disabledTools = [...this.disabledTools].filter((n) => !this.orchestratorDisabled.has(n));
     if (opts.tools?.length) {
       const allowed = new Set(opts.tools.map((t) => t.trim()).filter(Boolean));
       const allNames = TOOL_SCHEMAS
@@ -2717,6 +2806,37 @@ export class Agent {
       verification: { status: "not-verified", note: "未验收" },
       ...overrides,
     });
+    // 第 1 批 G-P0-4：单写者门——分派时把 write_files 的名额从参谋长
+    // 移交给成员。只在团队模式 + 指明了成员时做；名额移交失败（别人
+    // 正拿着）直接拒绝这次委派，不让两个成员同时写同一文件。名额
+    // 在子任务结束时还回去——成功/失败/取消都走 try/finally（见本函数
+    // 末尾），TTL 1 小时是最后的兜底。
+    let leasedFiles: string[] = [];
+    const releaseLeasedFiles = (): void => {
+      if (!this.teamId || !opts.agent || leasedFiles.length === 0) return;
+      try { releaseAllWriterLeases(this.home, this.teamId, opts.agent.trim(), this.soulAgent); } catch { /* 账本写失败不破坏交付 */ }
+      leasedFiles = [];
+    };
+    if (opts.writeFiles?.length && this.teamId && opts.agent) {
+      const member = opts.agent.trim();
+      for (const rawFile of opts.writeFiles) {
+        const key = normalizeGateFile(rawFile);
+        if (!key) {
+          notes.push(`忽略写者名额文件 ${rawFile}（不在工作区内）`);
+          continue;
+        }
+        const res = transferWriteLease(this.home, this.teamId, key, this.soulAgent, member, this.soulAgent);
+        if (!res.granted) {
+          // 移交失败 = 这次委派不跑；已建的隔离 worktree 不能留着（与
+          // 成功路径的清理同款，失败路径没有 finally 兜底）。
+          if (worktreePath) spawnSync("git", ["worktree", "remove", "--force", worktreePath], { cwd: this.workdir, windowsHide: true });
+          return delegateFailed(`错误：${res.reason}`);
+        }
+        leasedFiles.push(key);
+        notes.push(`写者名额：${key} 已移交给 ${member}`);
+        try { this.emit("write_gate_transferred", { team_id: this.teamId, file: key, from: this.soulAgent, to: member }); } catch { /* 观察器故障绝不破坏主流程 */ }
+      }
+    }
     try {
       // 缺口 13：验收门——子任务产出先验收再交回；未通过且开了 rework 时打回重做
       // 1 次（同一子 agent、同一 worktree 就地改，复用完整上下文；无改动可改时
@@ -2902,6 +3022,10 @@ export class Agent {
         ? `子任务失败：${err.message}`
         : `子任务异常：${(err as Error)?.name ?? "Error"}: ${err instanceof Error ? err.message : String(err)}`;
       return { ...delegateFailed(text), spentUsd: childSpentUsd, model: child.provider.model ?? null };
+    } finally {
+      // 第 1 批 G-P0-4：子任务结束，名额还回去——成功/失败/取消都走这里；
+      // 移交时没拿到名额的（leasedFiles 为空）直接跳过。
+      releaseLeasedFiles();
     }
   }
 
@@ -3066,6 +3190,8 @@ export class Agent {
           ...(typeof spec.agent === "string" && spec.agent.trim() ? { agent: spec.agent.trim() } : {}),
           // H-7：并行线程的 orchestrator 授予（只认 true；没给就是 flat）。
           ...(spec.orchestrator === true ? { orchestrator: true } : {}),
+          // 第 1 批 G-P0-4：并行线程的写者名额文件（delegateDetailed 里移交）。
+          ...(Array.isArray(spec.writeFiles) ? { writeFiles: spec.writeFiles } : {}),
           // 可靠性打磨第 1 项第一批：线程取消信号传给子任务（超时/整批
           // 取消时子任务的在途调用跟着 abort）。
           ...(signal ? { signal } : {}),

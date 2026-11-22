@@ -51,6 +51,11 @@ outputSchema?: Record<string, unknown>;
 agent?: string;
 /** H-7：授予这条线程的子 agent 的 orchestrator 角色（允许它再委派）；默认不开。 */
 orchestrator?: boolean;
+/**
+ * 第 1 批 G-P0-4：这条线程要写的 workspace 相对路径——delegateDetailed
+ * 据此把写者名额从参谋长移交给这条线程的成员，线程结束时名额还回去。
+ */
+writeFiles?: string[];
 }
 
 export type ParallelThreadStatus = "ok" | "failed" | "timeout" | "rejected" | "cancelled";

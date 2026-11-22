@@ -318,6 +318,21 @@ export function buildTimeline(store: RunStore, runId: string): Timeline {
         push(at, "event", `通话段落已确认（${reason === "payment" ? "支付类" : reason === "external_send" ? "对外发送类" : "敏感意图"}，含义已确认，未执行）`, null, null, null);
         break;
       }
+      case "voice_call_transport_connected": {
+        const relayed = bool(ev.relayed);
+        const rtt = num(ev.rtt_ms);
+        push(at, "event", `语音通话传输已接通（WebRTC${relayed === true ? "，经中继" : ""}${rtt !== null ? `，往返 ${rtt}ms` : ""}）`, null, null, null);
+        break;
+      }
+      case "voice_call_transport_failed": {
+        push(at, "event", `语音通话传输失败（WebRTC：${str(ev.reason) ?? "未知原因"}）`, null, false, null);
+        break;
+      }
+      case "voice_input_reviewed": {
+        const decision = str(ev.decision) ?? "";
+        push(at, "event", `语音输入已审阅（${decision === "accept" ? "接受" : decision === "edit" ? "改后接受" : decision === "drop" ? "已丢弃" : decision}，${num(ev.chars) ?? 0} 字）`, null, null, null);
+        break;
+      }
       case "video_call_started": {
         const peer = str(ev.peer);
         push(at, "event", `视频通话开始${peer ? `（对方 ${peer}）` : "（本机回环）"}，传输 ${str(ev.transport) ?? "webrtc"}`, null, false, null);
@@ -912,6 +927,22 @@ export function buildTimeline(store: RunStore, runId: string): Timeline {
       case "team_charter_verified": {
         const passed = bool(ev.passed);
         push(at, "event", `Charter 抽查${passed === true ? "通过" : passed === false ? "未通过" : "已定夺"}：成员 ${str(ev.agent) ?? "?"}`, str(ev.run_id) ? `运行 ${str(ev.run_id)}` : null, passed, null);
+        break;
+      }
+      case "write_gate_granted": {
+        push(at, "event", `单写者门：${str(ev.agent) ?? "?"} 拿到 ${str(ev.file) ?? "?"} 的写名额`, null, null, null);
+        break;
+      }
+      case "write_gate_denied": {
+        push(at, "event", `单写者门拦下 ${str(ev.agent) ?? "?"} 写 ${str(ev.file) ?? "?"}（写者是 ${str(ev.holder) ?? "?"}）`, null, false, null);
+        break;
+      }
+      case "write_gate_transferred": {
+        push(at, "event", `单写者门：${str(ev.file) ?? "?"} 的写名额从 ${str(ev.from) ?? "?"} 移交给 ${str(ev.to) ?? "?"}`, null, null, null);
+        break;
+      }
+      case "write_gate_released": {
+        push(at, "event", `单写者门：${str(ev.file) ?? "?"} 的写名额已还回（由 ${str(ev.by) ?? "?"}）`, null, null, null);
         break;
       }
       case "tool_start": {

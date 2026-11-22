@@ -469,10 +469,23 @@ voice_call_started: ["call_id", "agent", "peer", "transport"],
 voice_call_answered: ["call_id"],
 voice_call_declined: ["call_id"],
 voice_call_ended: ["call_id", "duration_seconds", "segments", "stt_seconds", "tts_chars", "cost_usd", "held"],
-voice_call_transcribed: ["call_id", "segment_id", "vad", "seconds", "chars", "engine", "cost_usd", "text_hash"],
+voice_call_transcribed: ["call_id", "segment_id", "vad", "seconds", "chars", "engine", "cost_usd", "text_hash", "realtime_provider"],
 voice_call_spoken: ["call_id", "segment_id", "chars", "engine", "cost_usd"],
 voice_call_blocked: ["call_id", "segment_id", "reason", "text_hash"],
 voice_call_confirmed: ["call_id", "segment_id", "reason"],
+// 第 1 批 G-P0-1：语音通话的传输层接通/失败（与 video_call_transport_*
+// 同款字段；transport 字段已在 voice_call_started 里，失败时再记原因）。
+voice_call_transport_connected: ["call_id", "ice_pair", "relayed", "rtt_ms"],
+voice_call_transport_failed: ["call_id", "reason"],
+// 第 1 批 G-P0-4：单写者门进证据链——谁拿了名额、谁被拦、名额在谁手里
+// 转了一圈、谁还回去。只记团队 id、相对路径与 agent 名，不记绝对路径。
+write_gate_granted: ["team_id", "file", "agent"],
+write_gate_denied: ["team_id", "file", "agent", "holder"],
+write_gate_transferred: ["team_id", "file", "from", "to"],
+write_gate_released: ["team_id", "file", "by"],
+// 第 1 批 G-P2-17：语音输入先审后发——转写文字给人看过之后的结论
+//（采纳/改后采纳/丢弃），只记结论与文本指纹，不记转写原文。
+voice_input_reviewed: ["decision", "chars", "text_hash"],
 // 缺口 37：视频通话进证据链——通话 id、帧 id、ICE 对、字节数、图像指纹、
 // 花费。只记元数据与 SHA-256 前 12 位指纹，不记图像内容与绝对路径。
 video_call_started: ["call_id", "agent", "peer", "transport"],
