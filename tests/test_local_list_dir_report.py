@@ -38,6 +38,19 @@ class LocalListDirReportTests(unittest.TestCase):
             self.assertIn("错误：fake.txt", output)
             self.assertFalse(classify_tool_report(report).reported_failure)
 
+    def test_os_error_does_not_expose_private_path(self):
+        with tempfile.TemporaryDirectory() as root:
+            ctx = ToolContext(workdir=Path(root), mode="readonly", interactive=False, memory_path=Path(root) / "MEMORY.md", skills_dir=Path(root) / "skills")
+            secret = "/private/account-token/hidden-folder"
+            with patch("angel.tools._resolve_path", side_effect=OSError(f"permission denied: {secret}")):
+                output, report = execute_local_list_dir_report(ctx)
+            self.assertEqual(output, "执行失败：目录读取失败")
+            self.assertNotIn(secret, output)
+            status = classify_tool_report(report)
+            self.assertTrue(status.reported_failure)
+            self.assertFalse(status.execution_verified)
+            self.assertFalse(status.safe_to_auto_resume)
+
     def test_backend_is_rejected_before_remote_call(self):
         with tempfile.TemporaryDirectory() as root:
             ctx = ToolContext(workdir=Path(root), mode="readonly", interactive=False, memory_path=Path(root) / "MEMORY.md", skills_dir=Path(root) / "skills")
