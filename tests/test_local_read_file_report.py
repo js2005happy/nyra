@@ -61,5 +61,12 @@ class LocalReadFileReportTests(unittest.TestCase):
                 execute_local_read_file_report(ctx, "note.txt")
 
 
+    def test_missing_file_does_not_echo_private_path(self):
+        private_path = "/private-user/secret-token-location.txt"
+        result, report = execute_local_read_file_report(self.ctx, private_path)
+        self.assertEqual(result, "错误：文件不存在")
+        self.assertNotIn(private_path, result)
+        self.assertEqual(report.outcome, "reported_error")
+
 if __name__ == "__main__":
     unittest.main()
