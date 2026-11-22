@@ -65,12 +65,15 @@ nyra team add <团队名或 id> <成员>
 nyra team remove <团队名或 id> <成员> # 至少留一个成员
 nyra team dissolve <团队名或 id> [--yes] # 解散是终态
 nyra team dispatch <团队名或 id> "<任务>" [--dry-run]
+nyra team writer <status|transfer <文件> <成员>|release <文件>> # 单写者门（第 1 批 G-P0-4，详见 `docs/write-gate.md`）
 ```
 
 规则：
 
 - 团队账本 `~/.nyra/teams.json`（原子写 0600，损坏先备份再抛错），最多 8 个成员，参谋长不能同时是成员，同名 active 团队不重复。
 - 参谋长独占入口：只拆解、分派、汇总，不写业务代码；下游专职 agent 各做执行，只回简报。
+- **零工具编排者（第 1 批 G-P0-5）**：“不写代码”以前只写在任务文本的提示词里，本批从工具层面拿掉——参谋长角色的 agent 只剩 `delegate` 与 `delegate_parallel` 两个工具（MCP 工具与只读工具也不发），模型幻觉调出被拿掉的工具时执行层直接拒绝；限制是角色的，委派出去的子 agent 不继承，成员拿回完整工具集。详见 `docs/write-gate.md`。
+- **单写者门（第 1 批 G-P0-4）**：同一时间只允许一个 agent 写同一个文件，写者名额由参谋长持有、显式移交（分派时 `delegate` / `delegate_parallel` 传 `write_files`，子任务开始前移交、结束时自动还回；或 `nyra team writer transfer` 手工移交）；第二个同时写同一文件的被拦下并有记录（拒绝文案进幂等重试的绝不重试标记）。租约 TTL 1 小时，只在写操作真落地后才记，被拦下的写不占名额。详见 `docs/write-gate.md`。
 - 下游之间不直接互发指令：只有参谋长能分派（`delegateDetailed` 的团队门：非参谋长调 delegate 直接拒绝；分派须指定 `agent`，只认团队成员；成员接单须有完整 Charter）；成员之间要交接只通过参谋长或 beads 交接。**例外（H-7 嵌套编排）**：被参谋长授予 `orchestrator` 角色的成员也能再往下分派（委派时传 `orchestrator: true`，仍须指定 `agent`、仍须完整 Charter；没授予的成员调 delegate 仍被团队门拒绝，收到的还是这条团队门文案）。
 - 分派是 `delegate` 工具的 `agent` 参数（只认团队成员）与 `delegate_parallel` 每条线程的 `agent` 参数；内部机械步（H-5 合并子 agent）走 `internal` 旁路，不走分派门。
 - 参谋长的上下文是瓶颈：只收摘要不收全文。`buildChiefTask` 给参谋长的任务文本写明了这六条（拆解、分派、汇总；只派给名单里的成员；下游不互发指令；只收简报；对外动作回参谋长/人批；拆错了全队白跑，不能拆就直接说）。
@@ -94,7 +97,7 @@ nyra team dispatch <团队名或 id> "<任务>" [--dry-run]
 
 - 团队账本 `~/.nyra/teams.json`（0600），审计 `~/.nyra/team-audit.jsonl`（append-only，0600）。
 - 交接包与 changelog 落在各 agent 电脑 workspace 的 `handover/` 下（见上）。
-- 13 个新运行事件已注册进 EVENT_FIELDS（`soul_charter_set` / `soul_charter_cleared` / `team_created` / `team_member_added` / `team_member_removed` / `team_dissolved` / `team_dispatched` / `team_handover_sent` / `team_handover_received` / `team_handover_accepted` / `team_approval_requested` / `team_approval_decided` / `team_charter_verified`），只记元数据与 id，不记任务原文、不记交接包内容、不记绝对路径；`src/timeline.ts` 加渲染。
+- 17 个新运行事件已注册进 EVENT_FIELDS（`soul_charter_set` / `soul_charter_cleared` / `team_created` / `team_member_added` / `team_member_removed` / `team_dissolved` / `team_dispatched` / `team_handover_sent` / `team_handover_received` / `team_handover_accepted` / `team_approval_requested` / `team_approval_decided` / `team_charter_verified`，另加第 1 批单写者门的 `write_gate_granted` / `denied` / `transferred` / `released`），只记元数据与 id，不记任务原文、不记交接包内容、不记绝对路径；`src/timeline.ts` 加渲染。
 
 ## 已知局限
 
@@ -102,6 +105,8 @@ nyra team dispatch <团队名或 id> "<任务>" [--dry-run]
 - Charter 写得再好模型也可能不遵守，抽查是确定性启发式检查、只核说法不验语义。
 - 文件交接不管内容对错，内容对错仍由 verifier + 人批负责。
 - 团队审批门只拦对外动作，不拦本地读写与 shell。
+- 单写者门只管三个写工具（`write_file` / `edit_file` / `apply_patch`），
+  shell 里的写操作不走门；租约是文件级、不是行级。
 - 真实多 agent 场景只在假 provider 上验过；模型调用的取消已接通
   （可靠性打磨第 1 项第一批：/stop、超时、预算触顶都发取消信号，
   见 `docs/cancellation.md`）。

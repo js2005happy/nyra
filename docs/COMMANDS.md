@@ -21,7 +21,7 @@
 | `nyra golden <add\|list\|show\|remove\|run\|rescore>` | Golden 测试集（G-2）：固定输入 + 期望输出 + 期望工具轨迹，跑分看结果分与轨迹分（详见 `docs/delivery-contract.md`） |
 | `nyra "任务" --contract <契约 id>` | 本次运行挂上已激活的交付契约，收尾逐项打分进运行报告 |
 | `nyra "任务" --image <图片路径> [--image ...] [--video <视频路径或链接>]` | 图像/视频输入：图片进首轮用户消息，视频先抽帧再进（模型须支持看图，详见 docs/vision.md） |
-| `nyra --voice <音频路径> ["任务"]` | 语音指挥：先转文字再当任务跑（本地 whisper 优先、云端兜底；详见 docs/voice.md） |
+| `nyra --voice <音频路径> ["任务"] [--yes]` | 语音指挥：先转文字再当任务跑（本地 whisper 优先、云端兜底；转写文字默认先审后发，`--yes` 明确跳过审阅，JSON 模式下没给 `--yes` 直接拒绝；详见 docs/voice.md） |
 | `nyra "任务" --speak` | 任务跑完后把结果读出来（默认关；只读结果前 500 字） |
 | `nyra restore [检查点]` | 从影子快照恢复文件与会话 |
 
@@ -94,7 +94,7 @@
 | `nyra script <check\|preauth>` | Pi Bot 借鉴第 1 条：脚本内容判定 + 摘要预授权——纯脚本（白名单静态分析）走快路径不用每次问，例行里的脚本按内容摘要 `script:<SHA-256>` 钉死，内容一改授权自动失效；判定结果写进证据链与审计（详见 `docs/script-purity.md`） |
 | `nyra handover <contract\|checkers>` | Pi Bot 借鉴第 2 条：交接契约的程序化验收——交付物 + 验收项 + 修正轮次上限；验收是程序核对，不调模型，不过打回、轮次用完停下等人；打回与停下记一次信任阶梯违规；结果进证据链与审计（详见 `docs/handover-contract.md`） |
 | `nyra fanout <list\|show\|recover>` | H-5 + H-6：后台扇出——顶层委派默认后台跑，跑完单条 consolidated 消息回填；合并步合成为一份交付物（详见 `docs/merge-fanout.md`） |
-| `nyra team <create\|list\|show\|add\|remove\|dissolve\|dispatch\|handover>` | GROK 批（新缺口 52）：团队模式——参谋长独占入口，只拆解、分派、汇总；成员须有完整 Charter 才能接单；交接走 inbox/outbox/变更日志；对外动作一律回参谋长/人批（详见 `docs/team.md`） |
+| `nyra team <create\|list\|show\|add\|remove\|dissolve\|dispatch\|handover\|writer>` | GROK 批（新缺口 52）：团队模式——参谋长独占入口，只拆解、分派、汇总；成员须有完整 Charter 才能接单；交接走 inbox/outbox/变更日志；对外动作一律回参谋长/人批；单写者门（同一文件同一时间只一个 agent 写，名额由参谋长移交）与零工具编排者（参谋长只剩委派工具）见 `docs/write-gate.md`（详见 `docs/team.md`） |
 | `nyra subagent <list\|show\|register\|heartbeat\|sweep\|resume\|suspend\|stop\|confirm-stopped\|cancel-stop\|steer>` | 缺口 30：崩溃自续——子 agent 持久行 + 心跳检查点 + 启动扫荡 + 先验状态再续跑；H-3：单点停止（请求停止/确认停下/取消请求，停止现在真中断在途调用——模型请求 abort、工具与子进程被掐断，确认停下后才标已停，停不下来如实写“正在停止”，详见 `docs/roster.md` 与 `docs/cancellation.md`）；H-2：单点引导（排队式引导、检查点消费，`nyra subagent steer <运行 id> "<引导文本>" --yes`，详见 `docs/steer-schema.md`）；H-4：结构化输出契约（`delegate` / `delegate_parallel` 可带 `output_schema`，详见 `docs/steer-schema.md`） |
 | `nyra roster <list\|show>` | H-1：实时花名册——每个子 agent 一行：状态 + 已耗时 + 当前动作（只读快照，token/费用默认不显示，详见 `docs/roster.md`） |
 | `nyra side-effects <list\|show\|record\|mark\|recover>` | DSH-4：先存后做的副作用队列——执行前先落库，重启按年龄恢复、带 recovery note（详见 `docs/kanban.md`） |
@@ -129,8 +129,8 @@
 | `nyra budget <list\|show\|reserve\|settle\|release\|strict>` | 并发预算预留：模型调用前先预留额度、超上限不发请求；金额未知默认暂停等人工处理（详见 `docs/budget.md`） |
 | `nyra agui <register\|list\|show\|link\|connect\|disconnect\|send\|exec\|accept-write\|revoke-write\|a2a>` | 协议中立接入：接任意 AG-UI endpoint 当 Bot（只读先行，写操作须机主显式接受），A2A 复用名片 + 交接（详见 `docs/agui.md`） |
 | `nyra screen <watch\|activity\|status\|takeover\|handover> <电脑 id>` | 缺口 50：只读看屏（实时画面 + 活动列表，帧指纹不记帧内容）与接管（take the wheel，须确认；接管期间 Bot 暂停、交还后从挂起点继续，全程记审计）；画面里密码/验证码/卡号自动打码（详见 `docs/bot-screen.md`） |
-| `nyra voice <status\|speak <文字>\|enable-tts\|disable-tts>` | 语音指挥：看配置与可用性、读一段文字、开关自动回读（默认关；详见 `docs/voice.md`） |
-| `nyra voice call <start\|answer\|decline\|end\|status\|list\|segment\|confirm>` | 实时语音通话：建通话、喂音频段落转写、可选回读（本地 whisper 优先，云端默认关；详见 `docs/voice.md`） |
+| `nyra voice <status\|speak <文字>\|enable-tts\|disable-tts\|transcribe <音频>\|realtime <list\|use\|status>>` | 语音指挥：看配置与可用性、读一段文字、开关自动回读；只转写不跑任务；实时语音服务商切换（默认 local，详见 `docs/realtime-voice.md`；详见 `docs/voice.md`） |
+| `nyra voice call <start\|answer\|decline\|end\|status\|list\|segment\|confirm\|connect>` | 实时语音通话：建通话、喂音频段落转写、可选回读（本地 whisper 优先，云端默认关；`--transport webrtc` 走真 WebRTC 1:1 语音，`connect` 主动拨通；转写文字先审后发见 `docs/voice.md`） |
 | `nyra video <call\|signal\|ice>` | 视频通话 + 按需视觉采样：信令 + TURN + ICE 直连传输，帧按需看（本地优先，云端默认关；详见 `docs/video-call.md`） |
 | `nyra export --format docx\|xlsx\|pptx --from <内容 JSON> --out <路径>` | 成品导出：结构化内容写成可编辑的真办公文件，附事实核查（详见 `docs/office.md`） |
 | `nyra media <status\|enable\|disable\|ingest <链接> [--out <路径>]\|setup\|scope …>` | 媒体抓取：公开视频 → 字幕/转写 → 文本（默认关；yt-dlp 二进制须 `nyra media setup` 按官方 release 下载并验签安装；详见 `docs/media-ingest.md`） |

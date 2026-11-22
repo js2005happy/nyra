@@ -11,6 +11,9 @@ Puck 式语音通话指挥 agent 的异步版：对 Nyra 说一句话，它干�
 nyra --voice 录音.wav
 nyra --voice 录音.wav "把结果写进 out.txt"
 
+# 只转写、不跑任务（先看一眼转得对不对）
+nyra voice transcribe 录音.wav
+
 # 任务跑完后把结果读出来（只读结果前 500 字，不读完整证据链）
 nyra "做一个季度总结" --speak
 
@@ -19,11 +22,30 @@ nyra voice status
 nyra voice speak "任务完成"
 nyra voice enable-tts   # 每次任务跑完自动回读（默认关）
 nyra voice disable-tts
+
+# 实时语音服务商：看已注册的、切换、看当前用的
+nyra voice realtime list
+nyra voice realtime use local
+nyra voice realtime status
 ```
 
 `--voice` 只支持一次性任务：不能与 `--resume` / `--resume-run` /
 `--plan` / `--execute-plan` 组合、不能进交互模式，组合不对直接报错退出码 2。
 `--speak` 不能与 `--json` 组合（JSON 模式只出机器可读结果）。
+
+## 语音输入先审后发（G-P2-17）
+
+转写文字先给人看一眼再当任务跑，不让误转写直接变成误操作：
+
+- 交互模式（终端）下 `--voice` 默认先审：转写文字打印出来，回车接受、
+  输入改过的文字按改后跑、输入 `drop` 丢弃（不跑任务、不烧模型 token）。
+  `--voice --yes` 是明确跳过审阅——只在你确定转写不会错时用。
+- JSON 模式（`--json`）下没人可问：`--voice` 没给 `--yes` 直接拒绝
+  （`voice_review_required`），不静默跑；给了 `--yes` 才按转写文字跑。
+- 审阅结论进证据链（`voice_input_reviewed` 事件：结论 + 字数 + 文本指纹，
+  不记原文）。丢弃同样记一笔，不是不记。
+- `nyra voice transcribe <音频>` 只转写、不跑任务——想先看一眼转得对不对
+  时用它，不用先把整段语音当任务跑起来。
 
 ## 转文字：本地优先、云端兜底、失败就报错
 
@@ -59,8 +81,10 @@ nyra voice disable-tts
 处理 → agent 的回读文字可合成语音读出来 → 挂断看三本账总结。
 
 ```bash
-nyra voice call start                        # 本机回环通话（不拨真实电话）
+nyra voice call start                        # 默认本机回环通话（不拨真实电话）
 nyra voice call start --peer 林舟 --yes      # 呼叫有名有姓的对方，须 --yes
+nyra voice call start --transport webrtc     # 真 WebRTC 1:1 语音（见下）
+nyra voice call connect <通话 id>            # 主动拨通一通已建的 webrtc 通话
 nyra voice call answer <通话 id>             # 接听
 nyra voice call decline <通话 id>            # 拒绝
 nyra voice call segment <通话 id> 录音.wav   # 喂一段音频，转写后打印文本
@@ -70,17 +94,25 @@ nyra voice call end <通话 id>                # 挂断，打印三本账总结
 nyra voice call status [通话 id]             # 看一通 / 列最近通话
 ```
 
-- **传输层本批是本机回环**：没有真 WebRTC 媒体栈，不拨真实电话、不走
-  TURN/SFU；传输接口已留好（`VoiceCallTransport`），实时流式传输是下一批。
-  总结里的三本账分开算：传输（本批回环，0 带宽、0 token）、理解（STT）、
-  干活（本次通话不调 LLM，无 token 花费）。不要写“语音不花 token”这种
-  绝对说法——传输不花，理解与回读按需花。
+- **传输层**：默认仍是本机回环（不拨真实电话、不走 TURN/SFU；传输
+  0 带宽、0 token）。`--transport webrtc` 走真 WebRTC：复用视频通话那套
+  纯 TS 栈（`src/videoCall.ts` 的 `WebRtcTransport` + 信令 + ICE +
+  STUN/TURN），与对端协商后建媒体通道；协商失败时通话记录照常落账本，
+  事件记 `voice_call_transport_failed`。回环仍是回退：信令连不上或没配
+  webrtc 时，用回环起通话。`connect` 是呼叫方的拨通入口（回环通话不需要它）。
+  诚实边界：本批只守住媒体通道，实时音频流（麦克风采音、扬声器放音、
+  音频帧经媒体面收发）还没做，段落仍用 `segment` 喂文件；两台真机打通、
+  断线重连、字幕对账尚未在真机上验过（见 PUSH-PLAN.md 的待真机验证）。
 - **VAD 门控**：WAV 做真能量检测（20ms 帧、RMS 门限），静音段直接跳过、
   不转写、不花钱；MP3 等其他格式跳过 VAD（不假装都测了），直接转写。
-- **转写比缺口 15 更严**：本地 whisper.cpp 优先；云端只在
-  `voice.call_cloud_enabled` 显式设为 true 时才走（默认关），且走之前先
-  套月度硬顶（本月已花是下界，只会晚触发、不会误触发；没配上限不挡人）。
-  本地不可用、云端又没开时直接报错指路，不静默降级。
+- **转写走实时语音插件层**：通话里的段落转写不再直调 whisper/cloud，
+  走 `src/realtimeVoice.ts` 的 provider 注册表（详见 `docs/realtime-voice.md`）。
+  默认 `local`（本地 whisper.cpp 优先、云端兜底，与原来同一条路）；
+  `nyra voice realtime use <名字>` 切换，名字没注册直接报错、不静默回退。
+  云端仍比缺口 15 更严：只在 `voice.call_cloud_enabled` 显式设为 true 时
+  才走（默认关），且走之前先套月度硬顶（本月已花是下界，只会晚触发、不会
+  误触发；没配上限不挡人）。本地不可用、云端又没开时直接报错指路，不静默降级。
+  事件 `voice_call_transcribed` 多一个 `realtime_provider` 字段。
 - **语音不碰支付与对外发送**：转写文本命中支付类（转账、付款……）或对外
   发送类（发消息、发邮件……）关键词时，该段被扣下（`held`），不回读、不
   执行；`confirm` 只记“含义已确认”，执行请把文字当普通任务跑。转写原文
@@ -90,10 +122,12 @@ nyra voice call status [通话 id]             # 看一通 / 列最近通话
 - **回读**：`--speak-reply "<文字>"` 才合成（云端 TTS，同样过月度硬顶；
   超 `call_reply_max_chars` 截断）；mp3 存 `~/.nyra/voice/call-<通话 id>-<段落 id>.mp3`
   （0600），配了播放器才播。被扣下的段落不回读。
-- **证据链**：8 个新事件已注册进 EVENT_FIELDS（`voice_call_started` /
+- **证据链**：10 个新事件已注册进 EVENT_FIELDS（`voice_call_started` /
   `answered` / `declined` / `ended` / `transcribed` / `spoken` /
-  `blocked` / `confirmed`），有运行上下文（`--run <运行 id>`）时镜像进
+  `blocked` / `confirmed`，另加 webrtc 传输的 `voice_call_transport_connected` /
+  `voice_call_transport_failed`），有运行上下文（`--run <运行 id>`）时镜像进
   运行事件，`src/timeline.ts` 加渲染；只记元数据与指纹，不记原文与路径。
+  语音输入审阅另记 `voice_input_reviewed`（结论 + 字数 + 指纹，不记原文）。
 
 ## 边界：语音不碰支付与对外发送
 
@@ -138,13 +172,16 @@ nyra voice call status [通话 id]             # 看一通 / 列最近通话
 | `call_cloud_enabled` | `false` | 通话里是否允许走云端 STT/TTS（默认关，显式 opt-in） |
 | `call_vad_min_speech_ratio` | 0.15 | VAD 判定“有人说话”的最低有声帧比例 |
 | `call_reply_max_chars` | 2000 | 单次回读最多字数，超长截断 |
+| `realtime_provider` | `local` | 通话转写用的实时语音服务商（`nyra voice realtime use <名字>` 切换） |
 
 ## 已知局限
 
 - 真 STT/TTS 未在真 API 上跑通，只在假服务上验过；本地 whisper.cpp 未打包、
   须用户自己装（模型文件另行下载）。
-- 实时语音通话（缺口 36）本批只做了本机回环的最小闭环：没有真 WebRTC 媒体栈，
-  不拨真实电话；视频通话是缺口 37。
+- 实时语音通话（缺口 36）本批接上了真 WebRTC 1:1 语音（`--transport webrtc`，
+  复用视频通话的纯 TS 栈），但实时音频流（采音/放音）还没做，段落仍用
+  `segment` 喂文件；两台真机打通、断线重连、字幕对账尚未在真机上验过；
+  视频通话是缺口 37。
 - 转写原文不落盘：确认被扣下的段落时凭段落 id 与指纹核对，原文只在喂段落时
   打印一次；VAD 只对 WAV 做真能量检测，其他格式跳过。
 - 回读只读结果摘要，不读完整证据链；`describe_image` 式的语音内嵌指令仍按
