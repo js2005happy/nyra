@@ -1,3 +1,8 @@
+## 未发布（http_post 意外异常隐私，2026-11-23）
+
+- `http_post` 意外异常改为固定错误文本，不向模型回显异常中的私人 URL 或凭据；保留 HTTP 状态与响应正文的现有行为，不自动重试可能已生效的 POST。
+- 增加两项未执行的回归测试定义；仅静态审阅，未运行测试、编译或 CI。
+
 ## 2026-11-23 — Web fetch network exception privacy (unreleased, static-only)
 
 - `web_fetch` now returns a fixed failure message rather than exposing arbitrary network exception details to the model. Successful fetch content and evidence behavior remain unchanged. Two regression definitions added, not executed.
