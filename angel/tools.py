@@ -570,6 +570,30 @@ def _check_shell_denied(command: str) -> str | None:
     return None
 
 
+def execute_local_read_file_report(ctx: ToolContext, path: str) -> tuple[str, "StructuredToolReport"]:
+    """Read a local file with an in-process outcome, independent of file text.
+
+    This does not attest to external side effects or authorize task recovery.
+    Remote backends must continue through their existing execution path.
+    """
+    from .tool_report_status import StructuredToolReport
+
+    if ctx.backend is not None:
+        raise ToolError("structured local read requires a local backend")
+    try:
+        target = _resolve_path(ctx, path)
+        if not target.is_file():
+            return f"错误：文件不存在：{path}", StructuredToolReport("reported_error")
+        return _truncate(target.read_text(encoding="utf-8", errors="replace")), StructuredToolReport("reported_ok")
+    except ToolError:
+        return "错误：文件读取失败", StructuredToolReport("reported_error")
+    except TypeError:
+        return "错误：工具参数不正确", StructuredToolReport("reported_error")
+    except Exception:
+        # OS exception strings may contain absolute paths or other private data.
+        return "执行失败：文件读取失败", StructuredToolReport("reported_error")
+
+
 def _tool_read_file(ctx: ToolContext, path: str) -> str:
     if ctx.backend is not None:
         return _truncate(ctx.backend.read_file(_resolve_backend_path(ctx, path)))
