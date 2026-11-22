@@ -27,6 +27,7 @@ import { CDPBrowser } from "./cdpBrowser.ts";
 import { ComputerControl, computerErrorMessage } from "./computer.ts";
 import { runHooks } from "./hooks.ts";
 import { reviewToolCall, reviewerConfig, type ReviewerLike } from "./reviewer.ts";
+import { judgeToolCall, buildJudgeRunner, judgeConfig } from "./toolJudge.ts";
 import { redlineNeverBlock, appendBusinessRedlineAudit } from "./businessRedlines.ts";
 import { appendSoulAudit, resolveSoulAgentId, soulInvariantBlock } from "./soul.ts";
 import { checkScriptFastPath } from "./scriptPreauth.ts";
@@ -279,6 +280,16 @@ export interface ToolContext {
   reviewerRunner?: ReviewerLike | null;
   reviewTask?: string;
   reviewRecentMessages?: string[];
+  /**
+   * Turnstone judge 的运行实例与转人工标记（与 reviewerRunner 同款注入口径；
+   * 测试可直接注入 judgeRunner；不注入时 judge 门现场建一个——见 runToolJudge。
+   * judgeRunner 为 null 表示 judge 模型不可用——judge 开启时这会让被审工具
+   * 全部拒绝（fail-closed），而不是静默放行。
+   * judgeEscalation 只在本次工具调用内有效：runToolJudge 每次调用都刷新它
+   * （allow/deny 时清掉，escalate 时填上），checkApproval 消费后清掉。
+   */
+  judgeRunner?: ReviewerLike | null;
+  judgeEscalation?: { tool: string; riskScore: number; reason: string } | null;
 }
 
 export function newToolContext(partial: Partial<ToolContext> & { workdir: string }): ToolContext {
@@ -878,6 +889,14 @@ export async function checkApproval(
     throw new ToolError("用户拒绝执行");
   }
 
+  // Turnstone judge 转人工：judge 评分落入转人工区间时，本次调用不走 allow
+  // 快路、幂等短路、“记住的允许”规则与脚本快路径，强制走到人工审批链
+  // （approveFn / 终端确认）。位置在硬门之后：硬拒绝仍优先；转人工只影响
+  // “本来会直接放行”的路径。标记只认本次调用的工具名，读完就清掉——
+  // runToolJudge 每次调用都会刷新它，不会把上一次的转人工漏到下一次调用上。
+  const judgeEscalated = ctx.judgeEscalation?.tool === toolName ? ctx.judgeEscalation : null;
+  ctx.judgeEscalation = null;
+
   // P0-5：权限规则语言。deny > ask > allow，空规则集时行为与之前完全一致。
   // 注意 readonly 的拒绝在上面已经发生——规则**不能**放开只读模式，这是刻意的硬约束。
   const decision = evaluate(permissionRulesFor(ctx.home), {
@@ -890,7 +909,7 @@ export async function checkApproval(
     throw new ToolError(`已被权限规则拒绝：${decision.rule.raw}`);
   }
   const preApproved = decision?.action === "allow";
-  if (preApproved) {
+  if (preApproved && !judgeEscalated) {
     // 规则显式 allow：跳过弹窗，但仍然记录一次审批事件，便于审计。
     observeApproval(ctx, toolName, true);
     return;
@@ -900,8 +919,9 @@ export async function checkApproval(
   // 首次调用时走完规则与审批，重试只是对同一已批操作的再执行——再弹一次
   // 审批没有意义，还会把一次已批的重试变成两次人工确认。注意这个短路放在
   // 只读拒绝与权限规则 deny 之后：重试仍受这两条硬控制约束，跳过的只是
-  // 人工弹窗 / approveFn 这一层。
-  if (ctx.idempotentRetry === true) return;
+  // 人工弹窗 / approveFn 这一层。judge 转人工时不走这条短路：首次调用被转
+  // 人工还没批过，重试不能当成“已批”直接执行。
+  if (ctx.idempotentRetry === true && !judgeEscalated) return;
 
   // Pi Bot 借鉴第 1 条：纯脚本 + 摘要预授权快路径——只在例行上下文里
   // 生效（ctx.routineId 已设，工作流步骤）；聊天/单次运行不设 routineId，
@@ -910,7 +930,7 @@ export async function checkApproval(
   // 变了则直接拒绝（fail-closed：非交互例行里没人可问，停下比悄悄跑
   // 改过的脚本安全）。判定结果走 ctx.onEvent 进证据链（script_pure /
   // script_preauth_used），预授权的使用与拒绝另记脚本审计。
-  if (toolName === "shell" && opts?.command !== undefined && ctx.routineId) {
+  if (toolName === "shell" && opts?.command !== undefined && ctx.routineId && !judgeEscalated) {
     const fast = checkScriptFastPath({
       home: ctx.home ?? null,
       routineId: ctx.routineId,
@@ -935,7 +955,7 @@ export async function checkApproval(
     // 已记下的“允许并不再询问”规则：匹配时会重新做简单命令检查，
     // `; && | $() 反引号 换行` 一律匹配不上（见 approvalRules.prefixMatches）。
     const ruleHit = findApprovalRule(ctx, toolName, opts?.command);
-    if (ruleHit) {
+    if (ruleHit && !judgeEscalated) {
       observeApproval(ctx, toolName, true);
       try { ctx.onEvent?.("approval_rule_applied", { tool: toolName, rule: ruleHit.label, scope: ruleHit.scope, id: ruleHit.id }); } catch { /* ignore */ }
       return;
@@ -947,14 +967,18 @@ export async function checkApproval(
     const shellScope = toolName === "shell" && opts?.command !== undefined && opts?.cwd !== undefined
       ? JSON.stringify([opts.command, opts.cwd, approvalRoot(ctx), opts.timeout ?? 60, backendKey(ctx.backend ?? null)])
       : null;
+    // judge 转人工时把风险分与理由写进审批摘要：人批的时候能看到为什么被转过来。
+    const approvalSummary = judgeEscalated
+      ? `${summary}\n[意向验证 judge：风险 ${judgeEscalated.riskScore} 分，${judgeEscalated.reason}——本次须人工确认]`
+      : summary;
 
     if (ctx.approveFn) {
       const grant = fileScope ?? shellScope;
-      if (grant !== null && ctx.approveFnGrants?.has(grant)) return;
+      if (grant !== null && ctx.approveFnGrants?.has(grant) && !judgeEscalated) return;
       observeApproval(ctx, toolName, null);
       // 第 3 阶段 smart approvals 需要命令原文做静态规则与评审：
       // 把 opts 原样透传给 approveFn（旧调用方忽略第 3 个参数）。
-      const approved = await ctx.approveFn(toolName, summary, {
+      const approved = await ctx.approveFn(toolName, approvalSummary, {
         command: opts?.command, cwd: opts?.cwd, fileTarget: opts?.fileTarget, timeout: opts?.timeout,
         suggestion,
       });
@@ -969,10 +993,10 @@ export async function checkApproval(
       if (approved === APPROVE_ALWAYS && grant !== null) ctx.approveFnGrants?.add(grant);
       return;
     }
-    if (fileScope !== null && ctx.approvedFileTools?.has(fileScope)) return;
-    if (shellScope !== null && ctx.approvedShellCommands?.has(shellScope)) return;
+    if (fileScope !== null && ctx.approvedFileTools?.has(fileScope) && !judgeEscalated) return;
+    if (shellScope !== null && ctx.approvedShellCommands?.has(shellScope) && !judgeEscalated) return;
 
-    console.log(summary);
+    console.log(approvalSummary);
     observeApproval(ctx, toolName, null);
     let choice: string;
     if (fileScope !== null) {
@@ -996,6 +1020,10 @@ export async function checkApproval(
       if (shellScope !== null) { ctx.approvedShellCommands?.add(shellScope); return; }
     }
     throw new ToolError("用户拒绝执行");
+  }
+  // judge 转人工 + full 模式：没人可问，转人工等于拒绝（fail-closed）。
+  if (judgeEscalated) {
+    throw new ToolError(`意向验证 judge 认为 ${toolName} 风险 ${judgeEscalated.riskScore} 分须人工确认，full 模式下无人可问，拒绝执行`);
   }
   // full 模式：直接放行（denylist 仍在 shell 入口先行检查）。
 }
@@ -2741,6 +2769,57 @@ async function runReviewGate(ctx: ToolContext, tool: string, args: Record<string
   }
 }
 
+/**
+ * Turnstone 意向验证 judge——审查门之后、执行之前跑（与审查门同顺序：
+ * 先拦下危险操作，省一次人工审批打扰；审批流程本身不变）。
+ * 只审默认被审集里的工具；judge 未开启时直接返回（零打扰、零性能损耗）。
+ * 结论（放行、转人工、拒绝都）发 tool_judge_verdict 事件进证据链；deny 时
+ * 抛 ToolError，executeTool 会把它转成 `错误：…` 的工具结果给模型看；
+ * escalate 时在 ctx 上记一笔转人工标记，由 checkApproval 强制走人工审批链
+ * （不走 allow 快路与“记住的允许”规则，full 模式下无人可问则拒绝）。
+ * ctx.home 未传时无法读配置，直接跳过（不建配置、不报错）。
+ * 幂等重试（ctx.idempotentRetry === true）不重评：首次调用已评过。
+ * judgeRunner 未注入时现场建一个（buildJudgeRunner，与巡查复核同款做法）；
+ * 显式传 null 表示 judge 模型不可用——judge 开启时全部拒绝（fail-closed）。
+ */
+async function runToolJudge(ctx: ToolContext, tool: string, args: Record<string, unknown>): Promise<void> {
+  if (!ctx.home) return;
+  const config = loadConfig(ctx.home);
+  if (!judgeConfig(config).enabled) return;
+  const verdict = await judgeToolCall({
+    config,
+    tool,
+    args,
+    task: ctx.reviewTask ?? "",
+    recentMessages: ctx.reviewRecentMessages ?? [],
+    runner: ctx.judgeRunner === undefined ? buildJudgeRunner(config, ctx.home) : ctx.judgeRunner,
+    home: ctx.home ?? null,
+  });
+  if (verdict.source === "skipped") {
+    ctx.judgeEscalation = null;
+    return;
+  }
+  try {
+    ctx.onEvent?.("tool_judge_verdict", {
+      tool,
+      verdict: verdict.verdict,
+      risk_score: verdict.riskScore,
+      evidence: verdict.evidence.join(" | "),
+      reason: verdict.reason,
+      judge_model: verdict.judgeModel ?? "",
+    });
+  } catch { /* 观察器故障不破坏拦截 */ }
+  if (verdict.verdict === "deny") {
+    ctx.judgeEscalation = null;
+    throw new ToolError(`意向验证 judge 拒绝了 ${tool}（风险 ${verdict.riskScore} 分）：${verdict.reason}`);
+  }
+  if (verdict.verdict === "escalate") {
+    ctx.judgeEscalation = { tool, riskScore: verdict.riskScore, reason: verdict.reason };
+    return;
+  }
+  ctx.judgeEscalation = null;
+}
+
 /** PostToolUse：只通知、不拦截（只通知事件上钩子出错只警告）；这里再兜一层。 */
 async function runPostToolHook(ctx: ToolContext, tool: string, args: Record<string, unknown>): Promise<void> {  if (!ctx.home) return;
   try {
@@ -2820,6 +2899,10 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
     // 缺口 10：独立审查门——钩子之后、审批之前；幂等重试不重审（首次已审过）。
     if (ctx.idempotentRetry !== true) {
       await runReviewGate(ctx, name, args);
+    }
+    // Turnstone 意向验证 judge——审查门之后、执行之前；幂等重试不重评（首次已评过）。
+    if (ctx.idempotentRetry !== true) {
+      await runToolJudge(ctx, name, args);
     }
     const result = await (async (): Promise<string> => {
       switch (name) {
@@ -3094,6 +3177,11 @@ const APPROVAL_REFUSAL_MARKERS = [
   "无人值守巡查为只读",
   // GROK-6：信任阶梯是硬约束（与无人值守只读同款），被拦的写操作绝不重试。
   "信任阶梯拦截",
+  // 模型安全门同样是硬拒绝：审查层与 judge 拦住的写操作绝不重试——重试会
+  // 置 idempotentRetry、跳过审查门与 judge 门，把拦住的写操作执行掉
+  // （2026-11-22 探针实证：审查层 BLOCK 的 write_file 经重试被写出去了）。
+  "独立审查拦截",
+  "意向验证 judge 拒绝",
 ];
 
 /** 该工具结果是不是一次审批拒绝（是就绝不重试，见 executeToolIdempotent）。 */
