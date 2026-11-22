@@ -88,5 +88,24 @@ class ToolObservationTests(unittest.TestCase):
         self.assertFalse(alerts[0]["execution_verified"])
         self.assertFalse(alerts[0]["safe_to_auto_resume"])
 
+
+    def test_failed_tool_report_remains_idle_and_does_not_grant_authority(self):
+        events = []
+        detector = NoProgressDetector(idle_limit=1)
+        agent = Agent(
+            OneToolProvider(), mode="readonly", interactive=False,
+            no_progress_detector=detector,
+            on_event=lambda kind, payload: events.append((kind, payload)),
+        )
+        with patch("angel.agent.save_session"), patch(
+            "angel.agent.execute_tool", return_value="执行失败：simulated"
+        ):
+            self.assertEqual(agent.run("task"), "done")
+        self.assertTrue(detector.snapshot().needs_attention)
+        alerts = [payload for kind, payload in events if kind == "no_progress_attention"]
+        self.assertEqual(len(alerts), 1)
+        self.assertFalse(alerts[0]["execution_verified"])
+        self.assertFalse(alerts[0]["safe_to_auto_resume"])
+
 if __name__ == "__main__":
     unittest.main()
