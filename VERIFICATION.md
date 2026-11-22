@@ -1,3 +1,10 @@
+## 2026-11-22 — Idle observation granularity (static inspection only)
+
+- Read README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/Tools, observer and regression source; queried canonical repository branches, latest commits, open Issues/PR, prior commit statuses and PR-triggered workflow runs. The prior queried commit returned no status/workflow records, which is not evidence of CI success.
+- Source-derived finding: one model tool request and its tool return each incremented the same counter. Removed the model-request observation, retaining the post-tool untrusted observation. Added unexecuted regression definitions for threshold 2 (no warning after one return) and threshold 1 (one advisory warning).
+- External reports reviewed 2026-11-22: [Codex #35259](https://github.com/openai/codex/issues/35259) (opened 2026-07-24) and [#60104](https://github.com/openai/codex/issues/60104) (opened 2026-11-07); they do not establish this Angel defect. The defect rationale comes from source inspection.
+- **Not run:** tests, scripts, compilation, CI, cross-platform runtime verification. No software installed, account changes, main merge, production release or dependency added. Observer remains caller-owned, and a returned tool is not independent proof of progress.
+
 ## 2026-11-22 — Terminal reply idle signal (static review only)
 
 - Reviewed README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/Tools, no-progress observer and regression definitions; recent commits, open Issues/PR and CI metadata were queried. Original loop observed a model message before checking tool calls, allowing final-only replies to raise an advisory alert at low thresholds.
