@@ -59,7 +59,6 @@
 - `SHA256SUMS` 的 cosign keyless 签名与 SLSA 证明是自动的，每个 Release
   都有，用户可用 `scripts/verify-release.sh` 验证。
 - 安装包本身的**代码签名**是另一回事，见 `docs/SIGNING.md`：证书没买，
-  Windows `.msi` / `.exe` 与 macOS `.dmg` 目前未签名、未公证；安卓安装包
-  敬请期待——目前只有 Gradle 自动生成的 debug 签名 APK（正式 keystore
-  待用户决定后再接）；
+  Windows `.msi` / `.exe` 与 macOS `.dmg` 目前未签名、未公证；安卓 APK
+  是 Gradle 自动生成的 debug 签名（正式 keystore 待用户决定后再接）；
   iOS 没有安装包（要 Apple Developer 账号与证书，与桌面签名同一笔待办）。
