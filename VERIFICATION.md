@@ -1,3 +1,10 @@
+## 2026-11-23 — Missing local read_file path privacy (static inspection only)
+
+- Reviewed README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, core Agent/Tools/classifier, existing regression definitions, recent commits, open Issues/PR and available CI metadata before the edit.
+- Source-derived finding: the local adapter echoed the caller's path when a file did not exist. Replaced only this message with a constant and defined an unexecuted regression case for a private absolute path. No runtime incident demonstrated.
+- External feedback reviewed 2026-11-23: Codex #34233 (2026-07-19) and #31059 (2026-07-03) concern tool-output privacy and file-read sanitization; they do not prove this Angel issue.
+- **NOT RUN:** tests, scripts, compilation, builds, CI, cross-platform execution. No installs, external account changes, main merge or release. Successful read content and explicit ToolError messages remain possible privacy surfaces; this change is not comprehensive secret redaction.
+
 ## 2026-11-22 — Generic dispatch exception privacy (static review only)
 
 - Inspected development README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/Tools/classifier, recent main commits, open Issues/PR #113, and available workflow metadata. Source review found raw exception text returned from the generic `execute_tool` fallback.
