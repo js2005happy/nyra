@@ -1,3 +1,7 @@
+## 2026-11-22 — Local listing argument error redaction (unreleased, static-only)
+
+- Replaced raw TypeError text in the trusted local list_dir adapter and Agent fallback with a generic argument error, avoiding potential exposure of caller values. Added unexecuted regression definition. No tests, CI, installs, main merge or release.
+
 ## 2026-11-22 — Local directory exception privacy guard (unreleased, static-only)
 
 - The local `list_dir` structured adapter now redacts generic OS exception details from model-visible output, avoiding incidental disclosure of private absolute paths; typed outcome remains `reported_error`. Existing explicit `ToolError` and invalid-argument messages remain unchanged. Added an unexecuted mocked OS-error regression definition. No tests, CI, installs, main merge or release.
