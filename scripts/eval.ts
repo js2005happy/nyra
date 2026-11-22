@@ -160,7 +160,7 @@ try {
       onProgress: (id, status) =>
         process.stderr.write(id + ' ' + status + '\n'),
     });
-    writeEvalJson(out, report);
+    writeEvalJson(out, report, process.cwd());
     console.log(JSON.stringify(report.summary, null, 2));
     process.exitCode =
       report.summary.passed === report.summary.total && report.summary.total > 0
