@@ -1,3 +1,10 @@
+## 2026-11-23 — Legacy local read_file missing-path privacy (static inspection only)
+
+- Reviewed README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, core Agent/Tools and classifier, recent commits, open Issues/PR and CI metadata before editing. Confirmed legacy local `_tool_read_file` exposed missing-path text while trusted local structured adapter did not.
+- Replaced only the legacy missing-file interpolation with a fixed error; defined a regression test with a fake private path. Checked the intended source diff by inspection only.
+- External feedback: https://github.com/openai/codex/issues/31015 and https://github.com/openai/codex/issues/25585 (reviewed 2026-11-23; publication dates not independently verified). External reports are not evidence of an Angel incident.
+- No test execution, compilation, CI dispatch, installation, account changes, main merge or production release. Runtime behavior and security effectiveness remain unverified.
+
 ## 2026-11-23 — Trusted local listing explicit ToolError privacy (static inspection only)
 
 - Reviewed README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/Tools, existing regressions, recent main commits, open Issues/PR #113, and prior commit status (no statuses returned).
