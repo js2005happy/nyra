@@ -50,7 +50,9 @@ const CASES: Case[] = [
     name: "cost",
     schemaConst: COST_JSON_SCHEMA,
     build: () => buildCostJson({ model: "m", config: { pricing: { m: { inputPer1M: 1, outputPer1M: 2 } } }, monthly: null }) as never,
-    keys: ["schema_version", "model", "pricing", "invalid_pricing", "max_cost_usd", "monthly"],
+    keys: ["schema_version", "model", "pricing", "invalid_pricing", "max_cost_usd", "monthly",
+      // 可靠性打磨第 2 项第一批：budget 追加在末尾（只加不改）。
+      "budget"],
   },
   {
     name: "stats",

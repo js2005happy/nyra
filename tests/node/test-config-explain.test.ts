@@ -8,6 +8,8 @@ const CAPABILITIES = [
   "plan_act_model_routing",
   "reasoning_effort", "extra_writable_dirs", "deny_read_globs", "sandbox",
   "nested_delegate", "trust_ladder", "reconciler", "watch",
+  // 可靠性打磨第 2 项第一批：budget 追加在末尾（只加不改）。
+  "budget",
 ];
 
 test("列出全部能力（顺序固定，便于文档引用）", () => {

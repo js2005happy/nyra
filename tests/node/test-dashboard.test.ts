@@ -203,9 +203,13 @@ test("Dashboard.agent_emits_cost_update_per_turn", async () => {
 test("Dashboard.agent_cost_update_unknown_when_no_usage", async () => {
   const { home, workdir } = setup();
   const provider = new FakeProvider([textReply("done")]);
+  // 严格模式默认开时，缺用量的调用会在 checkCost 暂停（见可靠性打磨第 2 项），
+  // 看板“未知不编造”的渲染走非严格路径验——严格暂停本身由
+  // test-budget-reservation.test.ts 覆盖。
   const agent = new Agent(provider as never, {
     workdir, home, mode: "full", skillsDirs: [],
     pricing: { inputPer1M: 1, outputPer1M: 2 }, maxCostUsd: 1,
+    strictUnknownAmount: false,
   });
   const events: { kind: string; data: Record<string, unknown> }[] = [];
   agent.onEvent = (kind, data) => events.push({ kind, data });

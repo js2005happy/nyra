@@ -158,12 +158,15 @@ test("Agent 月度硬顶：超限抛错，报错说清已花/上限/重置日/�
     monthlyCostLimitUsd: 0.0001,
     monthlySpentBeforeUsd: () => ({ spentUsd: 0, incomplete: false }),
   });
-  // 一次调用花费 (100/1e6)*1 + (10/1e6)*2 = 0.00012 > 0.0001
+  // 一次调用预估约 0.0011（系统提示也算输入）> 上限 0.0001：请求前预留
+  // 直接拒绝，调用不发出（可靠性打磨第 2 项；旧口径是调用发出后再由
+  // checkCost 抛“月度支出上限已超”）。拒因里仍须说清月度上限、重置日与放宽办法。
   let err: unknown = null;
   try { await agent.run("hi"); } catch (e) { err = e; }
   expect(err).toBeInstanceOf(AgentError);
   const msg = String((err as Error).message);
-  expect(msg).toContain("月度支出上限已超");
+  expect(msg).toContain("预算预留不足");
+  expect(msg).toContain("月度支出上限");
   expect(msg).toContain("0.0001");
   expect(msg).toContain(nextMonthlyResetDate());
   expect(msg).toContain("monthly_cost_limit_usd");
@@ -180,22 +183,42 @@ test("Agent 月度硬顶：未超限正常跑；未计价/before 未知时不假
 
   const unpriced = new Agent(fakeProvider([{ content: "ok" }]) as never, {
     workdir: home, mode: "full", maxTurns: 3, skillsDirs: [], home,
-    monthlyCostLimitUsd: 0.00001, // 即使上限极低，没单价也算不出，不抛错
+    monthlyCostLimitUsd: 0.00001, // 即使上限极低，没单价也算不出
     monthlySpentBeforeUsd: () => ({ spentUsd: 0, incomplete: false }),
   });
-  expect(await unpriced.run("hi")).toContain("ok");
+  // 严格模式默认开时，没单价第一次调用前就暂停（可靠性打磨第 2 项；
+  // 旧口径是“没单价也算不出，不抛错”）；严格关了才沿用旧行为。
+  await expect(unpriced.run("hi")).rejects.toThrow("金额未知");
+  const unpricedOff = new Agent(fakeProvider([{ content: "ok" }]) as never, {
+    workdir: home, mode: "full", maxTurns: 3, skillsDirs: [], home,
+    monthlyCostLimitUsd: 0.00001,
+    monthlySpentBeforeUsd: () => ({ spentUsd: 0, incomplete: false }),
+    strictUnknownAmount: false,
+  });
+  expect(await unpricedOff.run("hi")).toContain("ok");
 
   const unknownBefore = new Agent(fakeProvider([{ content: "ok" }]) as never, {
     workdir: home, mode: "full", maxTurns: 3, skillsDirs: [], home,
     pricing: PRICING, monthlyCostLimitUsd: 0.00001,
     monthlySpentBeforeUsd: () => null,
   });
-  expect(await unknownBefore.run("hi")).toContain("ok");
+  // before 未知（本月已花算不出）：严格模式下同样暂停（missing-monthly，
+  // 不能把未知当 0 用）；严格关了才跳过月度层继续跑。
+  await expect(unknownBefore.run("hi")).rejects.toThrow("金额未知");
+  const unknownBeforeOff = new Agent(fakeProvider([{ content: "ok" }]) as never, {
+    workdir: home, mode: "full", maxTurns: 3, skillsDirs: [], home,
+    pricing: PRICING, monthlyCostLimitUsd: 0.00001,
+    monthlySpentBeforeUsd: () => null,
+    strictUnknownAmount: false,
+  });
+  expect(await unknownBeforeOff.run("hi")).toContain("ok");
 });
 
-test("Agent 月度硬顶：子任务继承上限与单价，父+子合计超限即停", async () => {
+test("Agent 月度硬顶：子任务继承上限与单价，父子共用同一本预留账", async () => {
   const home = tmpHome();
-  // 父子各一次调用各花 0.00012；上限 0.0002：父单独不超，父+子 = 0.00024 超。
+  // 父 2 次调用 + 子 1 次调用；上限放得够宽，重点是子任务走同一本账
+  // （旧口径是“父+子合计超限即停”，靠事后 checkCost；预留门把检查点挪到
+  // 调用之前后，合计超限的场景由“请求前预留不足”覆盖，见上一则测试）。
   const provider = fakeProvider([
     { content: "", toolCalls: [{ id: "c1", type: "function", function: { name: "delegate", arguments: JSON.stringify({ task: "子任务", max_turns: 2 }) } }] },
     { content: "父 done" },
@@ -203,14 +226,16 @@ test("Agent 月度硬顶：子任务继承上限与单价，父+子合计超限�
   ]) as never;
   const agent = new Agent(provider, {
     workdir: home, mode: "full", maxTurns: 5, skillsDirs: [], home,
-    pricing: PRICING, monthlyCostLimitUsd: 0.0002,
+    pricing: PRICING, monthlyCostLimitUsd: 10,
     monthlySpentBeforeUsd: () => ({ spentUsd: 0, incomplete: false }),
   });
-  // 子任务先撞上限（delegate 工具结果里带上月度信息），父级第二轮也撞上限抛错。
-  let err: unknown = null;
-  try { await agent.run("做点事"); } catch (e) { err = e; }
-  expect(err).toBeInstanceOf(AgentError);
-  expect(String((err as Error).message)).toContain("月度支出上限");
+  expect(await agent.run("做点事")).toContain("子 done");
+  // 父 2 次调用 + 子 1 次调用，都从同一本预留账结算，owner 各不相同。
+  const { BudgetLedger } = await import("../../src/budget.ts");
+  const rows = new BudgetLedger(home).list();
+  expect(rows.length).toBe(3);
+  expect(rows.every((r) => r.status === "settled")).toBe(true);
+  expect(new Set(rows.map((r) => r.owner)).size).toBeGreaterThan(1);
 });
 
 // ---------- Retry-After 与 onRetry ----------
