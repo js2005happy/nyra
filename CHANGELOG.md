@@ -1,3 +1,8 @@
+## 2026-11-22 — Untyped non-text tool reports fail closed (unreleased, static-only)
+
+- Classify non-string, non-`StructuredToolReport` tool returns as `reported_unknown` unless an exception was raised; exceptions remain reported failures. Prevent optional ToolJournal from treating ambiguous adapter values as reported success. Legacy string results unchanged.
+- Added unexecuted regression definitions for non-text and exception cases. No tests, CI, installs, dependencies, main merge, automatic retry or release.
+
 ## 2026-11-22 — Unknown structured report journal guard (unreleased, static-only)
 
 - Add `reported_unknown` to conservative tool status; an explicit typed `unknown` is not silently treated as journal success. Exceptions remain failures, and all authority flags remain false. Legacy string reports unchanged.
