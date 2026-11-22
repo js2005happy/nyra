@@ -21,6 +21,10 @@ export const RUN_STATUSES = new Set(
 );
 const RUN_ID_RE = /^[0-9]{8}-[0-9]{6}-[0-9a-f]{6}$/;
 const EVENT_FIELDS: Record<string, string[]> = {
+// Opt-in evaluation metadata only; no prompts, absolute paths or fixture contents.
+eval_attempt_started: ["task_id", "attempt", "conditions_hash"],
+eval_attempt_finished: ["task_id", "attempt", "status", "spent_usd", "duration_ms", "interventions", "child_run_id"],
+eval_retry_scheduled: ["task_id", "attempt"],
 resumed: ["interrupted_tool_calls", "turn"],
 mode_override: ["from", "to"],
 verify_started: ["command"],
