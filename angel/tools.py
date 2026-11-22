@@ -709,8 +709,10 @@ def execute_local_list_dir_report(ctx: ToolContext, path: str = ".") -> tuple[st
         return f"错误：{exc}", StructuredToolReport("reported_error")
     except TypeError as exc:
         return f"错误：工具参数不正确：{exc}", StructuredToolReport("reported_error")
-    except Exception as exc:
-        return f"执行失败：{type(exc).__name__}: {exc}", StructuredToolReport("reported_error")
+    except Exception:
+        # OS errors may contain absolute private paths or mount details.
+        # Keep the model-visible failure generic; the typed status is authoritative.
+        return "执行失败：目录读取失败", StructuredToolReport("reported_error")
 
 
 def _tool_list_dir(ctx: ToolContext, path: str = ".") -> str:
