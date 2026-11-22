@@ -39,6 +39,15 @@ class NoProgressDetector:
         self._idle = 0 if progress else min(self._idle + 1, self._limit)
         return self.snapshot()
 
+    def reset_run(self) -> ProgressSnapshot:
+        """Start a new explicit task without inheriting earlier idle counts.
+
+        This only clears advisory metadata; it does not verify execution,
+        cancel tools, or grant permission to resume a task.
+        """
+        self._idle = 0
+        return self.snapshot()
+
     def snapshot(self) -> ProgressSnapshot:
         return ProgressSnapshot(
             consecutive_idle=self._idle,
