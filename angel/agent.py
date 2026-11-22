@@ -404,9 +404,13 @@ class Agent:
                     try:
                         self.tool_journal.finish(
                             journal_call, fn_name,
-                            success=not classify_tool_report(
+                            success=(
+                                lambda status: not (
+                                    status.reported_failure or status.reported_unknown
+                                )
+                            )(classify_tool_report(
                                 result, raised=tool_exception is not None
-                            ).reported_failure,
+                            )),
                         )
                     except (JournalError, OSError) as exc:
                         raise AgentError(
