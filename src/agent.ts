@@ -1909,6 +1909,13 @@ export class Agent {
       const assistantMsg: Record<string, unknown> = { role: "assistant", content: (msg.content as string) || "" };
       const toolCalls = (msg.tool_calls as Record<string, unknown>[]) ?? [];
       if (toolCalls.length) assistantMsg.tool_calls = toolCalls;
+      // DeepSeek 思考模式：上轮返回的 reasoning_content 下轮必须原样带回，
+      // 否则 API 报 400（The `reasoning_content` in the thinking mode must
+      // be passed back to the API）。注意空字符串也要带：模型有时返回
+      // reasoning_content: ""，缺字段和空字段在服务端是两种待遇，缺了
+      // 就报 400；只在字段根本不存在（非字符串）时才不带。
+      if (typeof msg.reasoning_content === "string")
+        assistantMsg.reasoning_content = msg.reasoning_content;
       messages.push(assistantMsg);
       if (toolCalls.length) saveSession(this.sessionId, messages.slice(1), this.home);
       if (toolCalls.length && assistantMsg.content) {
