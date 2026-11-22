@@ -62,7 +62,7 @@ class NoProgressDetector:
         never from model text or an untrusted tool response.
         """
         if type(event) is not str or event not in {
-            "model_message", "status_poll", "tool_returned",
+            "model_message", "status_poll", "tool_returned", "tool_failed",
             "deliverable_committed", "acceptance_confirmed",
         }:
             raise ProgressSignalError("unknown progress event")
