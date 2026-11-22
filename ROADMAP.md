@@ -1,3 +1,10 @@
+## 2026-11-23 — P1 legacy local read_file missing-path privacy (static-only)
+
+- **Repository fact (reviewed 2026-11-23):** `_tool_read_file` still interpolated a caller-provided missing path into model-visible output, even though the trusted structured local adapter had already removed this disclosure. This is a source-derived exposure risk, not a confirmed incident.
+- **External feedback (reviewed 2026-11-23):** [Codex #31015](https://github.com/openai/codex/issues/31015) reports that post-tool hooks may show raw sensitive output before redaction; [Codex #25585](https://github.com/openai/codex/issues/25585) requests a local pre-submit secret filter. These are separate external user reports, not proof of Angel exploitation or prevalence. Their original publication dates were not established in this review.
+- **Ranked queue (value / difficulty / safety risk / dependencies):** P1 legacy missing-file path redaction **high / low / low / existing local handler (implemented, untested)**; P1 remaining explicit `ToolError` output audit **high / medium / medium / individual tool contracts (open)**; P1 trusted read-only structured adapters **high / medium / medium / trusted provenance (open)**; P1 pre-model and pre-transcript privacy boundary **high / high / high / lifecycle and user-consent design (research)**; P1 independent side-effect receipts **high / high / high / external trusted authority (blocked)**.
+- **Scope:** only missing-file message in legacy local `read_file` is made constant. Successful reads, remote backends, permission checks and typed outcome reporting remain unchanged. No automated retry, new dependency, runtime verification or release.
+
 ## 2026-11-23 — P1 explicit ToolError privacy in trusted local listing (static-only)
 
 - **Repository fact (reviewed 2026-11-23):** `execute_local_list_dir_report` interpolated the text of an explicit `ToolError` into model-visible output. A future caller or helper could include a private path or credential in that error; this is a source-derived exposure possibility, not an observed Angel incident.
