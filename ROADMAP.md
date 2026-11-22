@@ -1,3 +1,9 @@
+## 2026-11-22 — P1 untyped non-text tool outcomes fail closed (static-only)
+
+- **Repository fact (static source inspection):** `classify_tool_report` previously classified non-text values (e.g. `None`, dict, list) as neither failure nor unknown. The optional Agent journal records success when both flags are false; therefore an untyped non-text adapter return could be logged as reported success. This is a code-path finding, not a runtime reproduction.
+- **External report (reviewed 2026-11-22):** [Codex #60104](https://github.com/openai/codex/issues/60104), reported 2026-11-07, describes repeated long-task work and misleading progress. This is one user's report, not measured prevalence or proof of an Angel bug. **Engineering inference:** ambiguous adapter returns should not become positive journal reports.
+- **Ranking (value / difficulty / safety risk / dependency):** P1 non-text unknown classification high / low / low / existing classifier (**implemented, not tested**); P1 provenance-safe read-only structured adapter high / medium / medium / trusted in-process boundary (**open**); P1 independent side-effect receipts high / high / high / adapter and authority (**blocked**); P1 private task persistence high / medium / medium-high / safe filesystem (**blocked**). Legacy text behavior is unchanged. Unknown reports still cannot prove side effects or authorize retry/resume.
+
 ## 2026-11-22 — Unknown structured tool outcome is not journal success (static-only)
 
 - **Source-derived fact:** the existing Agent journal wrote `success=not reported_failure`; a typed `StructuredToolReport("unknown")` is not a reported failure, so it would be logged as result_ok despite uncertainty. This is a static code-path finding, not a runtime reproduction.
