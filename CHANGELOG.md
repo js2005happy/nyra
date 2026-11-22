@@ -1,3 +1,8 @@
+## 2026-11-22 — Unified conservative tool report status (unreleased, untested)
+
+- Added a pure standard-library legacy report classifier and used it for both ToolJournal success reports and advisory tool-failure observation. Previously `执行失败：` was recognized only by the observer. Explicit exceptions remain failures; non-error-looking text is not verified execution.
+- Added four unexecuted regression definitions. No tests/CI, dependencies, automatic retry/resume, main merge or production release.
+
 ## 2026-11-22 — Escaped-newline advisory repair (unreleased, untested)
 
 - Replaced six literal backslash-n sequences in the optional Agent post-tool observation block with physical newlines. The old comment swallowed assignments and left `state` undefined on the following line. Strengthened the failed-tool observation regression definition. No test/CI execution, installs, merge or release.
