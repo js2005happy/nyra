@@ -1,3 +1,7 @@
+## 2026-11-22 — Escaped-newline advisory repair (unreleased, untested)
+
+- Replaced six literal backslash-n sequences in the optional Agent post-tool observation block with physical newlines. The old comment swallowed assignments and left `state` undefined on the following line. Strengthened the failed-tool observation regression definition. No test/CI execution, installs, merge or release.
+
 ## 2026-11-22 — Per-run advisory idle reset (unreleased, untested)
 
 - Clear caller-owned no-progress detector idle counts at the start of each Agent.run, preventing a previous task's observations from contributing to a new task's advisory threshold. Add one unexecuted regression definition. No automatic cancellation, trusted progress inference, new dependency, CI, merge or release.
