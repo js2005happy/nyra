@@ -90,10 +90,12 @@ export async function runDoctor(opts: DoctorOptions): Promise<{ checks: DoctorCh
   const sandboxStatus = getSandboxStatus(config);
   // P0-6：级别文案按 level 全列出来——之前只有 bwrap/tool-level 两档，
   // seatbelt 与 jobobject 会误显示"未生效"。jobobject 是进程级沙箱，文案写明。
+  // 隔离补强批：三后端可用性全列出来，auto 会选谁一眼可见（本机无某后端时
+  // 只显示不可用，不报错——回落到工具级是预期内的降级）。
   const levelText = sandboxLevelText(sandboxStatus.level);
   checks.push({
     name: "隔离级别", ok: true,
-    detail: `沙箱后端 ${sandboxStatus.backend}，模式 ${sandboxStatus.mode}，隔离级别 ${levelText}，bwrap ${sandboxStatus.bwrapAvailable ? "可用" : "不可用"}——${sandboxStatus.detail}`,
+    detail: `沙箱后端 ${sandboxStatus.backend}，模式 ${sandboxStatus.mode}，隔离级别 ${levelText}，可用后端：bwrap ${sandboxStatus.bwrapAvailable ? "可用" : "不可用"}、Seatbelt ${sandboxStatus.seatbeltAvailable ? "可用" : "不可用"}、Job Object ${sandboxStatus.jobObjectAvailable ? "可用" : "不可用"}——${sandboxStatus.detail}`,
   });
 
   // 3）配置目录（loadConfig 已建好；这里只验存在与 0700）

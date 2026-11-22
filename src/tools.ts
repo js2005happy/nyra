@@ -49,7 +49,7 @@ import { cancelErrorFromSignal, combineSignals, isCancelError } from "./cancel.t
 import {
   resolveSandboxBackend, runSandboxed, toolLevelFallbackNotice,
   SandboxUnavailableError,
-  type SandboxMode, type ResolvedSandbox,
+  type SandboxMode, type ResolvedSandbox, type SandboxProbe,
 } from "./sandbox.ts";
 import { discoverPoppy, inspectPoppyIdentity, PermissionLedger } from "./poppy.ts";
 import { assertPublicUrl } from "./net.ts";
@@ -246,6 +246,9 @@ export interface ToolContext {
   //（后端原始值、模式、网络开关；由 toolShell 按 resolveSandboxBackend 解析）。
   // 未设置时保持旧行为：直接走现有 spawn 路径，不解析、不提示。
   sandbox?: { backend?: string | null; mode?: SandboxMode; allowNet?: boolean } | null;
+  /** 沙箱探测覆盖（仅测试用，透传给 resolveSandboxBackend 的 probe 参数）：
+   * 模拟其他平台/后端可用性，验证 macOS/Windows 分支；生产调用不传。 */
+  sandboxProbe?: SandboxProbe | null;
   /** auto 回落到工具级时的提示是否已给过（每个 ToolContext 只给一次）。 */
   sandboxFallbackWarned?: boolean;
   /**
@@ -1114,6 +1117,72 @@ export function checkShellDenied(command: string): string | null {
   return null;
 }
 
+// ---- Job Object 后端断网时的工具级网络拦截 ----
+// Job Object 没有 OS 级网络隔离（cmd.exe 能直接联网），allowNet=false 时
+// 在工具级拦掉已知联网工具。localhost/127.0.0.1 回环豁免（bwrap/Seatbelt
+// 的断网 profile 同样只放回环）。只在 jobobject 分支调用；bwrap/Seatbelt
+// 由 OS 层断网，不走这里。诚实边界：这是命令名黑名单，不是内核级拦截——
+// 改名、换工具、编码命令都能绕过，文档里写明；真正的 OS 级网络隔离要等
+// AppContainer 后端（本批不做）。
+const JOBOBJECT_NETWORK_TOOLS = new Set([
+  "curl", "wget", "nc", "ncat", "bitsadmin", "certutil",
+  "invoke-webrequest", "iwr", "invoke-restmethod", "irm",
+  "start-bitstransfer",
+]);
+
+function jobobjectNetworkToolName(token: string): string | null {
+  const base = token.split(/[/\\]/).pop() ?? token;
+  const name = base.toLowerCase().replace(/\.exe$/, "");
+  return JOBOBJECT_NETWORK_TOOLS.has(name) ? name : null;
+}
+
+function isLocalhostTarget(token: string): boolean {
+  const t = token.toLowerCase().replace(/^https?:\/\//, "").replace(/^\[/, "").replace(/\]$/, "");
+  const host = t.split(/[/:?]/)[0];
+  return host === "localhost" || host === "127.0.0.1" || host === "::1" || host.endsWith(".localhost");
+}
+
+/** Job Object + 断网时拦掉联网工具；放行时返回 null。localhost 回环豁免。 */
+export function checkJobObjectNetworkDenied(command: string): string | null {
+  const tokenRe = /(?:[^\s;&|<>()"'\\]|\\.|"(?:\\.|[^"\\])*"|'[^']*')+|[;&|<>()]/g;
+  const rawTokens = command.match(tokenRe) ?? [];
+  const tokens = rawTokens.map((t) =>
+    t.length >= 2 && t[0] === t[t.length - 1] && (t[0] === '"' || t[0] === "'") ? t.slice(1, -1) : t,
+  );
+  const separators = new Set([";", "&", "|", "<", ">", "(", ")"]);
+  const segments: string[][] = [[]];
+  for (const t of tokens) {
+    if (separators.has(t)) segments.push([]);
+    // 引号脱壳后的 token 里可能还带空格（如 powershell -Command "iwr http://..."），
+    // 按空白再拆一层，命令位置与 URL 才能逐个认出来。
+    else segments[segments.length - 1].push(...t.split(/\s+/).filter(Boolean));
+  }
+  // 每段的命令位置：段首，以及 powershell/pwsh/cmd 的 -c/-Command//c 后第一词。
+  const shellFlags = new Set(["-c", "-command", "/c"]);
+  for (const seg of segments) {
+    const cmdIdx: number[] = [];
+    for (let i = 0; i < seg.length; i++) {
+      if (i === 0) { cmdIdx.push(0); continue; }
+      const flag = seg[i - 1].toLowerCase();
+      const shell = (seg[i - 2] ?? "").toLowerCase().replace(/\.exe$/, "");
+      if (shellFlags.has(flag) && (shell === "powershell" || shell === "pwsh" || shell === "cmd")) cmdIdx.push(i);
+    }
+    for (const idx of cmdIdx) {
+      const tool = jobobjectNetworkToolName(seg[idx]);
+      if (!tool) continue;
+      // certutil 只有 -urlcache 才是联网用法，其余用法（hash、store）放行。
+      if (tool === "certutil" && !seg.some((t) => t.toLowerCase() === "-urlcache")) continue;
+      const urls = seg.filter((t) => t.includes("://"));
+      const others = seg.filter((t, i) => i !== idx && !t.startsWith("-") && !t.startsWith("/") && !t.includes("://"));
+      if (urls.length > 0 && urls.every(isLocalhostTarget)) continue;
+      if (urls.length === 0 && others.length === 0) continue;
+      if (urls.length === 0 && others.every((t) => isLocalhostTarget(t) || /^\d+$/.test(t))) continue;
+      return `断网沙箱（Job Object）下禁止联网工具 ${tool}（allowNet=false；本地回环除外）。如需联网请放开网络（--sandbox-allow-net）或改回 --sandbox local`;
+    }
+  }
+  return null;
+}
+
 // ---- 文件工具 ----
 // 缺口 9：批准写操作前落影子快照（批准后、执行前调用；快照失败不拦写操作）。
 // 返回钩子的快照回执（null = 未落快照）；Git 不可用退回文件快照时回执带
@@ -1510,7 +1579,7 @@ function resolveShellSandbox(ctx: ToolContext): ResolvedSandbox | null {
   if (ctx.sandbox.backend !== undefined && ctx.sandbox.backend !== null) cfg.sandbox = ctx.sandbox.backend;
   if (ctx.sandbox.mode !== undefined) cfg.sandbox_mode = ctx.sandbox.mode;
   if (ctx.sandbox.allowNet !== undefined) cfg.sandbox_allow_net = ctx.sandbox.allowNet;
-  return resolveSandboxBackend(cfg, ctx.sandbox.backend ?? null);
+  return resolveSandboxBackend(cfg, ctx.sandbox.backend ?? null, ctx.sandboxProbe ?? undefined);
 }
 
 /** 沙箱内跑完的结果拼成 shell 工具的返回文本（与现有非流式路径同格式：stdout + 标准错误段）。 */
@@ -1567,6 +1636,12 @@ async function toolShell(ctx: ToolContext, command: string, cwd?: string | null,
     // P0-6：Windows Job Object。与 Seatbelt 分支同款语义：失败即 fail-closed，
     // 绝不裸奔。输出不是流式（子进程输出先落临时文件、结束时一次性返回），
     // 所以不传 onStream；超时与退出码语义与 Seatbelt/bwrap 分支一致。
+    // Job Object 没有 OS 级网络隔离：allowNet=false 时先在工具级拦联网工具
+    //（localhost 回环豁免），再进 PowerShell——见 checkJobObjectNetworkDenied。
+    if (!sandbox.allowNet) {
+      const netDenied = checkJobObjectNetworkDenied(command);
+      if (netDenied) return `错误：${netDenied}`;
+    }
     try {
       const result = await runWindowsSandboxed(command, {
         workdir: resolvedCwd,

@@ -35,6 +35,10 @@ export interface SandboxStatus {
   backend: string;
   mode: SandboxMode;
   bwrapAvailable: boolean;
+  /** macOS 上 sandbox-exec 是否可用（其他平台恒 false）。 */
+  seatbeltAvailable: boolean;
+  /** Windows 上 PowerShell 是否可用（其他平台恒 false）。 */
+  jobObjectAvailable: boolean;
   level: SandboxLevel;
   detail: string;
 }
@@ -114,14 +118,27 @@ export function resolveSandboxAllowNet(config?: Record<string, unknown> | null):
 
 // 调研报告第 9 项：OS 级分级沙箱（学 Codex CLI）——后端解析（本项的核心决定）。
 // 优先级：显式 flag 参数 > NYRA_SANDBOX / ANGEL_SANDBOX 环境变量 > config.sandbox > 默认 auto。
-// auto：Linux 且 bwrap 可用 → bwrap；否则 → 工具级（现有 workspace containment + shell 黑名单）。
+// auto：Linux 且 bwrap 可用 → bwrap；macOS 且 sandbox-exec 可用 → Seatbelt；
+//   否则 → 工具级（现有 workspace containment + shell 黑名单）。
+//   Windows auto 仍不选 Job Object：未经真机验证，且隔离面与 bwrap/Seatbelt
+//   不同（不管文件，网络只靠工具级拦截），悄悄改变行为会误导用户。
 // local：显式只要工具级，即使用户机器上有 bwrap 也不用——这是退出 OS 沙箱的开关。
 // bwrap：强制要求 bwrap；找不到或非 Linux → 直接抛错（fail-closed），绝不静默降级。
 // e2b：保持不支持报错（文案写目标版本 0.5.2；VERSION 常量本身不动，总协调最后统一升版）。
 // danger-full-access 与沙箱互斥：显式 bwrap + danger 直接抛错；auto + danger 解析为工具级。
+// probe：可选探测覆盖（仅测试用）：platform/bwrapAvailable/seatbeltAvailable/
+//   jobObjectAvailable；生产调用不传，走真实探测。
+export interface SandboxProbe {
+  platform?: string;
+  bwrapAvailable?: boolean;
+  seatbeltAvailable?: boolean;
+  jobObjectAvailable?: boolean;
+}
+
 export function resolveSandboxBackend(
   config?: Record<string, unknown> | null,
   flag?: string | null,
+  probe?: SandboxProbe,
 ): ResolvedSandbox {
   const cfg = config ?? {};
   const raw = flag ?? sandboxEnv("SANDBOX") ?? (cfg.sandbox as string | undefined) ?? "auto";
@@ -131,7 +148,10 @@ export function resolveSandboxBackend(
   const requested = raw as SandboxBackend;
   const mode = resolveSandboxMode(cfg);
   const allowNet = resolveSandboxAllowNet(cfg);
-  const bwrapAvailable = detectBwrap();
+  const platform = probe?.platform ?? process.platform;
+  const bwrapAvailable = probe?.bwrapAvailable ?? detectBwrap();
+  const sbAvailable = probe?.seatbeltAvailable ?? seatbeltAvailable();
+  const joAvailable = probe?.jobObjectAvailable ?? windowsSandboxAvailable();
 
   if (requested === "e2b") {
     throw new Error("--sandbox e2b 在 0.5.2 暂不支持（Python 已移除，Node 版 E2B 后端尚未移植）；当前只支持 auto、local、bwrap");
@@ -140,8 +160,8 @@ export function resolveSandboxBackend(
     throw new Error("danger-full-access 与沙箱互斥：该模式要求无限制执行，不能进 bwrap；如需无限制请用 --sandbox local 并自行承担风险");
   }
   if (requested === "bwrap") {
-    if (process.platform !== "linux") {
-      throw new Error(`--sandbox bwrap 只支持 Linux（当前平台 ${process.platform} 没有 bwrap）；请改回 --sandbox auto 或 --sandbox local`);
+    if (platform !== "linux") {
+      throw new Error(`--sandbox bwrap 只支持 Linux（当前平台 ${platform} 没有 bwrap）；请改回 --sandbox auto 或 --sandbox local`);
     }
     if (!bwrapAvailable) {
       throw new Error(`--sandbox bwrap 要求本机安装 bubblewrap，但 PATH 里找不到 bwrap。${BWRAP_INSTALL_HINT}`);
@@ -150,10 +170,10 @@ export function resolveSandboxBackend(
   }
   // P0-6：macOS Seatbelt（sandbox-exec）。与 bwrap 同款语义，只是实现换 SBPL。
   if (requested === "seatbelt") {
-    if (process.platform !== "darwin") {
-      throw new Error(`--sandbox seatbelt 只支持 macOS（当前平台 ${process.platform}）；请改回 --sandbox auto 或 --sandbox local`);
+    if (platform !== "darwin") {
+      throw new Error(`--sandbox seatbelt 只支持 macOS（当前平台 ${platform}）；请改回 --sandbox auto 或 --sandbox local`);
     }
-    if (!seatbeltAvailable()) {
+    if (!sbAvailable) {
       throw new Error("--sandbox seatbelt 要求 /usr/bin/sandbox-exec，但本机找不到它；请改回 --sandbox auto 或 --sandbox local");
     }
     if (mode === "danger-full-access") {
@@ -163,12 +183,13 @@ export function resolveSandboxBackend(
   }
   // P0-6：Windows Job Object（PowerShell + kernel32）。与 bwrap/Seatbelt 同款语义，
   // 只是隔离面不同：Job Object 只管进程生命周期与资源（随作业死、进程数上限），
-  // 不管文件与网络——那两轴仍由工具级规则兜底（见 docs/sandbox.md，不夸大）。
+  // 不管文件——文件仍由工具级规则兜底（见 docs/sandbox.md，不夸大）；网络在
+  // allowNet=false 时由 jobobject 分支的工具级拦截补（见 src/tools.ts）。
   if (requested === "jobobject") {
-    if (process.platform !== "win32") {
-      throw new Error(`--sandbox jobobject 只支持 Windows（当前平台 ${process.platform}）；请改回 --sandbox auto 或 --sandbox local`);
+    if (platform !== "win32") {
+      throw new Error(`--sandbox jobobject 只支持 Windows（当前平台 ${platform}）；请改回 --sandbox auto 或 --sandbox local`);
     }
-    if (!windowsSandboxAvailable()) {
+    if (!joAvailable) {
       throw new Error("--sandbox jobobject 要求本机有 PowerShell（powershell.exe 或 pwsh.exe），但 PATH 里找不到它；请改回 --sandbox auto 或 --sandbox local");
     }
     if (mode === "danger-full-access") {
@@ -183,24 +204,28 @@ export function resolveSandboxBackend(
   if (mode === "danger-full-access") {
     return { backend: "local", requested, mode, level: "tool-level", allowNet, bwrapAvailable };
   }
-  if (process.platform === "linux" && bwrapAvailable) {
+  if (platform === "linux" && bwrapAvailable) {
     return { backend: "bwrap", requested, mode, level: "bwrap", allowNet, bwrapAvailable };
   }
-  // 注意：auto **不**自动选 Seatbelt。SBPL 不是 Apple 的稳定 API，且避免在没有 mac
-  // 实测的情况下悄悄改变既有行为（auto 无 bwrap → 工具级 是已有契约）。
-  // 需要 macOS OS 级沙箱请显式 --sandbox seatbelt。
-  // 同理 auto 也不自动选 Job Object：Windows 一侧同样未经真机验证，且 Job Object
-  // 的隔离面与 bwrap/Seatbelt 不同（不管文件与网络），悄悄改变行为会误导用户；
-  // 需要 Windows 进程级沙箱请显式 --sandbox jobobject。
+  // auto 在 macOS 上选 Seatbelt：sandbox-exec 是系统自带，SBPL 走最小集
+  // profile（只放工作目录写 + 本地回环），与显式 --sandbox seatbelt 同款语义。
+  if (platform === "darwin" && sbAvailable) {
+    return { backend: "seatbelt", requested, mode, level: "seatbelt", allowNet, bwrapAvailable, seatbeltAvailable: true };
+  }
+  // 注意：auto 仍不自动选 Job Object：Windows 一侧未经真机验证，且 Job Object
+  // 的隔离面与 bwrap/Seatbelt 不同（不管文件，网络只靠工具级拦截），悄悄改变
+  // 行为会误导用户；需要 Windows 进程级沙箱请显式 --sandbox jobobject。
   return { backend: "local", requested, mode, level: "tool-level", allowNet, bwrapAvailable };
 }
 
 /** auto 回落到工具级时，在 doctor 与首次 shell 执行时给一次的提示文案。 */
 export function toolLevelFallbackNotice(status: ResolvedSandbox | SandboxStatus): string {
   const osHint = process.platform === "win32"
-    ? "想用进程级沙箱请用 --sandbox jobobject（需要 PowerShell；只管进程生命周期与资源，不管文件与网络）"
-    : `想用 OS 级沙箱请安装 bwrap：${BWRAP_INSTALL_HINT}`;
-  const missing = process.platform === "win32" ? "本机未启用 Job Object" : "本机无 bwrap";
+    ? "想用进程级沙箱请用 --sandbox jobobject（需要 PowerShell；只管进程生命周期与资源，文件靠工具级规则、网络靠工具级拦截）"
+    : process.platform === "darwin"
+      ? "本机有 sandbox-exec 时 auto 会自动选 Seatbelt；也可显式 --sandbox seatbelt"
+      : `想用 OS 级沙箱请安装 bwrap：${BWRAP_INSTALL_HINT}`;
+  const missing = process.platform === "win32" ? "本机未启用 Job Object" : process.platform === "darwin" ? "本机无 sandbox-exec" : "本机无 bwrap";
   return `沙箱提示：当前是工具级隔离，不是 OS 沙箱（后端 ${status.backend}，模式 ${status.mode}；${missing}）。` +
     `工作目录内读写与审批、shell 黑名单仍生效，但命令在宿主机上跑，无内核级拦截；` +
     `出工作区写与联网仍由工具级规则拦。${osHint}`;
@@ -215,7 +240,7 @@ export function describeSandboxLevel(resolved: ResolvedSandbox): string {
     return `后端 ${resolved.requested} → Seatbelt（OS 级沙箱，sandbox-exec 可用），模式 ${resolved.mode}，网络 ${resolved.allowNet ? "已放开" : "默认断开（只放 localhost）"}；出工作区写与联网会被挡住`;
   }
   if (resolved.level === "jobobject") {
-    return `后端 ${resolved.requested} → Job Object（进程级沙箱，PowerShell 可用），模式 ${resolved.mode}，网络 ${resolved.allowNet ? "已放开" : "默认断开"}；作业关柄即全杀、进程数有上限，但文件与网络隔离仍由工具级规则兜底`;
+    return `后端 ${resolved.requested} → Job Object（进程级沙箱，PowerShell 可用），模式 ${resolved.mode}，网络 ${resolved.allowNet ? "已放开" : "默认断开（工具级拦截联网工具，见 src/tools.ts）"}；作业关柄即全杀、进程数有上限，文件隔离仍由工具级规则兜底`;
   }
   return toolLevelFallbackNotice(resolved);
 }
@@ -224,28 +249,31 @@ export function describeSandboxLevel(resolved: ResolvedSandbox): string {
 export function sandboxLevelText(level: SandboxLevel): string {
   if (level === "bwrap") return "OS 沙箱（bwrap）";
   if (level === "seatbelt") return "OS 沙箱（Seatbelt）";
-  if (level === "jobobject") return "进程级沙箱（Job Object，不管文件与网络）";
+  if (level === "jobobject") return "进程级沙箱（Job Object，文件靠工具级规则、网络靠工具级拦截）";
   if (level === "tool-level") return "工具级（非 OS 沙箱）";
   return "未生效";
 }
 export function getSandboxStatus(
   config?: Record<string, unknown> | null,
   flag?: string | null,
+  probe?: SandboxProbe,
 ): SandboxStatus {
-  const bwrapAvailable = detectBwrap();
+  const bwrapAvailable = probe?.bwrapAvailable ?? detectBwrap();
+  const seatbeltAvailableFlag = probe?.seatbeltAvailable ?? seatbeltAvailable();
+  const jobObjectAvailableFlag = probe?.jobObjectAvailable ?? windowsSandboxAvailable();
   let mode: SandboxMode = "workspace-write";
   try { mode = resolveSandboxMode(config); } catch { /* 模式非法时 doctor 仍要出状态，detail 里说明 */ }
   try {
-    const resolved = resolveSandboxBackend(config, flag);
+    const resolved = resolveSandboxBackend(config, flag, probe);
     // 各后端一句话状态见 describeSandboxLevel（纯函数，可单测）。
     // 注意：之前这里只有 bwrap 一个分支，seatbelt 会误落进工具级提示——已一并修掉。
     const detail = describeSandboxLevel(resolved);
-    return { backend: resolved.backend, mode: resolved.mode, bwrapAvailable, level: resolved.level, detail };
+    return { backend: resolved.backend, mode: resolved.mode, bwrapAvailable, seatbeltAvailable: seatbeltAvailableFlag, jobObjectAvailable: jobObjectAvailableFlag, level: resolved.level, detail };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return {
       backend: (flag ?? (config?.sandbox as string | undefined) ?? "auto"),
-      mode, bwrapAvailable, level: "none",
+      mode, bwrapAvailable, seatbeltAvailable: seatbeltAvailableFlag, jobObjectAvailable: jobObjectAvailableFlag, level: "none",
       detail: `沙箱配置未生效：${message}`,
     };
   }
