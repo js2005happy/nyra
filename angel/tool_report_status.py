@@ -27,6 +27,7 @@ class StructuredToolReport:
 @dataclass(frozen=True)
 class ToolReportStatus:
     reported_failure: bool
+    reported_unknown: bool = False
     execution_verified: bool = False
     safe_to_auto_resume: bool = False
 
@@ -41,7 +42,8 @@ def classify_tool_report(result: object, *, raised: bool = False) -> ToolReportS
         raise ValueError("raised must be boolean")
     if type(result) is StructuredToolReport:
         return ToolReportStatus(
-            reported_failure=raised or result.outcome == "reported_error"
+            reported_failure=raised or result.outcome == "reported_error",
+            reported_unknown=not raised and result.outcome == "unknown",
         )
     failed = raised or (
         isinstance(result, str)
