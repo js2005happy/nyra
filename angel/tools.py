@@ -720,7 +720,7 @@ def execute_local_list_dir_report(ctx: ToolContext, path: str = ".") -> tuple[st
     try:
         target = _resolve_path(ctx, path)
         if not target.is_dir():
-            return f"错误：目录不存在：{path}", StructuredToolReport("reported_error")
+            return "错误：目录不存在", StructuredToolReport("reported_error")
         entries = sorted(target.iterdir(), key=lambda entry: (not entry.is_dir(), entry.name))
         lines = [
             f"{entry.name}/"
