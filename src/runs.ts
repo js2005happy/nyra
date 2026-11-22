@@ -346,6 +346,21 @@ session_recording_consented: ["session", "by", "consented"],
 call_summary: ["call", "kind", "duration_seconds", "bytes_in", "bytes_out", "frames_sampled", "stt_seconds", "understanding_tokens", "understanding_cost_usd", "recording_seconds"],
 call_recording_started: ["call", "started_at"],
 call_recording_stopped: ["call", "stopped_at", "seconds"],
+// 缺口 47：协议中立接入进证据链——登记 / 连接 / 运行 / 拦截 / 写接受 /
+// A2A 只记 endpoint 名、对方名、运行 id 与结论，不记地址原文、消息
+// 原文、答复原文与绝对路径（地址只记 host，见 agui_registered）。
+agui_registered: ["endpoint", "url_host"],
+agui_connected: ["endpoint", "protocol_version"],
+agui_disconnected: ["endpoint"],
+agui_run_started: ["endpoint", "run"],
+agui_run_finished: ["endpoint", "run", "events", "text_chars"],
+agui_content_blocked: ["endpoint", "run", "labels"],
+agui_tool_proposed: ["endpoint", "run", "tool"],
+agui_write_accepted: ["endpoint", "accepted_by"],
+agui_write_revoked: ["endpoint"],
+agui_write_blocked: ["endpoint", "tool", "reason"],
+agui_a2a_sent: ["peer", "run"],
+agui_a2a_received: ["peer", "run", "ok"],
 // 缺口 51：业务动作硬红线进证据链——改表（哪个连接器、哪个动作、从哪档到
 // 哪档、原因指纹）与拦截（哪个连接器、哪个动作、哪档、哪个工具）。只记
 // 元数据与 SHA-256 前 12 位指纹，不记原因原文、不记业务内容。

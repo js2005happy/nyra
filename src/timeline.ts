@@ -532,6 +532,54 @@ export function buildTimeline(store: RunStore, runId: string): Timeline {
         push(at, "event", `通话 ${str(ev.call) ?? "?"} 停止录制（${str(ev.stopped_at) ?? "?"}，共 ${str(ev.seconds) ?? "?"} 秒）`, null, null, null);
         break;
       }
+      case "agui_registered": {
+        push(at, "event", `AG-UI endpoint 已登记：${str(ev.endpoint) ?? "?"}（${str(ev.url_host) ?? "?"}）`, null, null, null);
+        break;
+      }
+      case "agui_connected": {
+        push(at, "event", `AG-UI endpoint 已连接：${str(ev.endpoint) ?? "?"}（协议 ${str(ev.protocol_version) ?? "?"}，只读接入）`, null, null, null);
+        break;
+      }
+      case "agui_disconnected": {
+        push(at, "event", `AG-UI endpoint 已断开：${str(ev.endpoint) ?? "?"}`, null, null, null);
+        break;
+      }
+      case "agui_run_started": {
+        push(at, "event", `AG-UI 运行已开始：${str(ev.endpoint) ?? "?"}（运行 ${str(ev.run) ?? "?"}）`, null, null, null);
+        break;
+      }
+      case "agui_run_finished": {
+        push(at, "event", `AG-UI 运行已结束：${str(ev.endpoint) ?? "?"}（运行 ${str(ev.run) ?? "?"}，${str(ev.events) ?? "?"} 个事件，${str(ev.text_chars) ?? "?"} 字）`, null, null, null);
+        break;
+      }
+      case "agui_content_blocked": {
+        push(at, "event", `AG-UI 对方文本被注入扫描拦截：${str(ev.endpoint) ?? "?"}（运行 ${str(ev.run) ?? "?"}，${str(ev.labels) ?? "?"}）`, null, null, null);
+        break;
+      }
+      case "agui_tool_proposed": {
+        push(at, "event", `AG-UI 对方提议工具调用：${str(ev.endpoint) ?? "?"}（运行 ${str(ev.run) ?? "?"}，${str(ev.tool) ?? "?"}，只当提议记下）`, null, null, null);
+        break;
+      }
+      case "agui_write_accepted": {
+        push(at, "event", `AG-UI 写操作已显式接受：${str(ev.endpoint) ?? "?"}（${str(ev.accepted_by) ?? "?"}）`, null, null, null);
+        break;
+      }
+      case "agui_write_revoked": {
+        push(at, "event", `AG-UI 写接受已撤销：${str(ev.endpoint) ?? "?"}`, null, null, null);
+        break;
+      }
+      case "agui_write_blocked": {
+        push(at, "event", `AG-UI 写操作被拒：${str(ev.endpoint) ?? "?"}（${str(ev.tool) ?? "?"}，${str(ev.reason) ?? "?"}）`, null, null, null);
+        break;
+      }
+      case "agui_a2a_sent": {
+        push(at, "event", `A2A 消息已发给 ${str(ev.peer) ?? "?"}`, null, null, null);
+        break;
+      }
+      case "agui_a2a_received": {
+        push(at, "event", `A2A 答复已收到（${str(ev.peer) ?? "?"}，运行 ${str(ev.run) ?? "?"}）`, null, null, null);
+        break;
+      }
       case "subagent_stop_requested": {
         const by = str(ev.by) ?? "未记发起人";
         const step = str(ev.step) ?? "";
