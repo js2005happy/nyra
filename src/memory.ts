@@ -306,7 +306,9 @@ export function syncMemoryIndex(
     const reused = byHash.get(hash)?.shift();
     const id = reused?.id ?? `mem_${randomBytes(6).toString("hex")}`;
     const entryCreated = reused?.created_at || created_at || nowIso;
-    const sourceSession = reused?.source_session ?? opts.sessionIdForNew ?? null;
+    // 已有条目保留原来的来源（包括“未记录”的 null）；只有新行才记本次会话。以前用 ?? 会把 null 来源
+    // 顶成下一次追加的会话 id，记忆卡上就会把手工写的条目错标成“来自某对话”。
+    const sourceSession = reused ? reused.source_session : (opts.sessionIdForNew ?? null);
     const line = i + 1;
     indexEntries.push({ id, hash, line, created_at: entryCreated, source_session: sourceSession });
     entries.push({ id, text, raw, line, created_at: entryCreated, source_session: sourceSession, owner, source_file: sourceFile });

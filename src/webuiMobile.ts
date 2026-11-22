@@ -9,6 +9,7 @@
 // 图标是正式标志（圆盘 + 光标，= 入场动画终帧，几何在 src/brandMark.ts）在本机光栅化的 PNG。
 import { MARK_PRESETS, icoFromPngs, inlineMarkSvg, markPng, markSvg, rasterizeMark, type RasterOpts } from "./brandMark.ts";
 import { MESSAGES, type Lang } from "./i18n.ts";
+import { NYRA_AVATAR } from "./nyraAvatar.ts";
 import APP_CSS from "./assets/mobile-app.css.txt" with { type: "text" };
 import APP_JS from "./assets/mobile-app.js.txt" with { type: "text" };
 import SPLASH_JS from "./assets/mobile-splash.js.txt" with { type: "text" };
@@ -143,8 +144,13 @@ const IC = {
   more: SVG('<circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/>', "i f"),
   plus: SVG('<path d="M12 5v14M5 12h14"/>'),
   up: SVG('<path d="M12 19V5"/><path d="M6 11l6-6 6 6"/>'),
+  // 设计稿 v8 m-16：输入框下的模型 / 审批模式胶囊
+  chip: SVG('<rect x="7" y="7" width="10" height="10" rx="2"/><path d="M10 3.5V7M14 3.5V7M10 17v3.5M14 17v3.5M3.5 10H7M3.5 14H7M17 10h3.5M17 14h3.5"/>'),
+  shield: SVG('<path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6l7-3z"/>'),
   mark: MARK_INLINE,
 };
+// Nyra 团子头像（v6.2 原样）：新对话空状态、等你确认队列。
+const AVATARS = (["idle-m", "wait-s"] as const).map((k) => `<template id="av-${k}">${NYRA_AVATAR[k]}</template>`).join("");
 const NAV = (["threads", "review", "automations", "skills", "settings"] as const)
   .map((k) => `<button data-tab="${k}"><i>${IC[k]}</i><span data-i="m.tab.${k}"></span></button>`).join("");
 
@@ -164,7 +170,7 @@ export const MOBILE_V2_HTML = `<!doctype html><html lang="en"><head><meta charse
 <link rel="apple-touch-icon" sizes="180x180" href="/m/apple-touch-icon.png">
 <style>${APP_CSS}
 .ios .and-only,.android .ios-only{display:none}</style></head><body>
-<template id="tpl-mark">${IC.mark}</template>
+<template id="tpl-mark">${IC.mark}</template>${AVATARS}
 <div id="splash" class="hidden" aria-hidden="true"></div>
 <p id="fatal" class="err"></p>
 <section id="pair-view" class="view hidden"><div class="pair">
@@ -186,7 +192,7 @@ export const MOBILE_V2_HTML = `<!doctype html><html lang="en"><head><meta charse
 <div class="hd"><button id="back" class="ib" data-ia="m.back">${IC.back}</button><div class="tt"><b id="chat-title"></b><small id="chat-sub"></small></div><button id="kebab" class="ib" data-ia="m.more">${IC.more}</button></div>
 <div id="menu" class="menu hidden"><button id="menu-new">${IC.pencil}<span data-i="m.newThread"></span></button><button id="menu-settings">${IC.settings}<span data-i="m.tab.settings"></span></button></div>
 <div id="feed" class="feed"></div>
-<div class="composer"><p id="chat-status" class="cstatus"></p><div class="pill"><textarea id="input" rows="1" data-ip="m.followUp"></textarea><button id="send-btn" class="go" data-ia="m.send">${IC.up}</button></div></div>
+<div class="composer"><p id="chat-status" class="cstatus"></p><div class="pill"><textarea id="input" rows="1" data-ip="m.followUp"></textarea><button id="send-btn" class="go" data-ia="m.send">${IC.up}</button></div><div class="cpills" id="cpills"></div></div>
 <div id="dim" class="dim hidden"></div>
 <div id="sheet" class="sheet hidden" role="dialog" aria-modal="true"></div>
 </section>

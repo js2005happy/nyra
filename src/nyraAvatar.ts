@@ -1,0 +1,17 @@
+// src/nyraAvatar.ts — Nyra 的 agent 头像：v6.2 设计稿的紫色小团子（#8688ff 圆身 + #141414 胶囊眼），
+// 几何与颜色原样取自 nyra-design/v6/out-6.2/avatars.py（svg("nyra", state, size) 的输出），没有新增色值。
+// 品牌标志（圆盘 + 光标）不变，仍由 brandMark.ts 提供；团子只用在会话里代表 Nyra（实时状态行、回复署名）。
+// 状态：idle 空闲、work 工作中（眯眼）、wait 等你确认（圆眼，32 档带问号）、done 完成（弯眼）。
+// s 档按 ≤20px 的眼睛放大（18px 用），m 档按 32px 画。
+export type AvatarState = "idle" | "work" | "wait" | "done";
+export const NYRA_AVATAR_COLORS = { body: "#8688ff", eye: "#141414" } as const;
+export const NYRA_AVATAR: Record<`${AvatarState}-${"s" | "m"}`, string> = {
+  "idle-s": "<svg class=\"bot\" viewBox=\"0 0 100 100\" aria-hidden=\"true\"><g fill=\"#8688ff\"><circle cx=\"50\" cy=\"50\" r=\"46\"/></g><rect x=\"26.4\" y=\"40.61\" width=\"14.16\" height=\"24.78\" rx=\"7.08\" fill=\"#141414\"/><rect x=\"59.44\" y=\"40.61\" width=\"14.16\" height=\"24.78\" rx=\"7.08\" fill=\"#141414\"/></svg>",
+  "idle-m": "<svg class=\"bot\" viewBox=\"0 0 100 100\" aria-hidden=\"true\"><g fill=\"#8688ff\"><circle cx=\"50\" cy=\"50\" r=\"46\"/></g><rect x=\"30\" y=\"42.5\" width=\"12\" height=\"21\" rx=\"6\" fill=\"#141414\"/><rect x=\"58\" y=\"42.5\" width=\"12\" height=\"21\" rx=\"6\" fill=\"#141414\"/></svg>",
+  "work-s": "<svg class=\"bot\" viewBox=\"0 0 100 100\" aria-hidden=\"true\"><g fill=\"#8688ff\"><circle cx=\"50\" cy=\"50\" r=\"46\"/></g><rect x=\"23.45\" y=\"50.58\" width=\"20.06\" height=\"8.85\" rx=\"4.42\" fill=\"#141414\"/><rect x=\"56.49\" y=\"50.58\" width=\"20.06\" height=\"8.85\" rx=\"4.42\" fill=\"#141414\"/></svg>",
+  "work-m": "<svg class=\"bot\" viewBox=\"0 0 100 100\" aria-hidden=\"true\"><g fill=\"#8688ff\"><circle cx=\"50\" cy=\"50\" r=\"46\"/></g><rect x=\"27.5\" y=\"51.25\" width=\"17\" height=\"7.5\" rx=\"3.75\" fill=\"#141414\"/><rect x=\"55.5\" y=\"51.25\" width=\"17\" height=\"7.5\" rx=\"3.75\" fill=\"#141414\"/></svg>",
+  "wait-s": "<svg class=\"bot\" viewBox=\"0 0 100 100\" aria-hidden=\"true\"><g fill=\"#8688ff\"><circle cx=\"50\" cy=\"50\" r=\"46\"/></g><circle cx=\"33.48\" cy=\"53\" r=\"11.21\" fill=\"#141414\"/><circle cx=\"66.52\" cy=\"53\" r=\"11.21\" fill=\"#141414\"/></svg>",
+  "wait-m": "<svg class=\"bot\" viewBox=\"0 0 100 100\" aria-hidden=\"true\"><g fill=\"#8688ff\"><circle cx=\"50\" cy=\"50\" r=\"46\"/></g><circle cx=\"36\" cy=\"53\" r=\"9.5\" fill=\"#141414\"/><circle cx=\"64\" cy=\"53\" r=\"9.5\" fill=\"#141414\"/><g transform=\"translate(75 25)\"><path d=\"M-5.5 -4.5A5.6 5.6 0 1 1 1.6 1C0.2 1.8 0 3 0 4.6\" fill=\"none\" stroke=\"#141414\" stroke-width=\"4.2\" stroke-linecap=\"round\"/><circle cx=\"0\" cy=\"10.6\" r=\"2.5\" fill=\"#141414\"/></g></svg>",
+  "done-s": "<svg class=\"bot\" viewBox=\"0 0 100 100\" aria-hidden=\"true\"><g fill=\"#8688ff\"><circle cx=\"50\" cy=\"50\" r=\"46\"/></g><path d=\"M24.04 57.13Q33.48 40.61 42.92 57.13\" fill=\"none\" stroke=\"#141414\" stroke-width=\"8.26\" stroke-linecap=\"round\"/><path d=\"M57.08 57.13Q66.52 40.61 75.96 57.13\" fill=\"none\" stroke=\"#141414\" stroke-width=\"8.26\" stroke-linecap=\"round\"/></svg>",
+  "done-m": "<svg class=\"bot\" viewBox=\"0 0 100 100\" aria-hidden=\"true\"><g fill=\"#8688ff\"><circle cx=\"50\" cy=\"50\" r=\"46\"/></g><path d=\"M28 56.5Q36 42.5 44 56.5\" fill=\"none\" stroke=\"#141414\" stroke-width=\"7\" stroke-linecap=\"round\"/><path d=\"M56 56.5Q64 42.5 72 56.5\" fill=\"none\" stroke=\"#141414\" stroke-width=\"7\" stroke-linecap=\"round\"/></svg>",
+};

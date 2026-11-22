@@ -2,12 +2,15 @@
 //
 // 视觉按设计稿 docs/design/source（nyra-design v2：desktop.py 的 SIDE / mac() / win()，kit.py 的 LIGHT / DARK 令牌）：
 // 侧栏 + 对话 + 右侧审阅面板（Diff / 计划 / 证据 / 终端）+ 状态栏；新对话空状态带四张起步卡片与自动化列表。
+// 设计稿 v8（docs/design/v8）：会话常驻左侧 + 右侧抽屉面板（概览 / 改动 / 计划 / 证据 / 终端）、工作中一行实时状态、
+// 每轮收尾交代、回复底部用时与 token、顶栏审批模式胶囊、新审批卡、项目记忆卡；logo 与颜色不变，团子头像取自 v6.2。
 // 浅色默认，prefers-color-scheme: dark 跟随系统。窗口用系统原生标题栏，页面里不画假窗口按钮。
 // 样式与脚本分别在 src/assets/desktop-app.css.txt / desktop-app.js.txt；入场动画复用 src/assets/mobile-splash.js.txt，
 // 只在桌面外壳里（/api/info 的 shell === "desktop"）每次冷启动播一次。界面文案在 src/i18n.ts 的 d.* 键（复用部分 m.* 键）。
 // 旧网页界面（PAGE_HTML，src/webuiPage.ts）保留导出，不再挂在 / 上。
 import { MESSAGES, type Lang } from "./i18n.ts";
 import { inlineMarkSvg } from "./brandMark.ts";
+import { NYRA_AVATAR } from "./nyraAvatar.ts";
 import APP_CSS from "./assets/desktop-app.css.txt" with { type: "text" };
 import APP_JS from "./assets/desktop-app.js.txt" with { type: "text" };
 import SPLASH_JS from "./assets/mobile-splash.js.txt" with { type: "text" };
@@ -50,7 +53,17 @@ const ICONS: Record<string, string> = {
   panel: SVG('<rect x="3.5" y="5" width="17" height="14" rx="2"/><path d="M13 5v14"/>'),
   pie: SVG('<circle cx="12" cy="12" r="8"/><path d="M12 4v8h8"/>'),
   undo: SVG('<path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>'),
+  // 设计稿 v8：复制、收尾勾、关闭、“这一步能动到什么”框里的 文件 / 命令 / 联网 / 范围
+  copy: SVG('<rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5V6a1.5 1.5 0 0 0-1.5-1.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"/>'),
+  check: SVG('<rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/>'),
+  x: SVG('<path d="M6 6l12 12M18 6L6 18"/>'),
+  file: SVG('<path d="M14 3.5H7A1.5 1.5 0 0 0 5.5 5v14A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.5-1.5V8z"/><path d="M14 3.5V8h4.5"/>'),
+  term: SVG('<rect x="3.5" y="5" width="17" height="14" rx="2"/><path d="M7.5 10l2.5 2-2.5 2M12.5 14.5h4"/>'),
+  globe: SVG('<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.6 3.5 5.4 3.5 8.5s-1 5.9-3.5 8.5c-2.5-2.6-3.5-5.4-3.5-8.5s1-5.9 3.5-8.5z"/>'),
+  lock: SVG('<rect x="5.5" y="10.5" width="13" height="9.5" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/>'),
 };
+// Nyra 团子头像（v6.2 原样）：实时状态行、回复署名、概览状态。
+const AVATARS = (["idle", "work", "wait", "done"] as const).map((st) => `<template id="av-${st}-s">${NYRA_AVATAR[`${st}-s`]}</template>`).join("");
 const TEMPLATES = Object.entries(ICONS).map(([k, v]) => `<template id="ic-${k}">${v}</template>`).join("");
 const NAV = ([["new", "pencil", "d.newThread", true], ["search", "search", "d.search", true], ["automations", "clock", "d.automations", false], ["skills", "skills", "d.skills", false], ["mcp", "plug", "d.mcp", false]] as const)
   .map(([id, ic, label, kbd]) => `<button class="si" id="nav-${id}"><i>${ICONS[ic]}</i><span data-i="${label}"></span>${kbd ? `<span class="k" id="kbd-${id}"></span>` : ""}</button>`).join("");
@@ -63,7 +76,7 @@ export const DESKTOP_HTML = `<!doctype html><html lang="en"><head><meta charset=
 <link rel="icon" href="/m/favicon.svg" type="image/svg+xml">
 <style>${APP_CSS}</style>
 </head><body>
-${TEMPLATES}
+${TEMPLATES}${AVATARS}
 <div id="splash" class="splash hidden" aria-hidden="true"></div>
 <div class="app">
 <aside class="side glass" aria-label="Nyra">
@@ -78,19 +91,20 @@ ${NAV}
 <section class="view" id="v-home"><div class="home">
 <div class="hero"><div class="mk">${MARK}</div>
 <h1><span data-i="d.home.before"></span> <span class="proj" id="home-proj"></span><span id="home-after" data-i="d.home.after"></span></h1></div>
-<div class="comp glass"><textarea id="home-input" rows="1" data-ip="d.home.placeholder"></textarea><div class="rw" id="home-pills"></div></div>
+<div class="comp glass"><div class="fullbar hidden" id="home-full" role="status"></div><textarea id="home-input" rows="1" data-ip="d.home.placeholder"></textarea><div class="rw" id="home-pills"></div></div>
 <div class="cards" id="cards"></div>
 <div class="autos"><div class="lbl" data-i="d.automations"></div><div id="home-autos"></div></div>
+<div class="autos mem" id="home-mem"></div>
 </div></section>
 <section class="view hidden" id="v-thread">
 <div class="feed" id="feed"><div class="col" id="col"></div></div>
-<div class="comp glass"><textarea id="input" rows="1" data-ip="d.followUp"></textarea><div class="rw" id="thread-pills"></div></div>
+<div class="comp glass"><div class="fullbar hidden" id="thread-full" role="status"></div><textarea id="input" rows="1" data-ip="d.followUp"></textarea><div class="rw" id="thread-pills"></div></div>
 </section>
 <section class="view page hidden" id="v-automations"><div class="pagein"><h2 data-i="d.automations"></h2><p class="desc" data-i="d.auto.desc"></p><div id="auto-list"></div></div></section>
 <section class="view page hidden" id="v-skills"><div class="pagein"><h2 data-i="d.skills"></h2><p class="desc" data-i="d.skills.desc"></p><div id="skill-list"></div></div></section>
 <section class="view page hidden" id="v-mcp"><div class="pagein"><h2 data-i="d.mcp"></h2><p class="desc" data-i="d.set.mcp.desc"></p><div id="mcp-list"></div></div></section>
 <section class="view settings hidden" id="v-settings"><nav class="setnav" id="set-nav"></nav><div class="setbody" id="set-body"></div></section>
-<aside class="review glass hidden" id="review"><div class="rt" id="rtabs"></div><div class="rbody" id="rbody"></div><div class="term hidden" id="term"></div></aside>
+<aside class="review glass hidden" id="review" aria-label="Panel"><div class="rh" id="rhead"></div><div class="rt" id="rtabs"></div><div class="rbody" id="rbody"></div><div class="rfoot hidden" id="rfoot"></div></aside>
 </div>
 <footer class="status glass" id="status"></footer>
 </main>

@@ -90,12 +90,28 @@ function relTime(iso){
   if (s < 86400) return t('m.time.h', { n: Math.floor(s / 3600) });
   return t('m.time.d', { n: Math.floor(s / 86400) });
 }
+function base(p){ return String(p || '').split(/[\\/]/).pop(); }
+function sandboxText(){ const sb = lastInfo && lastInfo.config ? lastInfo.config.sandbox : 'local'; return t(sb === 'e2b' ? 'm.sandbox.e2b' : sb === 'bwrap' ? 'm.sandbox.bwrap' : 'm.sandbox.local'); }
+// 设计稿 v8 m-17：副标题写状态结果。等你确认写要做什么；跑完了写改了几个文件、有没有推送（网关按会话文件真实汇总，outcome 为 null 时退回原来的写法）。
+function waitText(a){
+  if (EDIT_TOOLS.includes(a.tool)) { const d = parseDiff(a.summary); return t('m.sub.waitEdit', { file: base(d.path) || a.tool, a: d.add, d: d.del }); }
+  if (a.tool === 'shell' && a.command) return t('m.sub.waitRun', { cmd: String(a.command).split('\n')[0].slice(0, 48) });
+  return t('m.sub.waitTool', { tool: a.tool });
+}
 function threadState(s){
-  if (lastApprovals.some(a => a.session === s.id)) return ['wait', t('m.st.approval')];
+  const a = lastApprovals.find(x => x.session === s.id);
+  if (a) return ['wait', waitText(a)];
   if (s.status === 'running') return ['run', t('m.st.running')];
   if (s.status === 'error') return ['err', t('m.st.error')];
   const seen = seenMap()[s.id];
-  if (seen !== undefined && (s.count || 0) > seen) return ['review', t('m.st.review')];
+  const fresh = seen !== undefined && (s.count || 0) > seen;
+  const o = s.outcome;
+  if (o && o.steps) {
+    const push = t(o.pushed ? 'm.sub.pushed' : 'm.sub.notPushed');
+    const txt = o.edited && o.edited.length ? t(o.edited.length === 1 ? 'm.sub.doneEdit1' : 'm.sub.doneEdit', { n: o.edited.length, push }) : (o.commands ? '' : t('m.sub.doneRead'));
+    if (txt) return [fresh ? 'review' : '', txt];
+  }
+  if (fresh) return ['review', t('m.st.review')];
   return ['', t('m.st.idle', { n: s.count || 0 })];
 }
 function titleOf(s){ return (s && (s.title || s.preview)) || t('m.untitled'); }
@@ -167,11 +183,32 @@ function stepOf(c){
 }
 function stepsBlock(steps, open){
   const lg = el('div', 'lg steps' + (open ? ' open' : ''));
-  const h = el('button'); const car = el('span', 'car', '▸'); h.appendChild(car); h.appendChild(document.createTextNode(t('m.worked', { n: steps.length })));
+  const h = el('button'); h.dataset.role = 'steps';
+  h.appendChild(el('span', 'ok-ic', '✓'));
+  h.appendChild(document.createTextNode(t('m.showSteps', { n: steps.length })));
+  h.appendChild(el('span', 'car', '›'));
   h.onclick = () => lg.classList.toggle('open');
   lg.appendChild(h);
   const st = el('div', 'st'); steps.forEach(s => st.appendChild(s)); lg.appendChild(st);
   return lg;
+}
+function avatar(state){ const tpl = $('av-' + state); const s = el('span', 'av'); if (tpl) s.appendChild(tpl.content.firstElementChild.cloneNode(true)); return s; }
+// 输入框下两枚胶囊：模型、审批模式（点了去设置里换；完全访问用警示色）。
+function renderCPills(){
+  const row = $('cpills'); if (!row || !lastInfo) return;
+  const key = (lastInfo.model || '') + ':' + (lastInfo.mode || '');
+  if (row.dataset.key === key) return; row.dataset.key = key; row.innerHTML = '';
+  const m = el('button', 'cp'); m.dataset.role = 'model'; m.appendChild(icon('chip')); m.appendChild(el('span', '', lastInfo.model || '—')); m.setAttribute('aria-label', t('m.pill.model')); m.onclick = () => setTab('settings'); row.appendChild(m);
+  const md = el('button', 'cp' + (lastInfo.mode === 'full' ? ' warn' : '')); md.dataset.role = 'mode'; md.appendChild(icon('shield')); md.appendChild(el('span', '', modeLabel(lastInfo.mode))); md.setAttribute('aria-label', t('m.pill.mode')); md.onclick = () => setTab('settings'); row.appendChild(md);
+}
+function emptyState(){
+  const e = el('div', 'chat-empty');
+  const a = avatar('idle-m'); a.classList.add('big'); e.appendChild(a);
+  e.appendChild(el('h2', '', t('m.empty.lead')));
+  e.appendChild(el('p', '', t('m.empty.sub')));
+  const project = (lastSessions && lastSessions.project && lastSessions.project.name) || '';
+  const c = el('div', 'conn'); c.appendChild(el('i', 'ok')); c.appendChild(el('span', '', t('m.empty.connected', { project }))); e.appendChild(c);
+  return e;
 }
 // 运行中的这一轮还没写进会话（网关只给出本轮之前的消息）：从事件流补上本轮的用户消息、工具步骤和中间回复。
 function liveTurn(v){
@@ -189,15 +226,19 @@ function liveTurn(v){
 }
 function renderFeed(v){
   const all = v.messages || [];
-  const msgs = all.filter(m => m.role !== 'system').concat(liveTurn(v));
+  // 正在等审批的那一步由审批卡表示，还没执行，不提前写进过程里（与桌面一致）。
+  const live = liveTurn(v); if (lastApprovals.some(a => a.session === currentSession) && live.length && live[live.length - 1].tool_calls) live.pop();
+  const msgs = all.filter(m => m.role !== 'system').concat(live);
   const key = msgs.length + ':' + (msgs.length ? textOf(msgs[msgs.length - 1]).length : 0) + ':' + v.status + ':' + (v.next || 0);
   $('chat-status').textContent = v.status === 'running' ? t('m.working') : (v.status === 'error' ? t('m.errorPrefix', { msg: v.error || '' }) : '');
   const firstUser = msgs.find(m => m.role === 'user');
   if (firstUser) $('chat-title').textContent = textOf(firstUser).slice(0, 60) || t('m.untitled');
   if (v.status !== 'running') markSeen(currentSession, all.length);
+  renderCPills();
   if (key === lastFeedKey) return;
   lastFeedKey = key;
   const feed = $('feed'); feed.innerHTML = '';
+  if (!msgs.length && v.status !== 'running' && !pendingText) { feed.appendChild(emptyState()); return; }
   let steps = [];
   const flush = (open) => { if (steps.length) { feed.appendChild(stepsBlock(steps, open)); steps = []; } };
   msgs.forEach(m => {
@@ -279,60 +320,90 @@ function parseDiff(summary){
   return { path, add, del, body, head: lines[0] || '' };
 }
 function closeSheet(){ $('sheet').classList.add('hidden'); $('dim').classList.add('hidden'); sheetKey = ''; }
+function apprBits(a){
+  const isEdit = EDIT_TOOLS.includes(a.tool);
+  const isShell = a.tool === 'shell' && !!a.command;
+  const d = isEdit ? parseDiff(a.summary) : null;
+  const sentence = isEdit ? t('m.appr.sumEdit', { path: base(d.path) || a.tool }) : isShell ? t('m.appr.sumRun') : t('m.appr.sumTool', { tool: a.tool });
+  return { isEdit, isShell, d, sentence };
+}
+// “这一步能动到什么”框。edit：文件 + 看改动、其他（不跑命令 · 不联网 · 沙箱）；shell：命令 + 其他（沙箱）；其他工具：工具名。
+function scopeBox(a, b, st, onDiff, oneLine){
+  const box = el('div', 'scope'); box.appendChild(el('div', 'st', t('m.scope.title')));
+  const row = (k, v, extra) => { const r = el('div', 'sr'); r.appendChild(el('span', 'k', k)); const vv = el('span', 'v', v); r.appendChild(vv); if (extra) r.appendChild(extra); box.appendChild(r); return r; };
+  if (b.isEdit) {
+    if (oneLine) {
+      const x = el('span', 'x'); x.appendChild(el('span', 'ok', '+' + b.d.add)); x.appendChild(document.createTextNode(' ')); x.appendChild(el('span', 'bad', '−' + b.d.del));
+      row(t('m.scope.file'), [base(b.d.path), t('m.scope.noCmd'), t('m.scope.noNet')].join(' · '), x).querySelector('.v').classList.add('mono');
+    } else {
+      let link = null;
+      if (onDiff) { link = el('button', 'lk', (st.diff ? t('m.scope.hideDiff') : t('m.scope.viewDiff')) + ' ›'); link.dataset.act = 'diff'; link.onclick = onDiff; }
+      row(t('m.scope.file'), base(b.d.path) || a.tool, link).querySelector('.v').classList.add('mono');
+      row(t('m.scope.other'), [t('m.scope.noCmd'), t('m.scope.noNet'), sandboxText()].join(' · '));
+    }
+  } else if (b.isShell) {
+    const x = oneLine ? el('span', 'x', sandboxText()) : null;
+    row(t('m.scope.cmd'), a.command, x).querySelector('.v').classList.add('mono');
+    if (!oneLine) row(t('m.scope.other'), sandboxText());
+  } else {
+    row(t('m.scope.other'), a.tool + (a.summary ? ' · ' + String(a.summary).split('\n')[0].slice(0, 120) : ''));
+  }
+  return box;
+}
+function waitChip(){ const c = el('span', 'wchip'); c.appendChild(el('i')); c.appendChild(document.createTextNode(t('m.appr.waiting'))); return c; }
 function renderSheet(){
   const a = currentSession ? lastApprovals.find(x => x.session === currentSession) : null;
   if (!a) { if (!$('sheet').classList.contains('hidden')) closeSheet(); return; }
-  const st = cardState[a.id] || (cardState[a.id] = { open: null, scope: 'session', feedback: '' });
-  const key = a.id + ':' + st.open + ':' + st.scope;
+  const st = cardState[a.id] || (cardState[a.id] = { open: null, scope: 'session', feedback: '', diff: false, more: false });
+  const key = a.id + ':' + st.open + ':' + st.scope + ':' + st.diff + ':' + st.more;
   if (key === sheetKey) return;
   sheetKey = key;
   const sh = $('sheet'); sh.innerHTML = ''; sh.dataset.id = a.id;
   sh.appendChild(el('div', 'grab'));
-  const isEdit = EDIT_TOOLS.includes(a.tool);
-  const isShell = a.tool === 'shell' && a.command;
-  if (isEdit) {
-    const d = parseDiff(a.summary);
-    sh.appendChild(el('h2', '', t('m.allowEdit')));
-    const meta = el('div', 'meta', a.tool + (d.path ? ' · ' + d.path : '') + ' · ');
-    meta.appendChild(el('span', 'ok', '+' + d.add)); meta.appendChild(document.createTextNode(' ')); meta.appendChild(el('span', 'bad', '−' + d.del));
-    sh.appendChild(meta);
+  const b = apprBits(a);
+  sh.appendChild(waitChip());
+  sh.appendChild(el('h2', '', b.sentence));
+  sh.appendChild(scopeBox(a, b, st, b.isEdit ? () => { st.diff = !st.diff; renderSheet(); } : null, false));
+  if (b.isEdit && st.diff) {
     const code = el('div', 'code');
-    (d.body.length ? d.body : [['', '', d.head]]).forEach(([c, sign, txt]) => {
+    (b.d.body.length ? b.d.body : [['', '', b.d.head]]).forEach(([c, sign, txt]) => {
       const ln = el('div', 'ln ' + c); ln.appendChild(el('span', 'n', sign)); ln.appendChild(document.createTextNode(txt)); code.appendChild(ln);
     });
     sh.appendChild(code);
-  } else if (isShell) {
-    sh.appendChild(el('h2', '', t('m.allowCommand')));
-    sh.appendChild(el('div', 'meta', t('m.runsOnPc')));
-    sh.appendChild(el('div', 'cmd', a.command));
-  } else {
-    sh.appendChild(el('h2', '', t('m.allowTool', { tool: a.tool })));
-    sh.appendChild(el('div', 'meta', a.tool));
-    sh.appendChild(el('div', 'cmd', a.summary || ''));
   }
   const btns = el('div', 'btns');
-  const deny = el('button', 'bt' + (st.open === 'deny' ? ' sel' : ''), t('m.deny')); deny.dataset.act = 'deny';
+  const deny = el('button', 'bt' + (st.open === 'deny' ? ' sel' : ''), t('m.denyAlt')); deny.dataset.act = 'deny';
   deny.onclick = () => { st.open = st.open === 'deny' ? null : 'deny'; renderSheet(); };
   btns.appendChild(deny);
-  // 复合命令 / 危险操作没有建议规则：不给“总是允许”。
-  if (a.suggestion) {
-    const al = el('button', 'bt' + (st.open === 'always' ? ' sel' : ''), t('m.always')); al.dataset.act = 'always';
-    al.onclick = () => { st.open = st.open === 'always' ? null : 'always'; renderSheet(); };
-    btns.appendChild(al);
-  }
   const once = el('button', 'bt p', t('m.allowOnce')); once.dataset.act = 'allow';
   once.onclick = () => decide(a.id, { approve: true });
   btns.appendChild(once);
   sh.appendChild(btns);
+  // 更多：本会话总是允许、记住为规则（复合命令 / 危险操作没有建议规则，只能单次允许）。
+  const canRule = !!a.suggestion; const canAlways = canRule || (!!a.always && a.tool !== 'shell');
+  if (canAlways) {
+    const mr = el('button', 'morerow' + (st.more ? ' open' : '')); mr.dataset.act = 'more';
+    mr.appendChild(el('span', '', t(canRule ? 'm.more.both' : 'm.more.session'))); mr.appendChild(el('span', 'car', '⌄'));
+    mr.onclick = () => { st.more = !st.more; if (!st.more && st.open === 'always') st.open = null; renderSheet(); };
+    sh.appendChild(mr);
+    if (st.more) {
+      const opts = el('div', 'moreopts');
+      const al = el('button', 'bt', t('m.alwaysSession')); al.dataset.act = 'always-session';
+      al.onclick = () => decide(a.id, canRule ? { approve: true, scope: 'session' } : { approve: true, always: true });
+      opts.appendChild(al);
+      if (canRule) { const rr = el('button', 'bt' + (st.open === 'always' ? ' sel' : ''), t('m.rememberRule')); rr.dataset.act = 'always'; rr.onclick = () => { st.open = st.open === 'always' ? null : 'always'; renderSheet(); }; opts.appendChild(rr); }
+      sh.appendChild(opts);
+    }
+  }
   if (st.open === 'always' && a.suggestion) {
     const box = el('div', 'sub always');
     box.appendChild(el('div', 'k', t('m.remember.title')));
     box.appendChild(el('code', 'rule', ruleLabel(a.suggestion)));
     const seg = el('div', 'seg');
     [['session', 'm.scope.session'], ['project', 'm.scope.project']].forEach(([val, label]) => {
-      const b = el('button', st.scope === val ? 'on' : '', t(label)); b.dataset.scope = val;
-      b.onclick = () => { st.scope = val; renderSheet(); };
-      seg.appendChild(b);
+      const bb = el('button', st.scope === val ? 'on' : '', t(label)); bb.dataset.scope = val;
+      bb.onclick = () => { st.scope = val; renderSheet(); };
+      seg.appendChild(bb);
     });
     box.appendChild(seg);
     box.appendChild(el('div', 'note', t(st.scope === 'project' ? 'm.scope.projectHelp' : 'm.scope.sessionHelp')));
@@ -352,7 +423,7 @@ function renderSheet(){
     sh.appendChild(box);
   }
   if (!a.suggestion && a.tool === 'shell') sh.appendChild(el('div', 'foot', t('m.noRule')));
-  else if (isEdit && lastInfo && lastInfo.config && lastInfo.config.sandbox === 'local') sh.appendChild(el('div', 'foot', t('m.checkpoint')));
+  else if (b.isEdit && lastInfo && lastInfo.config && lastInfo.config.sandbox !== 'e2b') sh.appendChild(el('div', 'foot', t('m.checkpoint')));
   sh.classList.remove('hidden'); $('dim').classList.remove('hidden');
 }
 async function decide(id, body){
@@ -362,6 +433,7 @@ async function decide(id, body){
     lastApprovals = lastApprovals.filter(a => a.id !== id);
     toast(body.approve ? (body.scope ? t('m.toast.remembered') : t('m.toast.allowed')) : (body.feedback ? t('m.toast.deniedFeedback') : t('m.toast.denied')));
     renderSheet();
+    lastReviewJson = '';
     await tick();
   } catch (e) { toast(t('m.toast.failed', { msg: e.message })); }
 }
@@ -373,6 +445,7 @@ async function tick(){
     if (currentSession) { renderFeed(await api('/api/sessions/' + encodeURIComponent(currentSession))); renderSheet(); }
     else if (currentTab === 'threads' && !$('threads-view').classList.contains('hidden')) await loadSessions();
     else if (currentTab === 'review' && !$('review-view').classList.contains('hidden')) await loadReview();
+    if (lastInfo) renderCPills();
   } catch (e) { /* 断网时下次再试 */ }
 }
 
@@ -454,13 +527,65 @@ function reviewCostLabel(item){
 }
 async function loadReview(force){
   const data = await api('/api/review');
-  const json = JSON.stringify(data.items || []);
+  const json = JSON.stringify(data.items || []) + '|' + JSON.stringify(lastApprovals) + '|' + Object.entries(queueState).map(([k, v]) => k + (v.more ? 'm' : '') + (v.deny ? 'd' : '')).join(',');
   if (!force && json === lastReviewJson) return;
   lastReviewJson = json;
+  if (!lastSessions) { try { lastSessions = await api('/api/sessions'); } catch(e){} }
   renderReview(data.items || []);
+}
+let queueState = {};
+function renderQueue(box){
+  if (!lastApprovals.length) return;
+  const sessions = new Set(lastApprovals.map(a => a.session));
+  const hd = el('div', 'qh');
+  const tl = el('div', 'qt'); tl.appendChild(el('h2', '', t('m.q.title'))); tl.appendChild(el('span', '', t('m.q.count', { n: lastApprovals.length, m: sessions.size }))); hd.appendChild(tl);
+  hd.appendChild(el('p', '', t('m.q.hint')));
+  box.appendChild(hd);
+  lastApprovals.forEach(a => {
+    const qs = queueState[a.id] || (queueState[a.id] = { more: false, deny: false, feedback: '' });
+    const s = lastSessions && (lastSessions.sessions || []).find(x => x.id === a.session);
+    const card = el('div', 'qcard'); card.dataset.id = a.id;
+    const top = el('button', 'qtop'); top.appendChild(avatar('wait-s'));
+    top.appendChild(el('b', '', titleOf(s)));
+    if (s && s.project) top.appendChild(el('span', 'pj', '· ' + s.project));
+    top.onclick = () => openSession(a.session);
+    card.appendChild(top);
+    const b = apprBits(a);
+    card.appendChild(el('div', 'qs', b.sentence));
+    card.appendChild(scopeBox(a, b, {}, null, true));
+    const btns = el('div', 'btns');
+    const more = el('button', 'bt dots' + (qs.more ? ' sel' : '')); more.dataset.act = 'more'; more.setAttribute('aria-label', t('m.q.more')); more.appendChild(icon('more'));
+    more.onclick = () => { qs.more = !qs.more; lastReviewJson = ''; loadReview(true); };
+    const deny = el('button', 'bt' + (qs.deny ? ' sel' : ''), t('m.denyAlt')); deny.dataset.act = 'deny';
+    deny.onclick = () => { qs.deny = !qs.deny; lastReviewJson = ''; loadReview(true); };
+    const once = el('button', 'bt p', t('m.allowOnce')); once.dataset.act = 'allow';
+    once.onclick = () => decide(a.id, { approve: true });
+    btns.appendChild(more); btns.appendChild(deny); btns.appendChild(once); card.appendChild(btns);
+    const canRule = !!a.suggestion; const canAlways = canRule || (!!a.always && a.tool !== 'shell');
+    if (qs.more) {
+      const opts = el('div', 'moreopts');
+      if (canAlways) { const al = el('button', 'bt', t('m.alwaysSession')); al.dataset.act = 'always-session'; al.onclick = () => decide(a.id, canRule ? { approve: true, scope: 'session' } : { approve: true, always: true }); opts.appendChild(al); }
+      if (canRule) { const rr = el('button', 'bt', t('m.rememberRule')); rr.dataset.act = 'always'; rr.onclick = () => { (cardState[a.id] || (cardState[a.id] = { open: null, scope: 'session', feedback: '', diff: false, more: true })).open = 'always'; cardState[a.id].more = true; openSession(a.session); }; opts.appendChild(rr); }
+      if (b.isEdit) { const dv = el('button', 'bt', t('m.scope.viewDiff')); dv.onclick = () => { (cardState[a.id] || (cardState[a.id] = { open: null, scope: 'session', feedback: '', diff: true, more: false })).diff = true; openSession(a.session); }; opts.appendChild(dv); }
+      if (!canAlways) opts.appendChild(el('div', 'note', t('m.noRule')));
+      card.appendChild(opts);
+    }
+    if (qs.deny) {
+      const sub = el('div', 'sub deny');
+      const ta = el('textarea'); ta.rows = 2; ta.placeholder = t('m.deny.placeholder'); ta.value = qs.feedback; ta.oninput = () => { qs.feedback = ta.value; };
+      sub.appendChild(ta);
+      const send = el('button', 'bt p full', t('m.deny.confirm')); send.dataset.act = 'deny-confirm';
+      send.onclick = () => decide(a.id, { approve: false, feedback: (qs.feedback || '').trim() });
+      sub.appendChild(send); card.appendChild(sub);
+    }
+    box.appendChild(card);
+  });
 }
 function renderReview(items){
   const box = $('reviews'); box.innerHTML = '';
+  // 输入框里有字时不要整页重画（反馈会丢）：由 queueState 保存。
+  renderQueue(box);
+  if (!items.length && lastApprovals.length) return;
   if (!items.length) {
     const e = el('div', 'empty'); e.appendChild(el('b', '', t('m.review.emptyTitle')));
     e.appendChild(el('code', '', t('m.review.emptyHint'))); box.appendChild(e); return;

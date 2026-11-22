@@ -197,3 +197,54 @@ svg.i.f{fill:currentColor;stroke:none}
 @media (prefers-reduced-transparency:reduce){
 .nav,.sheet,.menu,.toast,.fab,.scrolled .tabview>.lt,.hd.scrolled,.composer .pill{-webkit-backdrop-filter:none;backdrop-filter:none}
 .nav,.scrolled .tabview>.lt,.hd.scrolled,.composer .pill{background:var(--g-solid)}.sheet,.menu{background:var(--bg)}.fab,.toast{background:var(--btn)}}
+/* ---- 设计稿 v8：过程收起、新审批卡、输入框下胶囊、新对话空状态、等你确认队列（只加组件，颜色沿用上面的令牌） ---- */
+.av{display:inline-flex;width:18px;height:18px;flex:none}.av svg{width:100%;height:100%;display:block}
+.lg>button[data-role=steps]{width:fit-content;border:1px solid var(--line2);border-radius:999px;padding:6px 12px 6px 10px}
+.lg .ok-ic{color:var(--add);font-size:13px}
+.lg>button .car{font-size:14px;width:auto;margin-left:2px}
+.feed{padding-bottom:calc(140px + var(--sab))}
+.cpills{display:flex;gap:8px;margin-top:8px;overflow-x:auto;scrollbar-width:none}
+.cpills .cp{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:999px;background:var(--chip);border:1px solid var(--line2);font-size:13px;color:var(--fg);white-space:nowrap;flex:none}
+.cpills .cp:first-child span{font-family:var(--mono);font-size:12.5px}
+.cpills .cp svg.i{width:15px;height:15px}
+.cpills .cp.warn{background:color-mix(in srgb,var(--warn) 18%,transparent);border-color:color-mix(in srgb,var(--warn) 55%,transparent)}
+.cpills .cp.warn svg.i{color:var(--warn)}
+.chat-empty{display:flex;flex-direction:column;align-items:center;text-align:center;padding:16dvh 28px 0;gap:10px}
+.chat-empty .av.big{width:72px;height:72px;margin-bottom:8px}
+.chat-empty h2{font-size:19px;font-weight:600;line-height:1.4;letter-spacing:-.01em}
+.chat-empty p{color:var(--mu);font-size:14px;line-height:1.5}
+.chat-empty .conn{display:inline-flex;align-items:center;gap:8px;margin-top:8px;padding:6px 12px;border-radius:999px;background:var(--chip);font-size:13px;color:var(--fg)}
+.chat-empty .conn i{width:7px;height:7px;border-radius:50%;background:var(--add)}
+.wchip{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:999px;font-size:13px;font-weight:600;color:var(--fg);background:color-mix(in srgb,var(--warn) 18%,transparent);border:1px solid color-mix(in srgb,var(--warn) 50%,transparent);margin:6px 0 10px}
+.wchip i{width:7px;height:7px;border-radius:50%;background:var(--warn)}
+.sheet h2{line-height:1.35}
+.scope{margin-top:12px;border:1px solid var(--line2);border-radius:16px;padding:10px 14px 4px}
+.scope .st{font-size:13px;font-weight:600;margin-bottom:2px}
+.scope .sr{display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid var(--line);font-size:14px;min-width:0}
+.scope .st+.sr{border-top:none}
+.scope .sr .k{color:var(--mu);width:40px;flex:none}
+.scope .sr .v{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.scope .sr .v.mono{font-size:13px}
+.scope .sr .x{color:var(--mu);font-size:13px;flex:none}
+.scope .sr .lk{color:var(--fg);font-weight:600;font-size:14px;flex:none;text-decoration:underline;text-underline-offset:3px;min-height:44px;display:flex;align-items:center}
+.sheet .code{margin-top:10px}
+.morerow{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;min-height:44px;margin-top:8px;color:var(--mu);font-size:14px}
+.morerow .car{transition:transform .15s}.morerow.open .car{transform:rotate(180deg)}
+.moreopts{display:flex;flex-direction:column;gap:8px;margin-top:6px}
+.moreopts .bt{flex:none;width:100%}
+.qh{padding:4px 20px 10px}
+.qh .qt{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.qh h2{font-size:22px;font-weight:600;letter-spacing:-.01em}
+.qh .qt span{color:var(--mu);font-size:13px}
+.qh p{color:var(--mu);font-size:13px;margin-top:4px;line-height:1.45}
+.qcard{margin:0 16px 12px;border:1px solid var(--line);border-radius:22px;padding:14px;background:var(--chip)}
+.qcard .qtop{display:flex;align-items:center;gap:8px;width:100%;min-height:32px;font-size:14px;color:var(--fg);min-width:0}
+.qcard .qtop b{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.qcard .qtop .pj{color:var(--mu);white-space:nowrap}
+.qcard .qs{font-weight:600;font-size:15.5px;line-height:1.4;margin-top:8px}
+.qcard .scope{background:var(--bg)}
+.qcard .btns .bt.dots{flex:none;width:44px;padding:0}
+.qcard .btns .bt{background:var(--bg)}
+.qcard .btns .bt.p{background:var(--btn)}
+.qcard .moreopts .bt{background:var(--bg)}
+@media (prefers-reduced-motion: reduce){.morerow .car{transition:none}}

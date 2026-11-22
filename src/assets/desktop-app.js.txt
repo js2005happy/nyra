@@ -1,6 +1,7 @@
 'use strict';
 // 桌面端（nyra ui 的 /）前端：侧栏（新对话 / 搜索 / 自动化 / 技能 / MCP / 项目分组的对话列表 / 设置）、
-// 新对话空状态、对话 + Codex 式审批卡、右侧审阅面板（Diff / 计划 / 证据 / 终端）、状态栏、设置、首次引导。
+// 新对话空状态（含项目记忆卡）、会话常驻左侧 + 右侧抽屉面板（概览 / 改动 / 计划 / 证据 / 终端）、
+// 工作中一行实时状态、每轮收尾交代与用时 / token、新审批卡（设计稿 v8）、状态栏、设置、首次引导。
 // 版式按 nyra-design v2 desktop.py；文案来自 src/i18n.ts 的 d.* / m.* 键，语言跟随系统，认不出回落 en。
 // 页面不含秘密：owner token 来自启动链接的 ?token=（另存一份在 sessionStorage），每次 API 调用带 X-Nyra-Token 头。
 // API Key 只在首次引导 / 设置里输入（password 框），提交后立刻清空；接口只回掩码。
@@ -13,7 +14,7 @@ const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent 
 const EDIT_TOOLS = ['write_file', 'edit_file', 'apply_patch'];
 const S = {
   view: 'home', session: null, info: null, sessions: null, approvals: [], sv: null, schedule: null,
-  review: { open: false, tab: 'diff', file: null }, card: {}, collapsed: {}, pending: '', planFirst: false,
+  review: { open: false, tab: null, file: null }, reviewKey: '', card: {}, collapsed: {}, pending: '', planFirst: false,
   feedKey: '', setSec: 'model', keyEdit: null, setup: { provider: null, tested: null, busy: false },
 };
 
@@ -88,22 +89,32 @@ function show(view){
 }
 function renderTop(){
   const top = $('top'); top.innerHTML = '';
+  const modeCap = () => {
+    // 顶栏常驻审批模式胶囊（设计稿 v8）：点开就是原来的模式菜单；“完全访问”用警示色。
+    if (!S.info) return null;
+    const b = el('button', 'modecap' + (S.info.mode === 'full' ? ' warn' : '')); b.id = 'mode-cap'; b.dataset.role = 'mode';
+    b.appendChild(icon('shield')); b.appendChild(document.createTextNode(modeLabel(S.info.mode))); b.appendChild(el('span', 'car', '▾'));
+    b.title = t('d.pill.mode'); b.onclick = (ev) => { ev.stopPropagation(); modeMenu(ev.currentTarget, true); };
+    return b;
+  };
   if (S.view === 'thread') {
     const s = sessionById(S.session);
     top.appendChild(el('span', 'crumb', (s && s.project) || projectName()));
     top.appendChild(el('span', 'crumb', '/'));
     top.appendChild(el('b', '', titleOf(s) || t('d.untitled')));
     top.appendChild(el('span', 'sp'));
-    const rv = el('button', 'tbtn' + (S.review.open ? ' on' : '')); rv.id = 'toggle-review';
-    rv.appendChild(icon('panel')); rv.appendChild(document.createTextNode(t('d.review')));
-    rv.onclick = () => { S.review.open = !S.review.open; renderTop(); renderReview(); };
+    const mc = modeCap(); if (mc) top.appendChild(mc);
+    const rv = el('button', 'ib' + (S.review.open ? ' on' : '')); rv.id = 'toggle-review';
+    rv.setAttribute('aria-label', S.review.open ? t('d.panel.close') : t('d.panel.open')); rv.title = rv.getAttribute('aria-label');
+    rv.appendChild(icon('panel'));
+    rv.onclick = () => { S.review.open = !S.review.open; S.feedKey = ''; S.reviewKey = ''; renderTop(); renderReview(); tick(); };
     top.appendChild(rv);
     const nw = el('button', 'tbtn p'); nw.appendChild(icon('pencil')); nw.appendChild(document.createTextNode(t('d.newThread'))); nw.onclick = newThread;
     top.appendChild(nw);
   } else {
     const names = { home: t('d.newThread'), automations: t('d.automations'), skills: t('d.skills'), mcp: t('d.mcp'), settings: t('d.settings') };
     top.appendChild(el('b', '', names[S.view] || 'Nyra'));
-    if (S.view === 'home') { top.appendChild(el('span', 'crumb', '· ' + projectName())); }
+    if (S.view === 'home') { top.appendChild(el('span', 'crumb', '· ' + projectName())); top.appendChild(el('span', 'sp')); const mc = modeCap(); if (mc) top.appendChild(mc); }
   }
 }
 function sessionById(id){ return S.sessions && (S.sessions.sessions || []).find(x => x.id === id); }
@@ -156,11 +167,12 @@ async function loadSchedule(){ try { S.schedule = (await api('/api/schedule')).t
 // ---------------------------------------------------------------- 输入框 ---
 function renderPills(){
   if (!S.info) return;
+  const full = S.info.mode === 'full';
   ['home', 'thread'].forEach(where => {
     const row = $(where + '-pills'); if (!row) return; row.innerHTML = '';
     const model = el('button', 'pk'); model.appendChild(icon('target')); model.appendChild(document.createTextNode(S.info.model || t('d.notConfigured')));
     model.title = t('d.pill.model'); model.onclick = () => openSettings('model'); row.appendChild(model);
-    const mode = el('button', 'pk'); mode.dataset.role = 'mode'; mode.appendChild(icon('shield')); mode.appendChild(document.createTextNode(modeLabel(S.info.mode)));
+    const mode = el('button', 'pk' + (full ? ' warn' : '')); mode.dataset.role = 'mode'; mode.appendChild(icon('shield')); mode.appendChild(document.createTextNode(modeLabel(S.info.mode)));
     mode.title = t('d.pill.mode'); mode.onclick = (ev) => modeMenu(ev.currentTarget); row.appendChild(mode);
     const sb = el('span', 'pk'); sb.appendChild(icon('box')); sb.appendChild(document.createTextNode(sandboxLabel())); sb.title = t('d.pill.sandbox'); row.appendChild(sb);
     if (where === 'home') {
@@ -169,10 +181,18 @@ function renderPills(){
     }
     const send = el('button', 'send'); send.id = where + '-send'; send.setAttribute('aria-label', t('d.send')); send.appendChild($('ic-up').content.firstElementChild.cloneNode(true));
     send.onclick = () => (where === 'home' ? sendHome() : sendMsg()); row.appendChild(send);
+    // 完全访问时输入框上方的提示条（文案取自 d.full.body 的意思）+ 一键切回“写入前先问”。
+    const bn = $(where + '-full'); if (!bn) return; bn.innerHTML = '';
+    bn.classList.toggle('hidden', !full);
+    if (full) {
+      bn.appendChild(icon('shield')); bn.appendChild(el('span', '', t('d.full.banner')));
+      const back = el('button', 'linkbtn', t('d.full.back')); back.dataset.act = 'full-back'; back.onclick = () => setMode('auto'); bn.appendChild(back);
+    }
   });
+  renderTop();
 }
 function closeMenus(){ document.querySelectorAll('.menu').forEach(m => m.remove()); }
-function modeMenu(anchor){
+function modeMenu(anchor, below){
   closeMenus();
   const m = el('div', 'menu'); m.id = 'mode-menu';
   ['readonly', 'auto', 'full'].forEach(k => {
@@ -183,13 +203,14 @@ function modeMenu(anchor){
   });
   document.body.appendChild(m);
   const r = anchor.getBoundingClientRect();
-  m.style.left = r.left + 'px'; m.style.top = Math.max(8, r.top - m.offsetHeight - 6) + 'px';
+  m.style.left = Math.max(8, Math.min(r.left, window.innerWidth - m.offsetWidth - 8)) + 'px';
+  m.style.top = (below ? r.bottom + 6 : Math.max(8, r.top - m.offsetHeight - 6)) + 'px';
   setTimeout(() => document.addEventListener('click', closeMenus, { once: true }), 0);
 }
 async function setMode(mode){
   if (mode === S.info.mode) return;
   if (mode === 'full' && !(await confirmDlg(t('d.full.title'), t('d.full.body'), t('d.full.ok')))) return;
-  try { await post('/api/mode', { mode }); await loadInfo(); toast(t('d.modeSwitched', { mode: modeLabel(mode) })); if (S.view === 'settings') renderSettings(); }
+  try { await post('/api/mode', { mode }); await loadInfo(); S.feedKey = ''; toast(t('d.modeSwitched', { mode: modeLabel(mode) })); if (S.view === 'settings') renderSettings(); }
   catch (e) { toast(t('d.failed', { msg: e.message })); }
 }
 function confirmDlg(title, body, okText){
@@ -231,6 +252,60 @@ function renderHome(){
   });
   const box = $('home-autos'); box.innerHTML = '';
   box.appendChild(autoList(S.schedule || [], true));
+  loadProjectMemory();
+}
+// ---- 项目记忆卡（设计稿 v8 pc-03）：三个文件可打开（只读预览），MEMORY.md 最近 3 条带来源会话与时间 ----
+async function loadProjectMemory(){
+  const box = $('home-mem'); if (!box) return;
+  let pm; try { pm = await api('/api/project-memory'); } catch (e) { box.innerHTML = ''; return; }
+  box.innerHTML = '';
+  const hd = el('div', 'lbl'); hd.appendChild(document.createTextNode(t('d.pm.title')));
+  const nExist = (pm.files || []).filter(f => f.exists).length;
+  hd.appendChild(el('span', 'n', t('d.pm.nFiles', { n: nExist })));
+  box.appendChild(hd);
+  const list = el('div', 'files pm');
+  (pm.files || []).forEach(f => {
+    const r = el('div', 'fr'); r.dataset.kind = f.kind;
+    r.appendChild(icon('file'));
+    const tx = el('div', 'tx'); tx.appendChild(el('span', 'mono', f.label));
+    const desc = f.kind === 'project' ? t('d.pm.project') : f.kind === 'global' ? t('d.pm.global') : t('d.pm.memory', { n: f.count || 0 });
+    tx.appendChild(el('small', '', f.exists ? desc : desc + ' · ' + t('d.pm.missing')));
+    r.appendChild(tx);
+    if (f.exists) { const o = el('button', 'tbtn', t('d.pm.open')); o.dataset.act = 'open-' + f.kind; o.onclick = () => openMemFile(f); r.appendChild(o); }
+    list.appendChild(r);
+    if (f.kind === 'memory' && (pm.recent || []).length) {
+      const rc = el('div', 'recent');
+      (pm.recent || []).forEach(e => {
+        const it = el('div', 'mi');
+        it.appendChild(el('span', 'mt', e.text));
+        const s = e.source_session ? sessionById(e.source_session) : null;
+        const time = e.created_at || '';
+        let src;
+        if (e.source_session) {
+          const title = (s && titleOf(s)) || e.source_session;
+          src = el('button', 'src', t('d.pm.from', { title, time }).replace(/ · $/, ''));
+          src.onclick = () => openSession(e.source_session);
+        } else src = el('span', 'src', time ? t('d.pm.fromUnknown', { time }) : t('d.pm.fromUnknownNoTime'));
+        it.appendChild(src);
+        rc.appendChild(it);
+      });
+      list.appendChild(rc);
+    }
+  });
+  box.appendChild(list);
+}
+async function openMemFile(f){
+  let r; try { r = await api('/api/project-memory/file?kind=' + encodeURIComponent(f.kind)); } catch (e) { toast(t('d.failed', { msg: e.message })); return; }
+  const ov = el('div', 'overlay'); ov.id = 'mem-dlg';
+  const d = el('div', 'dlg memdlg'); const head = el('div', 'mh');
+  head.appendChild(el('b', 'mono', f.label)); head.appendChild(el('span', 'tag', t('d.pm.readOnly'))); head.appendChild(el('span', 'sp'));
+  const x = el('button', 'ib'); x.setAttribute('aria-label', t('d.close')); x.title = t('d.close'); x.appendChild(icon('x')); head.appendChild(x);
+  d.appendChild(head);
+  if (r.truncated) d.appendChild(el('div', 'hint2 pad2', t('d.pm.truncated')));
+  d.appendChild(el('pre', 'mono memtext', r.exists ? r.content : t('d.pm.emptyFile')));
+  ov.appendChild(d);
+  const done = () => ov.remove(); x.onclick = done; ov.onclick = (e) => { if (e.target === ov) done(); };
+  document.body.appendChild(ov);
 }
 function scheduleWhen(task){
   if (task.enabled === false) return t('m.auto.paused');
@@ -276,7 +351,7 @@ async function sendHome(){
 
 // ---------------------------------------------------------------- 对话 ---
 async function openSession(id){
-  S.session = id; S.feedKey = ''; S.card = {}; S.review.file = null; S.sv = null; S.title = '';
+  S.session = id; S.feedKey = ''; S.card = {}; S.review.file = null; S.sv = null; S.title = ''; S.review.tab = null;
   $('col').innerHTML = '';
   show('thread');
   S.session = id;
@@ -309,19 +384,124 @@ function liveTurn(v){
   });
   return out;
 }
-// 本会话里审批过的编辑：路径 → 统一 diff（Diff 面板与“改动文件”卡片的 +/− 用它，不编数字）。
+// 本会话里审批过的编辑：路径 → 统一 diff（改动页与“改动文件”卡片的 +/− 用它，不编数字）。
 function diffsByPath(v){
   const out = {};
-  (v.events || []).forEach(e => { const d = e.data || {}; if (e.type === 'approval' && EDIT_TOOLS.includes(d.tool) && d.summary) { const p = parseDiff(d.summary); if (p.path) out[p.path] = p; } });
+  // 被拒绝的编辑没发生，不算进改动。
+  const denied = new Set((v.events || []).filter(e => e.type === 'approval_result' && e.data && e.data.approved === false && e.data.id).map(e => e.data.id));
+  (v.events || []).forEach(e => { const d = e.data || {}; if (e.type === 'approval' && EDIT_TOOLS.includes(d.tool) && d.summary && !denied.has(d.id)) { const p = parseDiff(d.summary); if (p.path) out[p.path] = p; } });
   S.approvals.filter(a => a.session === S.session && EDIT_TOOLS.includes(a.tool)).forEach(a => { const p = parseDiff(a.summary); if (p.path) out[p.path] = p; });
   return out;
 }
-function turnDuration(v){
-  const ev = v.events || []; if (!ev.length) return null;
-  let start = null; ev.forEach(e => { if (e.type === 'user') start = e.ts; });
-  if (start === null) return null;
-  const end = v.status === 'running' ? Date.now() / 1000 : ev[ev.length - 1].ts;
-  return Math.max(1, Math.round(end - start));
+
+// ---- 设计稿 v8：每轮的真实数据（事件流里有才显示，没有就不显示，不编） ----
+function avatar(state){ const tpl = $('av-' + state); const s = el('span', 'av'); if (tpl) s.appendChild(tpl.content.firstElementChild.cloneNode(true)); return s; }
+function fmtDur(s){ s = Math.max(1, Math.round(s)); return s < 60 ? t('d.dur.s', { s }) : t('d.dur.ms', { m: Math.floor(s / 60), s: s % 60 }); }
+function isPush(cmd){ return /(^|[;&|(\s])git(\s+-[^\s]+(\s+[^\s-][^\s]*)?)*\s+push(\s|$)/.test(String(cmd || '')); }
+function cap(s){ return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+// 只数真正做成了的：编辑看工具结果（“已写入 / 已编辑 / 已应用补丁”），命令看有结果且没被拒绝，读看有结果且没报错。
+// 被拒绝、报错、还没出结果的调用只算进“显示过程（N 步）”，不算进收尾交代。
+function summarize(list){
+  const res = {};
+  list.forEach(m => { if (m.role === 'tool' && m.tool_call_id) res[m.tool_call_id] = textOf(m); });
+  const edited = [], read = new Set(); let steps = 0, cmds = 0, pushed = false;
+  list.forEach(m => {
+    if (m.role !== 'assistant' || !m.tool_calls) return;
+    m.tool_calls.forEach(c => {
+      steps++; const n = (c.function && c.function.name) || ''; const a = argsOf(c);
+      const r = c.id != null ? res[c.id] : undefined;
+      if (r === undefined) return;
+      if (EDIT_TOOLS.includes(n) && a.path) { if (/^已(写入|编辑|应用补丁)/.test(r) && !edited.includes(String(a.path))) edited.push(String(a.path)); }
+      else if (n === 'read_file' && a.path) { if (!/^错误：/.test(r)) read.add(String(a.path)); }
+      else if (n === 'shell' && a.command) { if (!/^错误：用户拒绝/.test(r)) { cmds++; if (isPush(a.command)) pushed = true; } }
+    });
+  });
+  return { steps, edited, read: read.size, cmds, pushed };
+}
+// 收尾交代：只说工具调用里看得到的事实。跑过 shell 却没用编辑工具时不说“没改文件”（命令可能改了文件）。
+function wrapText(sm){
+  const cmds = sm.cmds ? t(sm.cmds === 1 ? 'd.wrap.cmds1' : 'd.wrap.cmds', { n: sm.cmds }) : '';
+  let s = '';
+  if (sm.edited.length) {
+    s = t(sm.edited.length === 1 ? 'd.wrap.edited1' : 'd.wrap.edited', { n: sm.edited.length });
+    if (cmds) s += t('d.wrap.and') + cmds;
+    s += t('d.wrap.sep') + t(sm.pushed ? 'd.wrap.pushed' : 'd.wrap.notPushed');
+    const sb = S.info && S.info.config ? S.info.config.sandbox : 'local';
+    if (sb !== 'e2b') s += t('d.wrap.sep') + t('d.wrap.checkpoint');
+  } else {
+    const bits = [];
+    if (sm.read) bits.push(t(sm.read === 1 ? 'd.wrap.read1' : 'd.wrap.read', { n: sm.read }));
+    if (cmds) bits.push(cmds);
+    if (!bits.length) return '';
+    s = bits.join(t('d.wrap.and'));
+    if (sm.pushed) s += t('d.wrap.sep') + t('d.wrap.pushed');
+    else if (!sm.cmds) s += t('d.wrap.sep') + t('d.wrap.noEdit');
+  }
+  return cap(s) + t('d.wrap.end');
+}
+// 事件流 → 每轮的开始/结束时间、token 增量、正在跑的工具。回退（rewind）之后重新计。
+function eventTurns(v){
+  const turns = []; let cur = null;
+  (v.events || []).forEach(e => {
+    const d = e.data || {};
+    if (e.type === 'rewind') { turns.length = 0; cur = null; }
+    if (e.type === 'user') {
+      // 起点：网关在 user 事件里记的累计用量（事件流每轮清空，不能拿上一轮的数当起点）。没有起点就不算 token。
+      const ub = d.usage_base && typeof d.usage_base === 'object' ? d.usage_base : null;
+      const base = ub && ub.total_tokens != null ? Number(ub.total_tokens) : null;
+      const baseMiss = ub ? Number(ub.missing_calls || 0) : 0;
+      cur = { content: String(d.content || ''), start: e.ts, end: e.ts, base, baseMiss, tot: null, miss: baseMiss, tool: null }; turns.push(cur); return;
+    }
+    if (cur) cur.end = e.ts;
+    if (e.type === 'usage') {
+      const tt = d.total_tokens != null ? Number(d.total_tokens) : (d.prompt_tokens != null || d.completion_tokens != null ? Number(d.prompt_tokens || 0) + Number(d.completion_tokens || 0) : null);
+      if (tt != null && isFinite(tt) && cur) { cur.tot = tt; cur.miss = Number(d.missing_calls || 0); }
+    }
+    if (cur) { if (e.type === 'tool_start') cur.tool = { name: String(d.name || ''), args: d.arguments }; else if (e.type === 'tool_result' || e.type === 'assistant') cur.tool = null; }
+  });
+  // 有调用没报用量（missing_calls 变多）时 token 不完整，不显示。
+  turns.forEach(x => { x.tokens = (x.tot != null && x.base != null && x.miss === x.baseMiss) ? x.tot - x.base : null; if (!(x.tokens > 0)) x.tokens = null; });
+  return turns;
+}
+function liveStepText(tool){
+  if (!tool || !tool.name) return t('d.live.thinking');
+  let a = tool.args; if (typeof a === 'string') { try { a = JSON.parse(a); } catch(e){ a = {}; } } a = a || {};
+  if (EDIT_TOOLS.includes(tool.name) && a.path) return t('d.live.writing', { path: String(a.path) });
+  if (tool.name === 'shell' && a.command) return t('d.live.running', { cmd: String(a.command).split('\n')[0].slice(0, 80) });
+  if (tool.name === 'read_file' && a.path) return t('d.live.reading', { path: String(a.path) });
+  return t('d.live.calling', { tool: tool.name });
+}
+function liveLine(turn){
+  const w = el('div', 'live'); w.id = 'live';
+  w.appendChild(avatar('work-s'));
+  w.appendChild(el('span', 'who', 'Nyra'));
+  w.appendChild(el('span', 'sep', '·'));
+  w.appendChild(el('span', 'shim', liveStepText(turn && turn.tool)));
+  const tm = el('span', 'tm'); tm.id = 'live-tm'; w.appendChild(tm);
+  if (turn) { tm.dataset.start = String(turn.start); tm.textContent = Math.max(0, Math.round(Date.now() / 1000 - turn.start)) + 's'; }
+  return w;
+}
+function tickLive(){ const tm = $('live-tm'); if (tm && tm.dataset.start) tm.textContent = Math.max(0, Math.round(Date.now() / 1000 - Number(tm.dataset.start))) + 's'; }
+function processBlock(items, n, open){
+  const lg = el('div', 'log' + (open ? '' : ' closed'));
+  const h = el('button', 'h'); h.dataset.role = 'steps';
+  h.appendChild(el('span', 'ok-ic', '✓'));
+  h.appendChild(document.createTextNode(t(n === 1 ? 'd.showSteps1' : 'd.showSteps', { n })));
+  h.appendChild(el('span', 'car', '›'));
+  h.onclick = () => { lg.classList.toggle('closed'); };
+  lg.appendChild(h); items.forEach(s => lg.appendChild(s));
+  return lg;
+}
+function replyFoot(txt, et){
+  const f = el('div', 'rfoot');
+  const bits = [];
+  if (et && et.done) bits.push(t('d.foot.time', { t: fmtDur(et.end - et.start) }));
+  if (et && et.done && et.tokens) bits.push(t('d.foot.tokens', { n: fmtK(et.tokens) }));
+  if (bits.length) f.appendChild(el('span', '', bits.join(' · ')));
+  const cp = el('button', 'cp'); cp.setAttribute('aria-label', t('d.copy')); cp.title = t('d.copy'); cp.appendChild(icon('copy'));
+  cp.onclick = () => { try { navigator.clipboard.writeText(txt).then(() => toast(t('d.copied')), () => {}); } catch(e){} };
+  f.appendChild(cp);
+  return f;
 }
 function renderFeed(v){
   const all = v.messages || [];
@@ -330,70 +510,83 @@ function renderFeed(v){
   const live = liveTurn(v); if (pend && live.length && live[live.length - 1].tool_calls) live.pop();
   const msgs = all.filter(m => m.role !== 'system').concat(live);
   const card = pend ? S.card[pend.id] || {} : {};
-  const key = [msgs.length, msgs.length ? textOf(msgs[msgs.length - 1]).length : 0, v.status, v.next || 0, pend ? pend.id + (card.open || '') + (card.scope || '') : '', S.pending].join(':');
+  const evTurns = eventTurns(v);
+  const curTool = v.status === 'running' && evTurns.length ? (evTurns[evTurns.length - 1].tool || {}).name || '' : '';
+  const key = [msgs.length, msgs.length ? textOf(msgs[msgs.length - 1]).length : 0, v.status, v.next || 0, pend ? pend.id + (card.open || '') + (card.scope || '') : '', S.pending, S.review.open ? 1 : 0, curTool, (S.info && S.info.mode) || ''].join(':');
   const fu = msgs.find(m => m.role === 'user'); const newTitle = fu ? textOf(fu) : (S.pending || '');
   if (newTitle && newTitle !== S.title) { S.title = newTitle; renderTop(); renderThreads(); }
-  if (key === S.feedKey) return;
+  if (key === S.feedKey) { tickLive(); return; }
   const feedEl = $('feed');
   const nearBottom = feedEl.scrollHeight - feedEl.scrollTop - feedEl.clientHeight < 120;
-  const keepFeedback = document.querySelector('#col .appr textarea');
+  const keepFeedback = document.querySelector('#col .appr textarea, #rbody .appr-more textarea');
   const fbText = keepFeedback ? keepFeedback.value : null;
   S.feedKey = key;
   const col = $('col'); col.innerHTML = '';
-  const diffs = diffsByPath(v);
-  // 按轮切：用户消息 → 步骤日志 → 回复 → 改动文件。
-  let steps = [], edited = [];
-  const flush = (last) => {
-    if (steps.length) {
-      const lg = el('div', 'log' + (last ? '' : ' closed'));
-      const h = el('button', 'h'); const dur = last ? turnDuration(v) : null;
-      h.appendChild(el('span', 'car', last ? '▾' : '▸'));
-      const one = steps.length === 1;
-      h.appendChild(document.createTextNode(dur ? t(one ? 'd.workedFor1' : 'd.workedFor', { s: dur, n: steps.length }) : t(one ? 'd.worked1' : 'm.worked', { n: steps.length })));
-      h.onclick = () => { lg.classList.toggle('closed'); h.firstChild.textContent = lg.classList.contains('closed') ? '▸' : '▾'; };
-      lg.appendChild(h); steps.forEach(s => lg.appendChild(s)); col.appendChild(lg);
-    }
-    steps = [];
-  };
-  const flushFiles = () => {
-    const uniq = [...new Set(edited)]; edited = [];
-    if (!uniq.length) return;
-    const f = el('div', 'files');
-    uniq.forEach(p => {
-      const d = diffs[p];
-      const r = el('button', 'fr'); r.appendChild(el('span', 'mono', p)); r.firstChild.style.fontSize = '12px';
-      if (d) { const a = el('span', 'add', '+' + d.add); a.style.marginLeft = 'auto'; r.appendChild(a); r.appendChild(el('span', 'del', '−' + d.del)); }
-      r.onclick = () => { S.review.open = true; S.review.tab = 'diff'; S.review.file = p; renderTop(); renderReview(); };
-      f.appendChild(r);
-    });
-    col.appendChild(f);
-  };
-  msgs.forEach((m, idx) => {
-    if (m.role === 'tool') return;
-    const txt = textOf(m);
-    if (m.role === 'user') {
-      flush(false); flushFiles();
-      col.appendChild(bubble(m, all, txt, 'u'));
-      return;
-    }
-    if (m.tool_calls && m.tool_calls.length) {
-      if (txt) { flush(false); col.appendChild(bubble(m, all, txt, 'p')); }
-      m.tool_calls.forEach(c => { const n = (c.function && c.function.name) || '?'; const a = argsOf(c); steps.push(stepRow(n, a)); if (EDIT_TOOLS.includes(n) && a.path) edited.push(String(a.path)); });
-      return;
-    }
-    if (!txt) return;
-    const lastUser = msgs.map(x => x.role).lastIndexOf('user');
-    flush(idx > lastUser);
-    col.appendChild(bubble(m, all, txt, 'p'));
-    flushFiles();
+  // 按轮切：用户消息 → Nyra（过程收起成“显示过程（N 步）”）→ 回复 → 收尾交代 → 用时 / token。
+  const turns = []; let cur = null;
+  msgs.forEach(m => {
+    if (m.role === 'user') { cur = { user: m, items: [] }; turns.push(cur); return; }
+    if (!cur) { cur = { user: null, items: [] }; turns.push(cur); }
+    cur.items.push(m);
   });
-  if (S.pending && v.status === 'running' && !msgs.some(m => m.role === 'user' && textOf(m) === S.pending)) col.appendChild(bubble({ role: 'user' }, all, S.pending, 'u'));
-  flush(true); flushFiles();
-  if (v.status !== 'running') S.pending = '';
-  if (pend) col.appendChild(approvalCard(pend, fbText));
-  else if (v.status === 'running') { const w = el('div', 'working'); w.appendChild(el('span', 'spin')); w.appendChild(document.createTextNode(t('d.working'))); col.appendChild(w); }
+  // 事件里的轮次与消息里的用户消息从后往前对齐；内容开头对不上就不用（不张冠李戴）。
+  const userTurns = turns.filter(x => x.user);
+  const k = Math.min(evTurns.length, userTurns.length);
+  for (let j = 0; j < k; j++) {
+    const tu = userTurns[userTurns.length - k + j], et = evTurns[evTurns.length - k + j];
+    const a = textOf(tu.user).trim().slice(0, 40), b = et.content.trim().slice(0, 40);
+    if (a && b && (a.startsWith(b) || b.startsWith(a))) tu.ev = et;
+  }
+  const running = v.status === 'running';
+  const extra = !!(S.pending && running && !msgs.some(m => m.role === 'user' && textOf(m) === S.pending));
+  turns.forEach((tu, ti) => {
+    const last = ti === turns.length - 1 && !extra;
+    const done = !(last && (running || pend));
+    if (tu.ev) tu.ev.done = done;
+    if (tu.user) col.appendChild(bubble(tu.user, all, textOf(tu.user), 'u'));
+    // 最终回复 = 本轮最后一条没有工具调用、有文字的 assistant 消息（本轮结束后才算）。
+    let finalIdx = -1;
+    if (done) for (let i = tu.items.length - 1; i >= 0; i--) { const m = tu.items[i]; if (m.role === 'assistant' && !(m.tool_calls && m.tool_calls.length) && textOf(m)) { finalIdx = i; break; } }
+    const proc = []; let n = 0;
+    tu.items.forEach((m, i) => {
+      if (i === finalIdx || m.role === 'tool') return;
+      const txt = textOf(m);
+      if (txt) proc.push(el('div', 'r txt', txt));
+      (m.tool_calls || []).forEach(c => { n++; proc.push(stepRow((c.function && c.function.name) || '?', argsOf(c))); });
+    });
+    const hasNyra = tu.items.some(m => m.role === 'assistant') || (last && (running || pend));
+    if (!hasNyra) return;
+    const liveNow = last && running && !pend;
+    // 工作中：只有一行实时状态（团子 · Nyra · 当前步骤 · 用时），已做的步骤收在它下面。
+    if (liveNow) col.appendChild(liveLine(tu.ev || null));
+    else { const who = el('div', 'who-row'); who.appendChild(avatar(last && pend ? 'wait-s' : 'done-s')); who.appendChild(el('span', '', 'Nyra')); col.appendChild(who); }
+    if (n) col.appendChild(processBlock(proc, n, false));
+    else proc.forEach(p => { p.className = 'p'; col.appendChild(p); });
+    if (finalIdx >= 0) {
+      const m = tu.items[finalIdx]; const txt = textOf(m);
+      const b = bubble(m, all, txt, 'p'); col.appendChild(b);
+      const sm = summarize(tu.items);
+      const w = sm.steps ? wrapText(sm) : '';
+      if (w) { const wl = el('div', 'wrapup'); wl.appendChild(icon('check')); wl.appendChild(el('span', '', w)); col.appendChild(wl); }
+      col.appendChild(replyFoot(txt, tu.ev));
+      if (sm.edited.length) {
+        const diffs = diffsByPath(v); const f = el('div', 'files');
+        sm.edited.forEach(p => {
+          const d = diffs[p]; const r = el('button', 'fr'); r.appendChild(el('span', 'mono', p)); r.firstChild.style.fontSize = '12px';
+          if (d) { const a = el('span', 'add', '+' + d.add); a.style.marginLeft = 'auto'; r.appendChild(a); r.appendChild(el('span', 'del', '−' + d.del)); }
+          r.onclick = () => { S.review.open = true; S.review.tab = 'diff'; S.review.file = p; S.feedKey = ''; renderTop(); renderReview(); tick(); };
+          f.appendChild(r);
+        });
+        col.appendChild(f);
+      }
+    }
+    if (last && pend) col.appendChild(approvalCard(pend, fbText, !!S.review.open));
+  });
+  if (extra) { col.appendChild(bubble({ role: 'user' }, all, S.pending, 'u')); col.appendChild(liveLine(null)); }
+  if (running && !turns.length && !S.pending) col.appendChild(liveLine(null));
+  if (!running) S.pending = '';
   if (v.status === 'error' && v.error) col.appendChild(el('div', 'err-line', t('d.errorPrefix', { msg: v.error })));
-  if (!msgs.length && v.status !== 'running') col.appendChild(el('div', 'empty', t('d.threadEmpty')));
+  if (!msgs.length && !running) col.appendChild(el('div', 'empty', t('d.threadEmpty')));
   if (nearBottom || pend) feedEl.scrollTop = feedEl.scrollHeight;
 }
 function bubble(m, all, txt, cls){
@@ -434,52 +627,103 @@ async function sendMsg(){
 }
 
 // ---------------------------------------------------------------- 审批卡 ---
+// 设计稿 v8：先一句话说要做什么，再单独一个框写“这一步能动到什么”；主按钮“允许一次”，次按钮“不行，换个做法”
+//（接现有的拒绝并反馈），“本会话总是允许 / 记住为规则…”收进“更多”。会话里的卡和右侧面板里的按钮是同一个请求。
 function ruleLabel(sg){
   if (!sg) return '';
   if (sg.kind === 'prefix' && Array.isArray(sg.prefix)) return t('m.rule.prefix', { prefix: sg.prefix.join(' ') });
   if (sg.kind === 'edits') return t('m.rule.edits');
   return sg.label || '';
 }
-function approvalCard(a, fbText){
-  const st = S.card[a.id] || (S.card[a.id] = { open: null, scope: 'session' });
+function apprInfo(a){
   const isEdit = EDIT_TOOLS.includes(a.tool);
-  const isShell = a.tool === 'shell' && a.command;
-  const box = el('div', 'appr glass'); box.dataset.id = a.id; box.dataset.tool = a.tool;
-  const fr = el('div', 'fr');
-  fr.appendChild(icon(isEdit ? 'pencil' : 'play'));
-  const ttl = el('div', 'ttl'); const line = el('div', 'a');
-  let sub = '';
+  const isShell = a.tool === 'shell' && !!a.command;
+  const d = isEdit ? parseDiff(a.summary) : null;
+  const base = (p) => String(p || '').split(/[\\/]/).pop();
+  let sentence, compact;
+  const rows = [];
   if (isEdit) {
-    const d = parseDiff(a.summary);
-    line.appendChild(document.createTextNode(t('d.appr.edit') + ' ')); line.appendChild(el('span', 'mono', d.path || a.tool));
-    line.appendChild(document.createTextNode('  ')); line.appendChild(el('span', 'add', '+' + d.add)); line.appendChild(document.createTextNode(' ')); line.appendChild(el('span', 'del', '−' + d.del));
-    sub = t('d.appr.editSub');
+    sentence = t('d.appr.sumEdit', { path: base(d.path) || a.tool });
+    rows.push(['file', t('d.scope.file'), d.path || a.tool, [t('d.scope.onlyThis'), ['add', '+' + d.add], ['del', '−' + d.del]]]);
+    rows.push(['term', t('d.scope.cmd'), t('d.scope.noCmd')]);
+    rows.push(['globe', t('d.scope.net'), t('d.scope.noNet')]);
+    rows.push(['lock', t('d.scope.range'), t('d.scope.rangeEdit', { sandbox: sandboxLabel() })]);
+    compact = [base(d.path), t('d.scope.noCmd'), t('d.scope.noNet'), sandboxLabel()].join(' · ');
   } else if (isShell) {
-    line.appendChild(document.createTextNode(t('d.appr.run') + ' ')); const c = el('span', 'mono', a.command); c.style.fontSize = '12px'; line.appendChild(c);
-    line.title = a.command;
-    sub = t('d.appr.shellSub', { project: projectName() });
+    sentence = t('d.appr.sumRun');
+    rows.push(['term', t('d.scope.cmd'), a.command, null, true]);
+    rows.push(['lock', t('d.scope.range'), t('d.scope.rangeShell', { project: projectName(), sandbox: sandboxLabel() })]);
+    compact = String(a.command).split('\n')[0].slice(0, 60) + ' · ' + sandboxLabel();
   } else {
-    line.textContent = t('m.allowTool', { tool: a.tool });
-    sub = a.summary ? String(a.summary).split('\n')[0].slice(0, 140) : '';
+    sentence = t('d.appr.sumTool', { tool: a.tool });
+    rows.push(['dot', t('d.scope.tool'), a.tool]);
+    if (a.summary) rows.push(['list', '', String(a.summary).split('\n')[0].slice(0, 200)]);
+    compact = a.tool;
   }
-  ttl.appendChild(line); ttl.appendChild(el('div', 's', sub)); fr.appendChild(ttl);
+  const canRule = !!a.suggestion; const canAlways = canRule || (!!a.always && a.tool !== 'shell');
+  return { isEdit, isShell, d, sentence, compact, rows, canRule, canAlways };
+}
+function scopeBox(info){
+  const box = el('div', 'scope');
+  box.appendChild(el('div', 'st', t('d.scope.title')));
+  info.rows.forEach(([ic, label, value, extra, mono]) => {
+    const r = el('div', 'sr'); r.appendChild(icon(ic));
+    r.appendChild(el('span', 'k', label));
+    const v = el('span', 'v' + (ic === 'file' || mono ? ' mono' : ''), value); v.title = value; r.appendChild(v);
+    if (extra) { const x = el('span', 'x'); extra.forEach((p, i) => { if (Array.isArray(p)) { x.appendChild(document.createTextNode(i ? ' ' : '')); x.appendChild(el('span', p[0], p[1])); } else x.appendChild(document.createTextNode(p + ' · ')); }); r.appendChild(x); }
+    box.appendChild(r);
+  });
+  return box;
+}
+function waitChip(){ const c = el('span', 'wchip'); c.appendChild(icon('undo')); c.lastChild.classList.add('rot'); c.appendChild(document.createTextNode(t('d.appr.waiting'))); return c; }
+function moreMenu(anchor, a, info){
+  closeMenus();
+  const st = S.card[a.id] || (S.card[a.id] = { open: null, scope: 'session' });
+  const m = el('div', 'menu'); m.id = 'appr-more-menu';
+  if (info.canAlways) {
+    const b = el('button'); b.dataset.act = 'always-session';
+    b.appendChild(el('span', '', t('d.appr.alwaysSession'))); b.appendChild(el('small', '', t('d.appr.alwaysSessionHint')));
+    b.onclick = () => { closeMenus(); decide(a.id, info.canRule ? { approve: true, scope: 'session' } : { approve: true, always: true }); };
+    m.appendChild(b);
+  }
+  if (info.canRule) {
+    const b = el('button'); b.dataset.act = 'always';
+    b.appendChild(el('span', '', t('d.appr.rememberRule'))); b.appendChild(el('small', '', t('d.appr.rememberRuleHint')));
+    b.onclick = () => { closeMenus(); st.open = 'always'; S.feedKey = ''; tick(); };
+    m.appendChild(b);
+  }
+  if (!info.canAlways) { const b = el('button'); b.disabled = true; b.appendChild(el('small', '', t('d.appr.onceOnly'))); m.appendChild(b); }
+  document.body.appendChild(m);
+  const r = anchor.getBoundingClientRect();
+  m.style.left = Math.min(r.left, window.innerWidth - m.offsetWidth - 8) + 'px';
+  const below = r.bottom + 6; m.style.top = (below + m.offsetHeight < window.innerHeight - 8 ? below : Math.max(8, r.top - m.offsetHeight - 6)) + 'px';
+  setTimeout(() => document.addEventListener('click', closeMenus, { once: true }), 0);
+}
+// 底部一排按钮：更多（下拉）· 不行，换个做法 · 允许一次。where = 'card' | 'panel'。
+function apprActs(a, info, where){
+  const st = S.card[a.id] || (S.card[a.id] = { open: null, scope: 'session' });
   const acts = el('div', 'acts');
-  const deny = el('button', 'tbtn', t('d.appr.deny')); deny.dataset.act = 'deny';
+  const more = el('button', 'tbtn ghost'); more.dataset.act = 'more'; more.appendChild(document.createTextNode(t('d.appr.more') + ' ')); more.appendChild(el('span', 'car', '▾'));
+  more.onclick = (ev) => { ev.stopPropagation(); moreMenu(ev.currentTarget, a, info); };
+  const deny = el('button', 'tbtn' + (st.open === 'deny' ? ' on' : ''), t('d.appr.denyAlt')); deny.dataset.act = 'deny';
   deny.onclick = () => { st.open = st.open === 'deny' ? null : 'deny'; S.feedKey = ''; tick(); };
-  const always = el('button', 'tbtn', t('d.appr.always')); always.dataset.act = 'always';
-  // 没有建议规则的 shell（复合 / 高风险命令）只能单次允许：不退化成“本会话所有命令都允许”。
-  const canRule = !!a.suggestion; const canAlways = canRule || (a.always && a.tool !== 'shell');
-  if (!canAlways) { always.disabled = true; always.title = t('d.appr.onceOnly'); }
-  always.onclick = () => {
-    if (canRule) { st.open = st.open === 'always' ? null : 'always'; S.feedKey = ''; tick(); }
-    else decide(a.id, { approve: true, always: true });
-  };
-  const once = el('button', 'tbtn p', isShell ? t('d.appr.runOnce') : t('d.appr.allowOnce')); once.dataset.act = 'once';
+  const once = el('button', 'tbtn p', t('d.appr.allowOnce')); once.dataset.act = 'once';
   once.onclick = () => decide(a.id, { approve: true });
-  acts.appendChild(deny); acts.appendChild(always); acts.appendChild(once); fr.appendChild(acts);
-  box.appendChild(fr);
-  if (st.open === 'always' && canRule) {
-    const more = el('div', 'more');
+  if (where === 'compact') {
+    const view = el('button', 'linkbtn vp'); view.dataset.act = 'view'; view.appendChild(icon('panel')); view.appendChild(document.createTextNode(t('d.appr.viewInPanel')));
+    view.onclick = () => { S.review.open = true; S.review.tab = info.isShell ? 'terminal' : 'diff'; renderTop(); renderReview(); };
+    acts.appendChild(view);
+  } else acts.appendChild(more);
+  if (where === 'panel') acts.appendChild(el('span', 'same', t('d.appr.sameRequest')));
+  acts.appendChild(el('span', 'sp'));
+  acts.appendChild(deny); acts.appendChild(once);
+  return acts;
+}
+// 拒绝反馈 / 记住为规则的展开区（沿用原来的交互与接口）。
+function apprMore(a, info, fbText){
+  const st = S.card[a.id] || (S.card[a.id] = { open: null, scope: 'session' });
+  if (st.open === 'always' && info.canRule) {
+    const more = el('div', 'appr-more');
     const row = el('div', 'row');
     row.appendChild(el('span', '', t('d.appr.dontAsk'))); row.appendChild(el('b', 'mono', ruleLabel(a.suggestion)));
     more.appendChild(row);
@@ -490,98 +734,187 @@ function approvalCard(a, fbText){
       b.onclick = () => { st.scope = k; S.feedKey = ''; tick(); }; seg.appendChild(b);
     });
     row2.appendChild(seg);
-    const ok = el('button', 'tbtn p', t('d.appr.saveRule')); ok.dataset.act = 'rule'; ok.style.marginLeft = 'auto';
+    const cancel = el('button', 'tbtn', t('d.cancel')); cancel.style.marginLeft = 'auto'; cancel.onclick = () => { st.open = null; S.feedKey = ''; tick(); };
+    const ok = el('button', 'tbtn p', t('d.appr.saveRule')); ok.dataset.act = 'rule';
     ok.onclick = () => decide(a.id, { approve: true, scope: st.scope });
-    row2.appendChild(ok); more.appendChild(row2);
+    row2.appendChild(cancel); row2.appendChild(ok); more.appendChild(row2);
     more.appendChild(el('div', 'hint', st.scope === 'project' ? t('d.scope.projectHint') : t('d.scope.sessionHint')));
-    box.appendChild(more);
+    return more;
   }
   if (st.open === 'deny') {
-    const more = el('div', 'more');
+    const more = el('div', 'appr-more');
     const ta = el('textarea'); ta.placeholder = t('d.appr.feedbackPh'); ta.maxLength = 2000; if (fbText) ta.value = fbText;
-    ta.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendDeny(); } };
     const sendDeny = () => { const fb = ta.value.trim(); decide(a.id, fb ? { approve: false, feedback: fb } : { approve: false }); };
+    ta.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendDeny(); } };
     more.appendChild(ta);
     const row = el('div', 'row');
     row.appendChild(el('span', 'hint', t('d.appr.feedbackHint')));
     const cancel = el('button', 'tbtn', t('d.cancel')); cancel.style.marginLeft = 'auto'; cancel.onclick = () => { st.open = null; S.feedKey = ''; tick(); };
     const go = el('button', 'tbtn p', t('d.appr.denySend')); go.dataset.act = 'deny-send'; go.onclick = sendDeny;
     row.appendChild(cancel); row.appendChild(go); more.appendChild(row);
-    box.appendChild(more);
     setTimeout(() => { if (document.activeElement !== ta) ta.focus(); }, 0);
+    return more;
   }
+  return null;
+}
+function approvalCard(a, fbText, compact){
+  const info = apprInfo(a);
+  const box = el('div', 'appr glass' + (compact ? ' compact' : '')); box.dataset.id = a.id; box.dataset.tool = a.tool;
+  const hd = el('div', 'ah'); hd.appendChild(el('b', '', info.sentence)); hd.appendChild(waitChip()); box.appendChild(hd);
+  if (compact) {
+    box.appendChild(el('div', 'cl', t('d.scope.compact', { what: info.compact })));
+    box.appendChild(apprActs(a, info, 'compact'));
+    return box; // 展开区（拒绝反馈 / 记规则）这时在右侧面板里
+  }
+  box.appendChild(scopeBox(info));
+  box.appendChild(apprActs(a, info, 'card'));
+  const more = apprMore(a, info, fbText); if (more) box.appendChild(more);
   return box;
 }
 async function decide(id, body){
   try { await post('/api/approvals/' + encodeURIComponent(id), body); }
   catch (e) { toast(t('d.failed', { msg: e.message })); }
-  delete S.card[id]; S.feedKey = '';
+  delete S.card[id]; S.feedKey = ''; S.reviewKey = '';
   setTimeout(tick, 120);
 }
 
-// ---------------------------------------------------------------- 审阅面板 ---
+// ---------------------------------------------------------------- 右侧抽屉面板 ---
+// 设计稿 v8：会话常驻左侧，面板是右侧抽屉；顶部分段：概览 / 改动 / 计划 / 证据 / 终端（数据沿用原审阅面板）。
+function shellRuns(v){
+  const out = []; let cur = null;
+  (v.events || []).forEach(e => {
+    const d = e.data || {};
+    if (e.type === 'tool_start' && d.name === 'shell') { const a = typeof d.arguments === 'string' ? (() => { try { return JSON.parse(d.arguments); } catch(x){ return {}; } })() : (d.arguments || {}); cur = { cmd: String(a.command || ''), out: null }; out.push(cur); }
+    else if (e.type === 'tool_result' && d.name === 'shell' && cur) { cur.out = String(d.result || ''); cur = null; }
+  });
+  return out;
+}
+// 工具结果文字里明说出错（“错误：…”或沙箱退出码非零）才算失败，不猜。
+function shellFailed(r){ return r.out != null && (/^错误：|^Error:/.test(r.out) || /退出码 -?[1-9]/.test(r.out)); }
 function renderReview(){
   const pane = $('review');
   const v = S.sv;
   const pend = S.view === 'thread' ? S.approvals.find(a => a.session === S.session) : null;
-  if (pend && (EDIT_TOOLS.includes(pend.tool) || pend.tool === 'shell') && !S.review.autoOpened) { S.review.open = true; S.review.autoOpened = true; renderTop(); }
-  if (!pend) S.review.autoOpened = false;
+  if (pend && (EDIT_TOOLS.includes(pend.tool) || pend.tool === 'shell') && S.review.autoOpened !== pend.id) { S.review.open = true; S.review.autoOpened = pend.id; S.review.tab = pend.tool === 'shell' ? 'terminal' : 'diff'; S.feedKey = ''; renderTop(); }
   const visible = S.view === 'thread' && S.review.open;
   pane.classList.toggle('hidden', !visible);
   if (!visible || !v) return;
+  if (!S.review.tab) S.review.tab = 'overview';
   const diffs = diffsByPath(v);
-  const pendDiff = pend && EDIT_TOOLS.includes(pend.tool) ? parseDiff(pend.summary) : null;
   const files = Object.values(diffs);
   const evN = (v.evidence || []).length;
+  const runs = shellRuns(v);
+  const failed = runs.some(shellFailed);
+  const pendInfo = pend ? apprInfo(pend) : null;
+  const card = pend ? S.card[pend.id] || {} : {};
+  const u0 = v.usage || {};
+  const rkey = [S.session, S.review.tab, S.review.file || '', files.length, evN, runs.length, runs.length ? (runs[runs.length - 1].out || '').length : 0, pend ? pend.id + (card.open || '') + (card.scope || '') : '', v.status, v.plan ? 1 : 0, (v.messages || []).length, u0.total_tokens || 0, (v.events || []).length].join(':');
+  if (rkey === S.reviewKey) return;
+  S.reviewKey = rkey;
+  const fbEl = document.querySelector('#rbody .appr-more textarea'); const fbText = fbEl ? fbEl.value : null;
+  // 头部
+  const hd = $('rhead'); hd.innerHTML = '';
+  hd.appendChild(el('b', '', t('d.panel')));
+  const s = sessionById(S.session);
+  hd.appendChild(el('span', 'crumb', [titleOf(s) || S.title || t('d.untitled'), (s && s.project) || projectName()].filter(Boolean).join(' · ')));
+  hd.appendChild(el('span', 'sp'));
+  const x = el('button', 'ib'); x.id = 'close-review'; x.setAttribute('aria-label', t('d.panel.close')); x.title = t('d.panel.close'); x.appendChild(icon('x'));
+  x.onclick = () => { S.review.open = false; S.feedKey = ''; renderTop(); renderReview(); tick(); };
+  hd.appendChild(x);
+  // 分段
   const tabs = $('rtabs'); tabs.innerHTML = '';
-  [['diff', t('d.tab.diff')], ['plan', t('d.tab.plan')], ['evidence', t('d.tab.evidence') + (evN ? ' ' + evN : '')], ['terminal', t('d.tab.terminal')]].forEach(([k, l]) => {
-    const b = el('button', 'tab' + (S.review.tab === k ? ' on' : ''), l); b.dataset.tab = k;
+  const changesN = files.length || (pend && pendInfo.isEdit ? 1 : 0);
+  [['overview', t('d.tab.overview')], ['diff', t('d.tab.changes'), changesN], ['plan', t('d.tab.plan')], ['evidence', t('d.tab.evidence'), evN], ['terminal', t('d.tab.terminal'), 0, failed]].forEach(([k, l, n, dot]) => {
+    const b = el('button', 'tab' + (S.review.tab === k ? ' on' : '')); b.dataset.tab = k; b.appendChild(document.createTextNode(l));
+    if (n) b.appendChild(el('span', 'badge' + (k === 'diff' && pend && pendInfo.isEdit ? ' warn' : ''), String(n)));
+    if (dot) { const dd = el('span', 'rdot'); dd.title = t('d.term.failed'); b.appendChild(dd); }
     b.onclick = () => { S.review.tab = k; renderReview(); }; tabs.appendChild(b);
   });
-  if (files.length) {
-    const sum = el('span', 'sum'); const A = files.reduce((n, f) => n + f.add, 0), D = files.reduce((n, f) => n + f.del, 0);
-    sum.appendChild(document.createTextNode(t(files.length === 1 ? 'd.filesOne' : 'd.filesCount', { n: files.length }) + ' · ')); sum.appendChild(el('span', 'add', '+' + A)); sum.appendChild(document.createTextNode(' ')); sum.appendChild(el('span', 'del', '−' + D));
-    tabs.appendChild(sum);
-  }
   const body = $('rbody'); body.innerHTML = '';
-  if (S.review.tab === 'diff') {
-    let show = pendDiff || (S.review.file && diffs[S.review.file]) || files[files.length - 1] || null;
-    if (!show) { const e = el('div', 'rempty', t('d.diffEmpty')); body.appendChild(e); }
+  const tab = S.review.tab;
+  if (tab === 'overview') body.appendChild(overviewTab(v, pend, files, evN, runs, failed));
+  else if (tab === 'diff') {
+    const pendDiff = pend && pendInfo.isEdit ? pendInfo.d : null;
+    const show = pendDiff || (S.review.file && diffs[S.review.file]) || files[files.length - 1] || null;
+    if (!show) body.appendChild(el('div', 'rempty', t('d.diffEmpty')));
     else {
       if (files.length > 1 && !pendDiff) {
-        const pick = el('div', 'tabs2'); pick.style.cssText = 'display:flex;gap:4px;flex-wrap:wrap;padding:10px 14px 0';
+        const pick = el('div', 'fpick');
         files.forEach(f => { const b = el('button', 'tab' + (f === show ? ' on' : ''), f.path); b.onclick = () => { S.review.file = f.path; renderReview(); }; pick.appendChild(b); });
         body.appendChild(pick);
       }
       const fh = el('div', 'fh'); fh.appendChild(el('span', '', show.path || show.head));
-      const a = el('span', 'add', '+' + show.add); a.style.marginLeft = 'auto'; fh.appendChild(a); fh.appendChild(el('span', 'del', '−' + show.del));
-      if (pendDiff) { const w = el('span', '', ' · ' + t('d.waitingApproval')); w.style.color = 'var(--mu)'; w.style.fontFamily = 'inherit'; fh.appendChild(w); }
+      fh.appendChild(el('span', 'add', '+' + show.add)); fh.appendChild(el('span', 'del', '−' + show.del));
+      if (pendDiff) { fh.appendChild(el('span', 'sp')); fh.appendChild(waitChip()); }
       body.appendChild(fh);
+      if (pendDiff) body.appendChild(el('div', 'rsent', pendInfo.sentence));
       const code = el('div', 'code');
       (show.body.length ? show.body : [['', '', show.head]]).forEach(([c, sign, txt]) => { const ln = el('div', 'ln ' + c); ln.appendChild(el('span', 'n', sign)); ln.appendChild(document.createTextNode(txt)); code.appendChild(ln); });
       body.appendChild(code);
+      if (pendDiff) {
+        body.appendChild(scopeBox(pendInfo));
+        const sb = S.info && S.info.config ? S.info.config.sandbox : 'local';
+        if (sb !== 'e2b') { const cp = el('div', 'ckpt'); cp.appendChild(icon('undo')); cp.appendChild(el('span', '', t('d.checkpoint.line'))); body.appendChild(cp); }
+        const more = apprMore(pend, pendInfo, fbText); if (more) body.appendChild(more);
+      }
     }
-  } else if (S.review.tab === 'plan') {
-    if (v.plan && v.plan.plan) { body.appendChild(el('div', 'plan', String(v.plan.plan))); }
+  } else if (tab === 'plan') {
+    if (v.plan && v.plan.plan) body.appendChild(el('div', 'plan', String(v.plan.plan)));
     else body.appendChild(el('div', 'rempty', t('d.planEmpty')));
-  } else if (S.review.tab === 'evidence') {
+  } else if (tab === 'evidence') {
     if (evN) { const box = el('div', 'evi'); v.evidence.forEach(e => box.appendChild(el('div', '', e.name))); body.appendChild(box); }
     else body.appendChild(el('div', 'rempty', t('d.evidenceEmpty')));
   } else {
-    const shells = (v.events || []).filter(e => (e.type === 'tool_start' || e.type === 'tool_result') && e.data && e.data.name === 'shell');
-    if (!shells.length && !(pend && pend.tool === 'shell')) body.appendChild(el('div', 'rempty', t('d.terminalEmpty')));
+    if (!runs.length && !(pend && pendInfo.isShell)) body.appendChild(el('div', 'rempty', t('d.terminalEmpty')));
     else {
-      const box = el('div', 'plan mono'); box.style.fontSize = '12px';
-      shells.forEach(e => { if (e.type === 'tool_start') { const a = e.data.arguments || {}; box.appendChild(document.createTextNode('$ ' + (a.command || '') + '\n')); } else box.appendChild(document.createTextNode(String(e.data.result || '').slice(0, 2000) + '\n\n')); });
+      const box = el('div', 'tout mono');
+      runs.forEach(r => {
+        const blk = el('div', 'trun' + (shellFailed(r) ? ' bad' : ''));
+        blk.appendChild(el('div', 'tc', '$ ' + r.cmd));
+        if (r.out != null) blk.appendChild(el('div', 'to', r.out.slice(0, 4000)));
+        box.appendChild(blk);
+      });
+      if (pend && pendInfo.isShell) { const blk = el('div', 'trun wait'); blk.appendChild(el('div', 'tc', '$ ' + pend.command)); blk.appendChild(el('div', 'to w', t('d.waitingApproval'))); box.appendChild(blk); }
       body.appendChild(box);
+      if (pend && pendInfo.isShell) { body.appendChild(el('div', 'rsent', pendInfo.sentence)); body.appendChild(scopeBox(pendInfo)); const more = apprMore(pend, pendInfo, fbText); if (more) body.appendChild(more); }
     }
   }
-  const term = $('term'); term.innerHTML = '';
-  if (pend && pend.tool === 'shell' && pend.command) {
-    term.classList.remove('hidden'); term.appendChild(document.createTextNode('$ ' + pend.command + '\n')); term.appendChild(el('span', 'w', t('d.waitingApproval')));
-  } else term.classList.add('hidden');
+  // 有待确认的请求时：展开区（拒绝反馈 / 记规则）在别的分段也要看得到；底栏放同一组按钮。
+  if (pend && !((tab === 'diff' && pendInfo.isEdit) || (tab === 'terminal' && pendInfo.isShell))) { const more = apprMore(pend, pendInfo, fbText); if (more) body.appendChild(more); }
+  const foot = $('rfoot'); foot.innerHTML = '';
+  const showActs = !!pend;
+  foot.classList.toggle('hidden', !showActs);
+  if (showActs) foot.appendChild(apprActs(pend, pendInfo, 'panel'));
 }
-
+function overviewTab(v, pend, files, evN, runs, failed){
+  const box = el('div', 'ov');
+  const row = (k, valueNode) => { const r = el('div', 'or'); r.appendChild(el('span', 'k', k)); const vv = el('div', 'v'); if (typeof valueNode === 'string') vv.textContent = valueNode; else vv.appendChild(valueNode); r.appendChild(vv); box.appendChild(r); return r; };
+  const stKey = pend ? 'd.ov.waiting' : v.status === 'running' ? 'd.ov.running' : v.status === 'error' ? 'd.ov.error' : 'd.ov.idle';
+  const stv = el('span', 'stv'); stv.appendChild(avatar(pend ? 'wait-s' : v.status === 'running' ? 'work-s' : 'idle-s')); stv.appendChild(document.createTextNode(t(stKey))); row(t('d.ov.status'), stv);
+  // 这一轮：步数 + 收尾交代（真实工具调用）
+  // 等批准的那一步还没执行，不算进步数；收尾交代只在这一轮结束后才写（进行中不说“改了”）。
+  const live = liveTurn(v); if (pend && live.length && live[live.length - 1].tool_calls) live.pop();
+  const msgs = (v.messages || []).filter(m => m.role !== 'system').concat(live);
+  let lu = -1; msgs.forEach((m, i) => { if (m.role === 'user') lu = i; });
+  const sm = summarize(lu >= 0 ? msgs.slice(lu + 1) : []);
+  const finished = !pend && v.status !== 'running';
+  if (sm.steps) row(t('d.ov.steps'), [t('d.ov.stepsLine', { n: sm.steps }), finished ? wrapText(sm) : ''].filter(Boolean).join(' · '));
+  if (files.length) {
+    const list = el('div', 'files');
+    files.forEach(f => { const r = el('button', 'fr'); r.appendChild(el('span', 'mono', f.path)); r.firstChild.style.fontSize = '12px'; const a = el('span', 'add', '+' + f.add); a.style.marginLeft = 'auto'; r.appendChild(a); r.appendChild(el('span', 'del', '−' + f.del)); r.onclick = () => { S.review.tab = 'diff'; S.review.file = f.path; renderReview(); }; list.appendChild(r); });
+    row(t('d.ov.files'), list);
+  } else row(t('d.ov.files'), t('d.ov.none'));
+  row(t('d.ov.plan'), v.plan && v.plan.plan ? t('d.ov.planReady') : t('d.ov.none'));
+  row(t('d.ov.evidence'), evN ? t('d.ov.evidenceN', { n: evN }) : t('d.ov.none'));
+  if (runs.length) { const tv = el('span', failed ? 'bad-t' : ''); tv.textContent = runs.length + (failed ? ' · ' + t('d.term.failed') : ''); row(t('d.tab.terminal'), tv); }
+  const u = v.usage;
+  if (u && (u.prompt_tokens || u.completion_tokens)) {
+    let s = t('d.tokens', { i: fmtK(u.prompt_tokens || 0), o: fmtK(u.completion_tokens || 0) });
+    if (u.last_prompt_tokens && u.context_window_tokens) s += ' · ' + t('d.context', { n: Math.round(100 * u.last_prompt_tokens / u.context_window_tokens) });
+    row(t('d.ov.usage'), s);
+  }
+  return box;
+}
 // ---------------------------------------------------------------- 状态栏 ---
 function renderStatus(){
   const st = $('status'); st.innerHTML = '';

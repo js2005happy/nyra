@@ -11,7 +11,7 @@
 // 剪旧工具结果（不调 LLM），仍超就记事件、等 agent 侧 50% 压缩接手。
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { networkInterfaces } from "node:os";
 import { Agent } from "./agent.ts";
@@ -39,7 +39,7 @@ import { recordModelSwitch } from "./modelSwitch.ts";
 import { UsageLedger, monthKeyString } from "./usageLedger.ts";
 import type { UsageSnapshot } from "./usage.ts";
 import { resolveSandboxBackend, type SandboxMode } from "./sandbox.ts";
-import { loadSession, saveSession, newSessionId, listSessions, resolveNyraHome, MemoryDeleteError } from "./memory.ts";
+import { loadSession, saveSession, newSessionId, listSessions, resolveNyraHome, sessionPath, MemoryDeleteError } from "./memory.ts";
 import { ConversationStore } from "./conversations.ts";
 import { trimOldToolResults, GATEWAY_COMPACT_THRESHOLD, DEFAULT_AUTO_COMPACT_THRESHOLD, validateAutoCompactThreshold } from "./compact.ts";
 import { loadSchedule, saveSchedule, schedulePath, listScheduleTasks, removeScheduleTask, runDueTasks, type ScheduleTask } from "./scheduler.ts";
@@ -55,6 +55,8 @@ import { McpCostTracker, estimateToolCost, costLimitUsd } from "./mcpCost.ts";
 import { DeviceRegistry, defaultDevicesPath, startDiscoveryResponder, PairingError } from "./pairing.ts";
 import { memoryScopes, memoryView, memorySave, deleteMemoryForScope, MemoryBrowserError } from "./memoryBrowser.ts";
 import { listArtifacts, getArtifact } from "./artifacts.ts";
+import { summarizeLastTurn, type TurnSummary } from "./turnSummary.ts";
+import { projectMemoryView, projectMemoryFile } from "./projectMemory.ts";
 import { EvidenceStore } from "./evidence.ts";
 import { GroupStore, type BotConfig } from "./groups.ts";
 // 群聊页嵌进二进制（.txt 后缀：bun-types 只给 *.txt 声明了 string 类型；
@@ -492,16 +494,33 @@ export class Gateway {
         });
       }
     }
+    // 设计稿 v8（手机列表副标题写结果）：最近 40 个会话附上最后一轮的真实汇总（改了几个文件、跑了几条命令、
+    // 有没有 git push）；会话文件超过 4 MiB 的不读，outcome 记 null，界面退回原来的副标题。
+    const recentIds = new Set([...byId.values()].sort((a, b) => String(b.mtime).localeCompare(String(a.mtime))).slice(0, 40).map((x) => x.id));
     const sessions = [...byId.values()].map((item) => {
       const workdir = projects[item.id];
       // status：手机列表的状态点用（运行中 / 出错 / 空闲）；没有 live run 的会话一律 idle。
       const status = this.runs.get(item.id)?.status ?? "idle";
-      return { ...item, workdir: workdir ?? null, project: workdir ? workdir.split("/").pop() ?? null : null, status };
+      const outcome = recentIds.has(item.id) && status !== "running" ? this.lastTurnOutcome(item.id) : null;
+      return { ...item, workdir: workdir ?? null, project: workdir ? workdir.split("/").pop() ?? null : null, status, outcome };
     });
     return {
       sessions,
       project: { name: this.workdir.split("/").pop() ?? this.workdir, workdir: this.workdir },
     };
+  }
+
+  private lastTurnOutcome(sessionId: string): TurnSummary | null {
+    try {
+      const run = this.runs.get(sessionId);
+      let messages: Record<string, unknown>[] | null = run?.agent ? run.agent.messages : null;
+      if (!messages) {
+        const path = sessionPath(sessionId, this.home);
+        if (!existsSync(path) || statSync(path).size > 4 * 1024 * 1024) return null;
+        messages = loadSession(sessionId, this.home);
+      }
+      return messages ? summarizeLastTurn(messages) : null;
+    } catch { return null; }
   }
 
   private projectsPath(): string {
@@ -938,7 +957,14 @@ export class Gateway {
     // 调研报告第 1 项：经 send 隐式建出的会话（未走 newSession）也在这里补
     // 一次 SessionStart；fireSessionStart 自带去重，只触发一次。
     this.fireSessionStart(run);
-    this.record(run, "user", { content: text });
+    // 设计稿 v8：回复底部的“本轮 token”= 本轮结束时的累计用量 − 这里记下的起点。事件流每轮清空，
+    // 所以起点跟着 user 事件一起记；累计用量里有没报用量的调用时界面不显示（missing_calls 对不上）。
+    let usageBase: Record<string, unknown> | null = null;
+    try {
+      const snap = run.agent!.usage.snapshot();
+      usageBase = { total_tokens: snap.total_tokens ?? (snap.calls === 0 ? 0 : null), missing_calls: snap.missing_calls };
+    } catch { usageBase = null; }
+    this.record(run, "user", usageBase ? { content: text, usage_base: usageBase } : { content: text });
     try { this.store.record(sessionId, "user", text); } catch { /* 存档失败不阻塞运行 */ }
     this.rememberProject(sessionId);
     void this.doWork(run, text);
@@ -1947,6 +1973,17 @@ export class Gateway {
       return;
     }
     if (method === "GET" && path === "/api/sessions") { this.sendJson(res, 200, this.sessionsView()); return; }
+    // 设计稿 v8 pc-03：项目记忆卡（只读）。三个文件在不在、多大，MEMORY.md 最近 3 条带来源会话与时间。
+    if (method === "GET" && path === "/api/project-memory") {
+      try { this.sendJson(res, 200, projectMemoryView(this.home, this.workdir, 3)); }
+      catch (err) { this.sendError(res, 400, err instanceof Error ? err.message : String(err)); }
+      return;
+    }
+    if (method === "GET" && path === "/api/project-memory/file") {
+      try { this.sendJson(res, 200, projectMemoryFile(this.home, this.workdir, query.get("kind") ?? "")); }
+      catch (err) { this.sendError(res, 400, err instanceof Error ? err.message : String(err)); }
+      return;
+    }
     if (method === "GET" && path === "/api/mcp/tools") { this.sendJson(res, 200, { tools: this.mcpTools() }); return; }
     if (method === "GET" && path === "/api/mcp/spend") {
       this.sendJson(res, 200, { limit_usd: costLimitUsd(this.config), spent_usd: this.mcpCost.totalUsd() });
