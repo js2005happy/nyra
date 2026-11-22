@@ -1,3 +1,10 @@
+## 2026-11-22 — Unknown structured tool outcome is not journal success (static-only)
+
+- **Source-derived fact:** the existing Agent journal wrote `success=not reported_failure`; a typed `StructuredToolReport("unknown")` is not a reported failure, so it would be logged as result_ok despite uncertainty. This is a static code-path finding, not a runtime reproduction.
+- **External feedback (reviewed 2026-11-22):** [Codex #60104](https://github.com/openai/codex/issues/60104) (2026-11-07) reports wasted long-task work and progress confusion. Individual report, not proof of this Angel bug.
+- **Inference / ranking (value / difficulty / risk / dependency):** P1 preserve unknown in journal high / low / low / existing typed classifier (**implemented, untested**); P1 trusted read-only adapter high / medium / medium / provenance-safe output bridge (**open**); P1 independently verified progress high / high / high / trusted authority (**blocked**); P1 private task persistence high / medium / medium-high / safe filesystem (**blocked**). Unknown is now explicit in classification, and journal treats it as non-success. Legacy strings remain compatible.
+- No external outcome verification, automatic retry/resume, third-party dependency, tests, merge or release.
+
 ## 2026-11-22 — Explicit in-process tool outcome metadata (static-only)
 
 - Public report (reviewed 2026-11-22): [Codex #60104](https://github.com/openai/codex/issues/60104) (2026-11-07) describes a long task repeatedly redoing work and reporting stalled progress; one user's report, not a population trend or Angel reproduction.
