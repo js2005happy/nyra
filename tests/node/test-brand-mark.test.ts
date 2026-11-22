@@ -123,7 +123,7 @@ test("ICO / ICNS 编码结构", () => {
   expect(icns.length).toBe(16 + png.length);
 });
 
-test("页面里用的是真标志，不再是 ✦ 占位；README / 官网 / 启动页引用新文件", () => {
+test("页面里用的是真标志，不再是 ✦ 占位；README / 启动页引用新文件，官网内联真标志 SVG", () => {
   const svg = markSvg({ disc: "currentColor" });
   const d = /d="([^"]+)"/.exec(svg)![1];
   expect(DESKTOP_HTML).not.toContain(STAR);
@@ -136,7 +136,18 @@ test("页面里用的是真标志，不再是 ✦ 占位；README / 官网 / 启
     const html = readFileSync(join(ROOT, "docs", `${page}.html`), "utf-8");
     expect(html).toContain('href="assets/favicon.svg"');
     expect(html).toContain('href="assets/apple-touch-icon.png"');
-    expect(html).toContain('src="assets/nyra-mark.svg"');
+    // 官网 v4 把导航 / 页脚标志改成内联 SVG：每个 class="brand" 的标志都必须是 brandMark.ts 生成的真几何，
+    // 不能换成 ✦ 占位、别的图形或外链假图。
+    expect(html).not.toContain(STAR);
+    const brands = [...html.matchAll(/<a class="brand"[^>]*>([\s\S]*?)<\/a>/g)].map((m) => m[1]);
+    expect(brands.length).toBeGreaterThanOrEqual(1);
+    for (const b of brands) {
+      const inline = /<svg viewBox="([^"]+)"[^>]*>\s*<path fill="currentColor" fill-rule="evenodd" d="([^"]+)"\s*\/><\/svg>/.exec(b);
+      expect(inline).not.toBeNull();
+      expect(inline![1]).toBe("6 6 88 88");
+      expect(inline![2]).toBe(d);
+      expect(b).not.toContain("<img");
+    }
   }
   const launch = readFileSync(join(ROOT, "desktop/ui/index.html"), "utf-8");
   expect(launch).toContain('srcset="mark-dark.svg"');
