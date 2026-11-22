@@ -1,3 +1,8 @@
+## 2026-11-22 — One idle observation per tool return (unreleased, untested)
+
+- Removed the duplicate model-message idle observation before tool dispatch. Each returned tool now contributes one untrusted idle observation; terminal messages still contribute none. Thresholds now count tool returns, not model+tool event pairs.
+- Added two unexecuted regression definitions. Advisory detector remains opt-in; no automatic cancellation, trusted completion claim, new dependency, CI, main merge or release.
+
 ## 2026-11-22 — Terminal-reply no-progress false-positive fix (unreleased, untested)
 
 - Avoid counting a final assistant response without tool calls as an idle step. Preserve idle observation for tool-requesting model responses and tool returns; no change to default-disabled advisory behavior or tool execution.
