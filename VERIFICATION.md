@@ -1,3 +1,10 @@
+## 2026-11-22 — Local list_dir exception redaction (static review only)
+
+- Reviewed development README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/Tools, structured result classifier, related regression source, recent main commits, open Issues/PR (#113), and prior commit CI metadata (no statuses or PR-triggered runs returned).
+- Source-derived privacy risk: generic OS exception messages may contain absolute private paths and were included verbatim in model-visible local directory listing errors. Changed only the generic exception branch to a fixed failure message and kept typed `reported_error`; defined a mocked OSError regression that checks path redaction and authority flags.
+- External report [Codex #60104](https://github.com/openai/codex/issues/60104), observed 2026-11-07, concerns repeated work and inaccurate progress in another product; it is not evidence of a path leak in Angel. This fix is a source-based preventive privacy measure.
+- **Not run:** tests, scripts, builds, compilation, CI, or cross-platform checks. No software installation, account modifications, main merge or production release. Other tools may still expose exception details and require separate review.
+
 ## 2026-11-22 — Local list_dir typed outcome: static review only
 
 - Inspected README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/tools/classifier, commits, open issues/PR and available CI metadata. Added unexecuted regression definitions for empty/missing directories, adversarial filenames, and backend exclusion.
