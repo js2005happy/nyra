@@ -13,6 +13,7 @@ from .tools import (
     TOOL_SCHEMAS, POPPY_TOOL_SCHEMA, POPPY_PERMISSION_SCHEMA, POPPY_IDENTITY_SCHEMA,
     ToolContext, ToolError, _check_approval, execute_tool,
     execute_local_list_dir_report,
+    execute_local_read_file_report,
 )
 from .skills import Skill, load_skills, match_skills, render_skill
 from .memory import load_memory_summary, load_agents_md, new_session_id, save_session
@@ -393,6 +394,14 @@ class Agent:
                             result = f"错误：{exc}"
                         else:
                             result = self.mcp_manager.execute(fn_name, args)
+                    elif fn_name == "read_file" and self.ctx.backend is None:
+                        # Local filesystem control flow, not model-visible file text.
+                        try:
+                            result, trusted_report = execute_local_read_file_report(
+                                self.ctx, **args
+                            )
+                        except TypeError:
+                            result = "错误：工具参数不正确"
                     elif fn_name == "list_dir" and self.ctx.backend is None:
                         # Trusted local adapter: outcome comes from filesystem
                         # control flow, never the listing's text.
