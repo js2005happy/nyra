@@ -117,8 +117,8 @@ function fakeCloudFetch(transcript = "云端转写结果"): typeof fetch {
 
 const ENDPOINT = { baseUrl: "https://fake.invalid", apiKey: "fake-key" };
 
-function activeCall(home: string, peer?: string | null): string {
-  const call = startVoiceCall(home, { peer: peer ?? null, yes: true });
+async function activeCall(home: string, peer?: string | null): Promise<string> {
+  const call = await startVoiceCall(home, { peer: peer ?? null, yes: true });
   answerVoiceCall(home, call.id);
   return call.id;
 }
@@ -160,33 +160,33 @@ test("VoiceCallTest.test_call_config_defaults", () => {
   expect(on.replyMaxChars).toBe(500);
 });
 
-test("VoiceCallTest.test_lifecycle_states", () => {
+test("VoiceCallTest.test_lifecycle_states", async () => {
   const { home } = setup();
   expect(LoopbackTransport.kind).toBe("loopback");
-  const call = startVoiceCall(home, {});
+  const call = await startVoiceCall(home, {});
   expect(call.status).toBe("ringing");
   expect(call.transport).toBe("loopback");
   expect(() => answerVoiceCall(home, "call-nope")).toThrow();
   expect(() => endVoiceCall(home, call.id)).not.toThrow(); // 响铃时挂断 = 没接上
-  const c2 = startVoiceCall(home, {});
+  const c2 = await startVoiceCall(home, {});
   expect(() => endVoiceCall(home, c2.id)).not.toThrow();
   expect(() => answerVoiceCall(home, c2.id)).toThrow(); // 已结束，接不了
-  const c3 = startVoiceCall(home, {});
+  const c3 = await startVoiceCall(home, {});
   const declined = declineVoiceCall(home, c3.id);
   expect(declined.status).toBe("declined");
   expect(() => declineVoiceCall(home, c3.id)).toThrow();
 });
 
-test("VoiceCallTest.test_start_peer_requires_yes", () => {
+test("VoiceCallTest.test_start_peer_requires_yes", async () => {
   const { home } = setup();
-  expect(() => startVoiceCall(home, { peer: "林舟", yes: false })).toThrow("--yes");
-  const call = startVoiceCall(home, { peer: "林舟", yes: true });
+  await expect(startVoiceCall(home, { peer: "林舟", yes: false })).rejects.toThrow("--yes");
+  const call = await startVoiceCall(home, { peer: "林舟", yes: true });
   expect(call.peer).toBe("林舟");
 });
 
 test("VoiceCallTest.test_segment_requires_active_call", async () => {
   const { home, workdir } = setup();
-  const call = startVoiceCall(home, {});
+  const call = await startVoiceCall(home, {});
   const audio = writeAudio(workdir, "a.wav", sineWav(1));
   await expect(feedCallSegment({
     home, workdir, callId: call.id, audioPath: audio, config: {},
@@ -202,7 +202,7 @@ test("VoiceCallTest.test_silence_segment_skipped_without_stt", async () => {
     calls.push(`${binary} ${args.join(" ")}`);
     return fakeWhisperRunner()(binary, args);
   };
-  const id = activeCall(home);
+  const id = await activeCall(home);
   const audio = writeAudio(workdir, "sil.wav", silenceWav(1));
   const result = await feedCallSegment({
     home, workdir, callId: id, audioPath: audio, config: {},
@@ -221,7 +221,7 @@ test("VoiceCallTest.test_silence_segment_skipped_without_stt", async () => {
 
 test("VoiceCallTest.test_local_transcription_and_ledger", async () => {
   const { home, workdir } = setup();
-  const id = activeCall(home);
+  const id = await activeCall(home);
   const audio = writeAudio(workdir, "hi.wav", sineWav(1));
   const result = await feedCallSegment({
     home, workdir, callId: id, audioPath: audio, config: {},
@@ -244,7 +244,7 @@ test("VoiceCallTest.test_local_transcription_and_ledger", async () => {
 
 test("VoiceCallTest.test_cloud_requires_explicit_opt_in", async () => {
   const { home, workdir } = setup();
-  const id = activeCall(home);
+  const id = await activeCall(home);
   const mp3 = Buffer.concat([Buffer.from("ID3"), Buffer.alloc(60, 0x20)]);
   const audio = writeAudio(workdir, "c.mp3", mp3);
   await expect(feedCallSegment({
@@ -257,7 +257,7 @@ test("VoiceCallTest.test_cloud_requires_explicit_opt_in", async () => {
 
 test("VoiceCallTest.test_cloud_transcription_when_opted_in", async () => {
   const { home, workdir } = setup();
-  const id = activeCall(home);
+  const id = await activeCall(home);
   const mp3 = Buffer.concat([Buffer.from("ID3"), Buffer.alloc(60, 0x20)]);
   const audio = writeAudio(workdir, "c.mp3", mp3);
   const cfg: VoiceCallConfig = { ...DEFAULT_VOICE_CALL_CONFIG, callCloudEnabled: true };
@@ -278,7 +278,7 @@ test("VoiceCallTest.test_cloud_transcription_when_opted_in", async () => {
 
 test("VoiceCallTest.test_monthly_cap_blocks_cloud", async () => {
   const { home, workdir } = setup();
-  const id = activeCall(home);
+  const id = await activeCall(home);
   // 本月已花 $100，上限 $1：云端路直接拒绝。
   const month = monthKeyString(new Date());
   writeFileSync(join(home, "usage_daily.jsonl"),
@@ -297,7 +297,7 @@ test("VoiceCallTest.test_monthly_cap_blocks_cloud", async () => {
 
 test("VoiceCallTest.test_sensitive_segment_held_and_confirmed", async () => {
   const { home, workdir } = setup();
-  const id = activeCall(home);
+  const id = await activeCall(home);
   const audio = writeAudio(workdir, "pay.wav", sineWav(1));
   const result = await feedCallSegment({
     home, workdir, callId: id, audioPath: audio, config: {},
@@ -321,7 +321,7 @@ test("VoiceCallTest.test_reply_tts_saved_and_events_mirrored", async () => {
   const { home, workdir } = setup();
   const store = new RunStore(join(home, "runs"));
   const state = store.create("通话任务", "sess-1", home, "auto", 10);
-  const call = startVoiceCall(home, { runId: state.run_id });
+  const call = await startVoiceCall(home, { runId: state.run_id });
   answerVoiceCall(home, call.id);
   const audio = writeAudio(workdir, "hi.wav", sineWav(1));
   const result = await feedCallSegment({
@@ -342,7 +342,7 @@ test("VoiceCallTest.test_reply_tts_saved_and_events_mirrored", async () => {
   expect(events).toContain("voice_call_spoken");
   const ended = endVoiceCall(home, call.id);
   const summary = formatCallSummary(ended);
-  expect(summary).toContain("传输：本批是本机回环");
+  expect(summary).toContain("传输：本机回环");
   expect(summary).toContain("无 token 花费");
   const s = summarizeVoiceCall(ended);
   expect(s.segments).toBe(1);
@@ -351,7 +351,7 @@ test("VoiceCallTest.test_reply_tts_saved_and_events_mirrored", async () => {
 
 test("VoiceCallTest.test_held_segment_gets_no_reply", async () => {
   const { home, workdir } = setup();
-  const id = activeCall(home);
+  const id = await activeCall(home);
   const audio = writeAudio(workdir, "pay.wav", sineWav(1));
   const result = await feedCallSegment({
     home, workdir, callId: id, audioPath: audio, config: {},
@@ -423,6 +423,6 @@ test("VoiceCallTest.test_cli_end_to_end", async () => {
   expect(joined).toContain("通话已建立");
   expect(joined).toContain("转写（whisper.cpp");
   expect(joined).toContain("你好呀");
-  expect(joined).toContain("传输：本批是本机回环");
+  expect(joined).toContain("传输：本机回环");
   expect(err.join("")).toContain("须加 --yes");
 });
