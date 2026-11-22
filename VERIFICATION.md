@@ -1,3 +1,9 @@
+## 2026-11-22 — Terminal reply idle signal (static review only)
+
+- Reviewed README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/Tools, no-progress observer and regression definitions; recent commits, open Issues/PR and CI metadata were queried. Original loop observed a model message before checking tool calls, allowing final-only replies to raise an advisory alert at low thresholds.
+- Source change gates the model-message idle observation on nonempty tool calls; terminal response remains delivered normally. Regression definition now expects no warning on a final-only reply. The tool-return observation remains unchanged.
+- External issue links and dates in ROADMAP are individual user reports, not proof of this specific Angel bug; the code-path false-positive is a source-derived finding. No tests, builds, scripts, CI, installs, merges or production release performed. Runtime and cross-platform behavior remain unverified.
+
 ## 2026-11-22 — Advisory idle Agent wiring (static review only)
 
 - Reviewed agent loop and no_progress event vocabulary. Added optional observation after model response and tool return; emits only bounded idle count and false authority flags. No task content or tool arguments in attention event.
