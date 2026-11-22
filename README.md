@@ -86,6 +86,7 @@
 
 0.5.4 是一次“对外连接 + Bot 方向起步”的更新，常用功能照常用（详细技术记录见 [CHANGELOG.md](CHANGELOG.md)）：
 
+- **每通电话都有三本账可查了**：`nyra call ledger` 列全部通话账，`nyra call show <通话 id>` 看一通的完整账，`nyra call summary` 看合计——传输用了多少带宽、看了几帧、STT 几分钟、理解与干活各花多少 token，本地模型（whisper.cpp、本地小视觉模型）与云端分开记，本地不花钱但账里分得清；录制默认关，只有全体同意才开始计录制账，谁撤销同意就停录，新加入的人须另行同意；每通电话结束出一份纪要进证据链（谁参加、何时、时长、三本账汇总、委派了什么任务），不含通话内容原文。账本只记用量数字。但传输账是本地模型数（语音回环记 0，视频记信令面实测字节数），没有真 TURN/STUN 带宽计量；按人拆分的成本分摊是后续批次。详见 `docs/call-ledger.md`。
 - **Nyra 能当 MCP 服务器了**：别的 agent 可以经网关调 Nyra 的记忆读写、任务派发与证据查询；写操作默认关闭，开了也要过独立审查。
 - **并行委派默认后台跑，跑完合成为一份交付物**：`delegate_parallel` 现在默认后台跑（立即回 handle，聊天继续），跑完单条 consolidated 消息回填，扇出直接落任务板（重启不丢），跑完了没回填由 Heartbeat 提醒；`merge: true` 时批跑完多一次合并步，把各线程的结构化摘要合成一份交付物，过 verifier 确定性检查再进审阅队列人批。`nyra fanout <list|show|recover>` 查与回收跑一半的扇出。
 - **团队模式来了（常驻参谋长）**：一个参谋长独占入口，只拆解、分派、汇总，不写业务代码；下游专职 agent 各做执行，只回简报。每个成员先有一份角色契约（Charter：负责什么、信息来源、输出格式、审批门、停下条件，`nyra soul charter set`），没完整契约接不了单；成员之间用 inbox/outbox/changelog 交接文件（落在各 agent 自己的电脑 workspace 里，不共用一台电脑）；下游的对外动作（发消息、采购、删除、发布）一律回参谋长/人批，不由子代理自批。`nyra team <create|list|show|add|remove|dissolve|dispatch|handover>`，详见 `docs/team.md`。参谋长是单点瓶颈与单点故障，拆错了全队白跑；Charter 写得再好模型也可能不遵守，交付时只做确定性抽查，内容对错仍由验收与人批负责。
