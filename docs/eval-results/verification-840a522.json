@@ -1,0 +1,63 @@
+{
+  "date": "2026-11-22",
+  "sourceRevision": "840a522e207a838eb6720283d5eeaaf4bfb571f7",
+  "typecheckErrors": 0,
+  "scriptsTypecheckErrors": 0,
+  "newTests": {
+    "passed": 27,
+    "failed": 0
+  },
+  "adjacentCoreTests": {
+    "passed": 120,
+    "failed": 0,
+    "files": 6
+  },
+  "fullSuite": {
+    "passed": 3241,
+    "failed": 13,
+    "total": 3254,
+    "files": 229,
+    "assertions": 19487,
+    "elapsed": "132.81s",
+    "failures": [
+      "VideoCallTest.test_gather_host_candidates",
+      "VideoCallTest.test_ice_two_ended_virtual_and_frame",
+      "VideoCallTest.test_ice_two_ended_real_udp_guarded",
+      "VideoCallTest.test_webrtc_transport_end_to_end_virtual",
+      "VideoCallTest.test_webrtc_transport_caller_first_still_connects",
+      "VideoCallTest.test_webrtc_transport_end_to_end_real_udp_guarded",
+      "VideoCallTest.test_cli_signal_status_and_ice_gather",
+      "gateway: 无 token / 错 token 一律 403；设备 token 可审批",
+      "settings: 手机切全权要二次确认标记，电脑端不受影响；规则可在手机上撤销",
+      "GmailTest.test_gateway_connectors_endpoint",
+      "GatewayMobileTest.test_pair_flow_device_token_scoped",
+      "GatewayMcpCostTest.test_estimate_shown_before_call_and_limit_blocks",
+      "gateway: /api/setup 首次引导 → /api/keys 保存只回掩码，设备 token 不能管 Key"
+    ]
+  },
+  "fullSuiteBlocker": "native network interface enumeration denied (getifaddrs / uv_interface_addresses)",
+  "networkTestRestriction": "git HTTP/HTTPS transports disabled via per-command GIT_CONFIG_* for mock-only validation",
+  "baseline": {
+    "total": 20,
+    "passed": 0,
+    "failed": 0,
+    "blocked": 20,
+    "executed": 0,
+    "successRateAll": 0,
+    "successRateExecuted": null,
+    "executionCoverage": 0,
+    "recoveredOnRetry": 0,
+    "attempts": 20,
+    "modelCalls": 0,
+    "unknownModelCallAttempts": 0,
+    "knownSpentUsd": 0,
+    "spentUsd": 0,
+    "unknownCostAttempts": 0,
+    "durationMs": 3.877,
+    "interventions": 0,
+    "unknownInterventionAttempts": 0
+  },
+  "baselineWallDurationMs": 108.937,
+  "readyForUnqualifiedRelease": false,
+  "pushed": false
+}
