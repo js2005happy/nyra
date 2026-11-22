@@ -4,7 +4,7 @@ Not executed by the scheduled development automation.
 """
 import unittest
 
-from angel.tool_report_status import classify_tool_report
+from angel.tool_report_status import classify_tool_report, StructuredToolReport
 
 
 class ToolReportStatusTests(unittest.TestCase):
@@ -26,6 +26,34 @@ class ToolReportStatusTests(unittest.TestCase):
 
     def test_exception_overrides_success_looking_result(self):
         self.assertTrue(classify_tool_report("ok", raised=True).reported_failure)
+
+    def test_structured_failure_is_not_overridden_by_success_looking_text(self):
+        for outcome, failed in (
+            ("reported_ok", False),
+            ("reported_error", True),
+            ("unknown", False),
+        ):
+            with self.subTest(outcome=outcome):
+                status = classify_tool_report(StructuredToolReport(outcome))
+                self.assertEqual(status.reported_failure, failed)
+                self.assertFalse(status.execution_verified)
+                self.assertFalse(status.safe_to_auto_resume)
+
+    def test_structured_exception_overrides_report(self):
+        status = classify_tool_report(StructuredToolReport("reported_ok"), raised=True)
+        self.assertTrue(status.reported_failure)
+        self.assertFalse(status.safe_to_auto_resume)
+
+    def test_structured_invalid_outcome_rejected(self):
+        for outcome in ("success", "", None, True, 1):
+            with self.subTest(outcome=outcome):
+                with self.assertRaises(ValueError):
+                    StructuredToolReport(outcome)
+
+    def test_untrusted_dict_is_not_a_structured_report(self):
+        status = classify_tool_report({"outcome": "reported_error"})
+        self.assertFalse(status.reported_failure)
+        self.assertFalse(status.execution_verified)
 
     def test_invalid_exception_flag_rejected(self):
         for flag in (1, None, "true"):
