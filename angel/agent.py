@@ -26,6 +26,7 @@ from .usage import UsageTracker
 from .checkpoints import CheckpointStore
 from .tool_journal import ToolJournal, JournalError
 from .no_progress import NoProgressDetector
+from .tool_report_status import classify_tool_report
 
 
 class AgentError(Exception):
@@ -403,13 +404,9 @@ class Agent:
                     try:
                         self.tool_journal.finish(
                             journal_call, fn_name,
-                            success=(
-                                tool_exception is None
-                                and not (
-                                    isinstance(result, str)
-                                    and result.startswith("错误：")
-                                )
-                            ),
+                            success=not classify_tool_report(
+                                result, raised=tool_exception is not None
+                            ).reported_failure,
                         )
                     except (JournalError, OSError) as exc:
                         raise AgentError(
@@ -426,9 +423,7 @@ class Agent:
                 if self.no_progress_detector is not None:
                     # A returned error is not a completed deliverable. Keep it
                     # distinct for diagnostics without trusting tool text as progress.
-                    failed_report = isinstance(result, str) and result.startswith(
-                        ("错误：", "执行失败：")
-                    )
+                    failed_report = classify_tool_report(result).reported_failure
                     progress_event = "tool_failed" if failed_report else "tool_returned"
                     state = self.no_progress_detector.observe_event(progress_event)
                     if state.needs_attention and not progress_alerted:
