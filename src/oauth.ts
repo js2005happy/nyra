@@ -69,7 +69,7 @@ export async function postForm(
   try {
     const res = await fetchFn(url, {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
       body: new URLSearchParams(params).toString(),
       signal: controller.signal,
     });
