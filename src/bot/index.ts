@@ -10,11 +10,12 @@
 //   另有一条不进主链路的推送线：notifier（Heartbeat 静默巡查 + Watch
 //   文件变化 + 定时/队列任务结果），默认全关，见 notifier.ts。
 //
-// 取消与超时的诚实边界：与 Phase 1 相同（/stop 与超时不能真中断在跑的
-// 模型调用，只能不等结果、不回发、丢弃 Agent 实例、按取消前快照恢复会话
-// 文件）；本批多了一条：取消时同会话的挂起审批一并取消（bridge.
-// cancelSession），免得晚一步点的“批准”复活已经没了的任务。审批本身
-// 也有 TTL（默认 60 秒，可配），超时自动拒绝。
+// 取消与超时的诚实边界（可靠性打磨第 1 项第一批改后）：/stop 与超时
+// 现在向 Agent 传取消信号——在途模型调用 abort、在途工具与子进程被掐
+// 断，确认停下后才释放执行槽位（见 docs/cancellation.md）。Bot 侧仍
+// 保留 Promise.race 作安全网（信号万一没接住，race 照样不等结果、不回
+// 发），并保留取消清理：丢弃 Agent 实例、取消同会话挂起审批、按取消前
+// 快照恢复会话文件。审批本身也有 TTL（默认 60 秒，可配），超时自动拒绝。
 //
 // 权限：角色只认 config 的 bot.owner / bot.admins / bot.members（见
 // router.ts）；白名单两道门（Agent 的 disabledTools 不让工具进模型，
@@ -602,26 +603,36 @@ export class BotRunner {
     const agent = this.getAgent(sessionKey, profile);
     const beforeSnap = agent.usage.snapshot();
     const beforeSpent = agent.lastCost?.status === "priced" ? agent.lastCost.spentUsd : null;
-    const runPromise = agent.run(text);
+    const runPromise = agent.run(text, { signal });
     const aborted = new Promise<never>((_resolve, reject) => {
       if (signal.aborted) reject(new Error("已取消"));
       else signal.addEventListener("abort", () => reject(new Error("已取消")), { once: true });
     });
+    // 取消清理：丢弃 Agent 实例；同会话的挂起审批一并取消（免得晚一步点
+    // 的“批准”复活已经没了的任务）；恢复取消前快照。
+    const cancelCleanup = (): void => {
+      this.agents.delete(sessionKey);
+      this.bridge.cancelSession(sessionKey, this.queue.abortReason(sessionKey) === "timeout" ? "处理超时，审批已取消。" : "任务已停止，审批已取消。");
+      try { saveSession(sessionId, snapshotBefore ?? [], this.home); } catch { /* ignore */ }
+    };
     let resultText: string;
     try {
       resultText = await Promise.race([runPromise, aborted]);
     } catch (err) {
-      // 取消后：丢弃 Agent 实例；同会话的挂起审批一并取消（免得晚一步点的
-      // “批准”复活已经没了的任务）；后台调用结束后再恢复一次快照（epoch
-      // 没变才恢复）。
-      this.agents.delete(sessionKey);
-      this.bridge.cancelSession(sessionKey, this.queue.abortReason(sessionKey) === "timeout" ? "处理超时，审批已取消。" : "任务已停止，审批已取消。");
-      try { saveSession(sessionId, snapshotBefore ?? [], this.home); } catch { /* ignore */ }
+      cancelCleanup();
+      // 后台调用结束后再恢复一次快照（epoch 没变才恢复）。
       void runPromise.then(
         () => { if (this.abortEpochs.get(sessionKey) === epoch) { try { saveSession(sessionId, snapshotBefore ?? [], this.home); } catch { /* ignore */ } } },
         () => {},
       );
       throw err;
+    }
+    if (signal.aborted) {
+      // 可靠性打磨第 1 项第一批：信号已 abort，但 runPromise 先回来了
+      // （它已按取消收敛成“已取消”文本）——仍按取消处理，不把“已取消”
+      // 当正常结果回发。
+      cancelCleanup();
+      throw new Error("已取消");
     }
     this.flushUsage(sessionKey, agent);
     const snap = agent.usage.snapshot();

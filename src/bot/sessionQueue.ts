@@ -7,8 +7,8 @@
 // 取消语义（/stop 与超时共用同一条路）：
 //   - 排队中的任务：直接出队，调用方的 enqueue promise 以 "cancelled" 兑现；
 //   - 正在跑的任务：abort 它的 AbortSignal，任务函数自己负责在信号触发后
-//     尽快收尾（BotRunner 里是 agent.run 与 abort 信号 race，模型调用本身
-//     不支持中途掐断，见 index.ts 的说明）；
+//     尽快收尾（BotRunner 里是 agent.run(text, { signal })，信号一路传
+//     给模型请求、工具执行与子进程，见 docs/cancellation.md）；
 //   - cancel() 之后同一 key 的新任务照常入队（取消只影响当时的任务，不锁会话）。
 export type QueueResult = "done" | "cancelled";
 
