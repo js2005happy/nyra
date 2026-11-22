@@ -549,7 +549,7 @@ export async function executeLiveEvalTask(
       automatedApprovals,
       mailbox: task.category === 'connector' ? mailbox.state : null,
     };
-    writeEvalJson(join(ctx.home, 'acceptance.json'), evidence);
+    writeEvalJson(join(ctx.home, 'acceptance.json'), evidence, ctx.home);
     store.appendEvent(recorder.runId, 'eval_attempt_finished', {
       task_id: task.id,
       status: checks.every((x) => x.passed) ? 'passed' : 'failed',

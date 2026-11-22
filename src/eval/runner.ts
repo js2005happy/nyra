@@ -8,12 +8,13 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   writeFileSync,
   writeSync,
 } from 'node:fs';
-import { dirname, join, resolve, sep } from 'node:path';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { RunStore } from '../runs.ts';
 import { resolveDeepSeekEvalPricing } from './apiProvider.ts';
 import {
@@ -83,6 +84,26 @@ export interface EvalAdapter {
 export function evalHash(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
+// Canonicalize a path for comparison only: resolve the nearest existing
+// ancestor with realpath, then re-append the missing tail. The returned
+// value is never used as the path that callers read or write.
+function canonicalizePath(p: string): string {
+  const abs = resolve(p);
+  let cur = abs;
+  const tail: string[] = [];
+  for (;;) {
+    try {
+      const real = realpathSync(cur);
+      return tail.length === 0 ? real : join(real, ...tail.reverse());
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+      const parent = dirname(cur);
+      if (parent === cur) return abs;
+      tail.push(basename(cur));
+      cur = parent;
+    }
+  }
+}
 export function safeEvalPath(root: string, name: string): string {
   if (
     !name ||
@@ -92,20 +113,13 @@ export function safeEvalPath(root: string, name: string): string {
     throw new Error('评测相对路径无效');
   const base = resolve(root),
     path = resolve(base, name);
-  if (!path.startsWith(base + sep)) throw new Error('评测路径越界');
-  let ancestor = base;
-  for (;;) {
-    try {
-      if (lstatSync(ancestor).isSymbolicLink())
-        throw new Error('评测根目录不能经过符号链接');
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
-    }
-    const parent = dirname(ancestor);
-    if (parent === ancestor) break;
-    ancestor = parent;
-  }
-  let cursor = base;
+  // System temp dirs can sit behind a symlink (macOS /var -> /private/var),
+  // so ancestors above the root are out of scope: canonicalize the root and
+  // only police components below it. The returned path is left as-is.
+  const realBase = canonicalizePath(base),
+    realPath = resolve(realBase, name);
+  if (!realPath.startsWith(realBase + sep)) throw new Error('评测路径越界');
+  let cursor = realBase;
   for (const part of name.split('/')) {
     cursor = join(cursor, part);
     try {
@@ -117,19 +131,39 @@ export function safeEvalPath(root: string, name: string): string {
   }
   return path;
 }
-export function writeEvalJson(path: string, value: unknown): void {
-  // Trusted output location; refuse symlink parents instead of following them.
-  let cursor = resolve(path);
-  for (;;) {
+export function writeEvalJson(
+  path: string,
+  value: unknown,
+  root?: string,
+): void {
+  // Trusted output location; refuse symlink components instead of following
+  // them. Only components at or below the eval root are policed: ancestors
+  // above it (macOS /var -> /private/var) are the system's business, not the
+  // agent's. Without a root, only the file itself is checked.
+  const abs = resolve(path),
+    rawRoot = root === undefined ? dirname(abs) : resolve(root),
+    rel = relative(rawRoot, abs),
+    parts =
+      rel !== '' && rel !== '..' && !rel.startsWith('..' + sep)
+        ? rel.split(sep).filter((p) => p && p !== '.')
+        : [];
+  let cursor = rawRoot;
+  for (const part of parts) {
+    cursor = join(cursor, part);
     try {
       if (lstatSync(cursor).isSymbolicLink())
         throw new Error('评测输出不能经过符号链接');
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
     }
-    const next = dirname(cursor);
-    if (next === cursor) break;
-    cursor = next;
+  }
+  if (parts.length === 0) {
+    try {
+      if (lstatSync(abs).isSymbolicLink())
+        throw new Error('评测输出不能经过符号链接');
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+    }
   }
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const tmp = path + '.' + randomBytes(6).toString('hex') + '.tmp';
@@ -345,7 +379,7 @@ export async function runEvalSuite(options: {
   };
   const checkpoint = () => {
     report.summary = summarizeEval(report.results);
-    writeEvalJson(join(suiteRoot, 'report.json'), report);
+    writeEvalJson(join(suiteRoot, 'report.json'), report, suiteRoot);
   };
   checkpoint();
   for (const taskId of ids) {
