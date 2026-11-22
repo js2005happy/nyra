@@ -2,6 +2,8 @@
 
 ## 未发布（0.5.6）
 
+- 文档与发布验证（可靠性打磨第 5 项，2026-11-23）：`ROADMAP.md` 长期把已实现的功能列为待开发，本批按代码、测试、发布版本逐项核对并修正。**状态口径**：文件头新增三档定义——`已实现`（代码已在 main 上且有测试）、`已模拟验证`（只在假接口/假 transport 与本地确定性检查上验过）、`已实测`（真实端点/账号/任务上跑通过）。**改对的**：费用上限及实时成本看板（分层上限 `src/costCaps.ts`、预算预留 `src/budget.ts`、实时看板 `src/dashboard.ts`）、hooks（`src/hooks.ts`）、Telegram 网关（网关 `src/channels/gateway.ts` + 渠道 `src/bot/channels/telegram.ts`，真实 Bot 未接通）、并行子 Agent、Nyra MCP Server、HTTP MCP、Linux 本地沙箱、真实浏览器 CDP、图片输入。**仍待开发**：会话全文搜索、编辑器集成（只有 LSP 客户端 `src/lsp.ts`，无编辑器插件）；**部分**：多 Agent 真实状态板（花名册与任务板已有，统一视图未做）、工作目录写入限制（Linux/macOS 沙箱已接通，Windows 隔离待补强）、流式输出（工具输出流式已有，模型 token 流式未做）。**设计稿旧 Python 路径**：`docs/design/source/` 五个 mock 文件里的示例路径 `auth/client.py` / `tests/test_auth.py` / `pytest` 一律改成真实路径 `src/accounts.ts` / `tests/node/test-accounts.test.ts` / `bun test`。诚实边界：文档修正本身不改变任何功能；“已模拟验证”的功能在真账号/真机上仍未跑通。测试：本批只改文档与设计稿 mock，无新增测试；全量、探针、预算按批次流程重跑。
+
 - GitHub 设备流登录修补（2026-11-22，真机实测暴露）：`nyra account login github` 首轮报“GitHub 设备码端点返回了无法识别的内容”。根因是 `src/oauth.ts` 的 `postForm` 只发 `Content-Type`、没带 `Accept: application/json`，GitHub 设备码端点默认回表单格式（`device_code=...&user_code=...`），`JSON.parse` 解析不到、返回 null。现补上该头（Google 端点默认回 JSON、不受影响）。测试：`tests/node/test-accounts.test.ts` 加 2 项（postForm 发出的头含 `Accept: application/json`、GitHub JSON 设备码解析）。真机验证：新建的 GitHub OAuth App（Nyra，设备流已开）走完整设备流登录成功，账号 2857243938@qq.com、机主。诚实边界：只在真 GitHub 设备码端点与本地确定性检查上验过；Windows/macOS 真机未验证。
 
 ## 0.5.5（2026-11-22）
