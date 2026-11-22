@@ -320,9 +320,11 @@ export class SlackAdapter implements ChannelAdapter {
   // ---- 归一化 ----
 
   /**
-   * 审批按钮回调 → InboundMessage：value 只认 `bot:approve:<id>` 与
-   * `bot:reject:<id>` 两种（与 approvalBridge 的 APPROVAL_CALLBACK_PREFIX
-   * 完全一致），其余一律忽略（伪造的回调数据到不了审批层）。
+   * 审批按钮回调 → InboundMessage：value 只认新版四种回调
+   *（`bot:approve-once:<id>` / `bot:approve-session:<id>` /
+   * `bot:approve-always:<id>` / `bot:reject:<id>`）与旧版
+   * `bot:approve:<id>`（升级前已发出的提示，兼容为批准一次），其余一律
+   * 忽略（伪造的回调数据到不了审批层）。
    * 正文转成对应的 /approve / /reject 指令，走同一条确定性指令链路；
    * viaCallback 标记供主链路回 answerCallback 消转圈，callbackId 用
    * trigger_id（Slack 交互 ack 的唯一标识）。
@@ -331,8 +333,10 @@ export class SlackAdapter implements ChannelAdapter {
     if (!payload || !payload.actions?.length) return null;
     const action = payload.actions[0];
     if (!action || typeof action.value !== "string") return null;
-    const m = /^bot:(approve|reject):([0-9a-f]{8})$/.exec(action.value);
+    const m = /^bot:(approve-once|approve-session|approve-always|approve|reject):([0-9a-f]{8})$/.exec(action.value);
     if (!m) return null;
+    const scopeText = m[1] === "approve-session" ? " session" : m[1] === "approve-always" ? " always" : "";
+    const command = m[1] === "reject" ? "reject" : "approve";
     const channelId = payload.channel?.id ?? "";
     const userId = payload.user?.id ?? "";
     const threadTs = payload.message?.thread_ts;
@@ -345,7 +349,7 @@ export class SlackAdapter implements ChannelAdapter {
       senderRole: "member",
       isMentioned: true,
       messageId: messageTs || `cb-${action.action_id ?? "action"}`,
-      text: `/${m[1]} ${m[2]}`,
+      text: `/${command} ${m[2]}${scopeText}`,
       attachments: [],
       chatType: channelId.startsWith("D") ? "private" : "group",
       timestamp: Date.now(),
@@ -400,7 +404,7 @@ export class SlackAdapter implements ChannelAdapter {
         type: "button",
         text: { type: "plain_text", text: b.text, emoji: true },
         value: b.callbackData,
-        action_id: b.callbackData.startsWith("bot:approve:") ? "nyra_approve" : b.callbackData.startsWith("bot:reject:") ? "nyra_reject" : "nyra_action",
+        action_id: b.callbackData.startsWith("bot:approve") ? "nyra_approve" : b.callbackData.startsWith("bot:reject:") ? "nyra_reject" : "nyra_action",
       }));
       blocks.push({ type: "actions", elements });
       body.blocks = blocks;

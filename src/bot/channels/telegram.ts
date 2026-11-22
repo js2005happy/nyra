@@ -133,15 +133,19 @@ export class TelegramAdapter implements ChannelAdapter {
   }
 
   /**
-   * 按钮回调 → InboundMessage：callback_data 只认 `bot:approve:<id>` 与
-   * `bot:reject:<id>` 两种，其余一律忽略（伪造的回调数据到不了审批层）。
+   * 按钮回调 → InboundMessage：新版四种回调（`bot:approve-once:<id>` /
+   * `bot:approve-session:<id>` / `bot:approve-always:<id>` /
+   * `bot:reject:<id>`）+ 旧版 `bot:approve:<id>`（升级前已发出的提示，
+   * 兼容为批准一次），其余一律忽略（伪造的回调数据到不了审批层）。
    * 正文转成对应的 /approve / /reject 指令，走同一条确定性指令链路；
    * viaCallback 标记供主链路回 answerCallbackQuery 消转圈。
    */
   toCallback(query: TelegramCallbackQuery | undefined): InboundMessage | null {
     if (!query || !query.data || query.from?.is_bot) return null;
-    const m = /^bot:(approve|reject):([0-9a-f]{8})$/.exec(query.data);
+    const m = /^bot:(approve-once|approve-session|approve-always|approve|reject):([0-9a-f]{8})$/.exec(query.data);
     if (!m) return null;
+    const scopeText = m[1] === "approve-session" ? " session" : m[1] === "approve-always" ? " always" : "";
+    const command = m[1] === "reject" ? "reject" : "approve";
     const chatId = query.message ? String(query.message.chat.id) : String(query.from.id);
     const threadId = query.message && typeof query.message.message_thread_id === "number"
       ? String(query.message.message_thread_id)
@@ -157,7 +161,7 @@ export class TelegramAdapter implements ChannelAdapter {
       senderRole: "member",
       isMentioned: true,
       messageId: query.message ? String(query.message.message_id) : `cb-${query.id}`,
-      text: `/${m[1]} ${m[2]}`,
+      text: `/${command} ${m[2]}${scopeText}`,
       attachments: [],
       chatType,
       timestamp: Date.now(),

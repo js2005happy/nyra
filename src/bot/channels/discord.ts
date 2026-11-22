@@ -283,19 +283,23 @@ export class DiscordAdapter implements ChannelAdapter {
   // ---- 归一化 ----
 
   /**
-   * 审批按钮回调 → InboundMessage：custom_id 只认 `bot:approve:<id>` 与
-   * `bot:reject:<id>` 两种（与 approvalBridge 的 APPROVAL_CALLBACK_PREFIX
-   * 完全一致），其余一律忽略（伪造的回调到不了审批层）。正文转成对应的
-   * /approve / /reject 指令，走同一条确定性指令链路；viaCallback 标记供
-   * 主链路回 answerCallback 消转圈，callbackId 用 interaction 的
-   * `id:token`（Discord 交互响应端点的路径）。
+   * 审批按钮回调 → InboundMessage：custom_id 只认新版四种回调
+   *（`bot:approve-once:<id>` / `bot:approve-session:<id>` /
+   * `bot:approve-always:<id>` / `bot:reject:<id>`）与旧版
+   * `bot:approve:<id>`（升级前已发出的提示，兼容为批准一次），其余一律
+   * 忽略（伪造的回调到不了审批层）。正文转成对应的 /approve / /reject
+   * 指令，走同一条确定性指令链路；viaCallback 标记供主链路回
+   * answerCallback 消转圈，callbackId 用 interaction 的 `id:token`
+   *（Discord 交互响应端点的路径）。
    */
   toCallback(payload: DiscordInteractionPayload | undefined): InboundMessage | null {
     if (!payload || payload.type !== 2) return null; // 只认按钮点击（MESSAGE_COMPONENT）
     const customId = payload.data?.custom_id;
     if (typeof customId !== "string") return null;
-    const m = /^bot:(approve|reject):([0-9a-f]{8})$/.exec(customId);
+    const m = /^bot:(approve-once|approve-session|approve-always|approve|reject):([0-9a-f]{8})$/.exec(customId);
     if (!m) return null;
+    const scopeText = m[1] === "approve-session" ? " session" : m[1] === "approve-always" ? " always" : "";
+    const command = m[1] === "reject" ? "reject" : "approve";
     const user = payload.member?.user ?? payload.user;
     const channelId = payload.channel_id ?? payload.message?.channel_id ?? "";
     const messageId = payload.message?.id ?? "";
@@ -307,7 +311,7 @@ export class DiscordAdapter implements ChannelAdapter {
       senderRole: "member",
       isMentioned: true,
       messageId: messageId || `cb-${payload.id}`,
-      text: `/${m[1]} ${m[2]}`,
+      text: `/${command} ${m[2]}${scopeText}`,
       attachments: [],
       chatType: payload.guild_id ? "group" : "private",
       timestamp: Date.now(),
