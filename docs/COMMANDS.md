@@ -80,6 +80,7 @@
 | `nyra bot redlines <status\|list\|show\|tighten\|loosen\|set>` | Bot 缺口 51：业务动作硬红线表——发消息/付款/删除永远须人批，转钱/交易证券永远禁做（详见 `docs/business-redlines.md`） |
 | `nyra bot computer <create\|list\|status\|sleep\|wake\|remove\|credential\|shell\|sleep-due>` | Bot 缺口 42 第一批 + 第二批：每 Bot 一台持久电脑——持久 workspace + 浏览器 profile + 凭证 Vault + 隔离分级；第二批 BotRunner 接线：Bot 启动时绑电脑、Agent 在电脑的 workspace 里跑、`/computer-shell`（详见 `docs/bot-computer.md` 与 `docs/bot.md`） |
 | `nyra bot status` | Bot 总览：Telegram/Discord/Slack/WhatsApp 运行态 + 电脑数量与资源，本 Bot 的电脑带标注（详见 `docs/bot.md` 与 `docs/bot-computer.md`） |
+| `nyra bot approvals <list\|revoke <授权 id>>` | Hermes HQ 借鉴第 1 批：审批授权管理——批准时可带档位（一次/本次会话/一直），session 档只在内存里、always 档持久化进 bot-approval-grants.json，可用 `/grants` 查看、`/revoke-grant` 或本命令撤销（详见 `docs/bot.md`） |
 | `nyra channels <start\|stop\|status\|health\|bindings\|explain>` | 缺口 27：常驻多渠道网关——四渠道一个进程、bindings 确定性路由、渠道会话默认进沙箱、每条入站路由进证据链、语音指挥入口（详见 `docs/channels.md`） |
 | `nyra task <add\|list\|show\|cancel\|worker\|approve>` | 后台任务队列 |
 | `nyra kanban <create\|list\|show\|start\|fail\|review\|decide\|verify\|done\|reset\|remove\|tick\|sweep>` | 缺口 26：持久任务板——任务是账本里的一行，崩溃不丢、熔断进 blocked、完成须附验证证据（详见 `docs/kanban.md`） |

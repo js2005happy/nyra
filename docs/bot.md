@@ -213,6 +213,18 @@ Bot 人设。画像变了重建 Agent（会话记忆还在，换的是 mode 与�
    户原文），与运行事件 `bot_approval_requested` /
    `bot_approval_decided`（已注册进 `EVENT_FIELDS`）。`/status` 能看
    到当前挂起审批数。
+5. 批准可带档位（Hermes HQ 借鉴第 1 批）：按钮有四个——「批准一次」
+   「拒绝」「本次会话都批准」「一直批准」；指令写法是 `/approve <id>
+   [once|session|always]`（默认 once）。session 档只在内存里、进程
+   重启即失效；always 档持久化进 `~/.nyra/bot-approval-grants.json`。
+   授权只认“工具 + 参数指纹”精确匹配，不泛化；红线 never 档与角色白
+   名单仍在授权之前查——授权永远绕不过红线。
+6. 授权管理：聊天里 `/grants` 列出已记的授权、`/revoke-grant <授权 id>`
+   撤销；本机 CLI `nyra bot approvals list` / `nyra bot approvals
+   revoke <授权 id>`（list 只列 always 档——session 档在 Bot 进程内存
+   里，CLI 看不到）。授权覆盖放行时同样记审计与运行事件
+   （`bot_approval_decided`，via 为 grant-session / grant-always，
+   approval_id 记授权 id），证据链里看得出这次调用是靠授权放行的。
 
 ### 用量硬顶（审批绕不过配额）
 
