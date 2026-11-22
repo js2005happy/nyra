@@ -73,6 +73,22 @@ class LocalListDirReportTests(unittest.TestCase):
             self.assertNotIn(secret, output)
             self.assertTrue(classify_tool_report(report).reported_failure)
 
+    def test_explicit_tool_error_does_not_echo_private_path(self):
+        from angel.tools import ToolError
+
+        with tempfile.TemporaryDirectory() as root:
+            ctx = ToolContext(workdir=Path(root), mode="readonly", interactive=False,
+                              memory_path=Path(root) / "MEMORY.md", skills_dir=Path(root) / "skills")
+            secret = "/private/customer-token/location"
+            with patch("angel.tools._resolve_path", side_effect=ToolError(secret)):
+                output, report = execute_local_list_dir_report(ctx)
+            self.assertEqual(output, "错误：目录读取失败")
+            self.assertNotIn(secret, output)
+            status = classify_tool_report(report)
+            self.assertTrue(status.reported_failure)
+            self.assertFalse(status.execution_verified)
+            self.assertFalse(status.safe_to_auto_resume)
+
     def test_backend_is_rejected_before_remote_call(self):
         with tempfile.TemporaryDirectory() as root:
             ctx = ToolContext(workdir=Path(root), mode="readonly", interactive=False, memory_path=Path(root) / "MEMORY.md", skills_dir=Path(root) / "skills")
