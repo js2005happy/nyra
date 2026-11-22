@@ -494,6 +494,31 @@ sfu_peer_left: ["room", "peer"],
 sfu_room_closed: ["room", "reason"],
 sfu_turn_credential_issued: ["room", "peer", "expires_at"],
 sfu_recording_started: ["room", "consented_by"],
+// 第 3 批 G-P0-2 视频部分：视频 Producer/Consumer、档位、10 分钟模拟。
+// 只记房间、成员、档位与帧数，不记视频内容。
+video_producer_started: ["room", "peer", "track"],
+video_consumer_subscribed: ["room", "peer", "producer", "tier"],
+video_quality_changed: ["room", "peer", "producer", "tier"],
+video_session_simulated: ["room", "peers", "seconds", "frames", "delivered", "dropped"],
+// 第 3 批外部会议进证据链——会议、提供方、纪元、轮次、决定与待办数。
+// 只记数量与结论，不记字幕原文。
+meeting_created: ["meeting", "provider"],
+meeting_joined: ["meeting", "provider"],
+meeting_reconnected: ["meeting", "epoch"],
+meeting_minutes_built: ["meeting", "turns", "decisions", "actions"],
+// 第 3 批 G-P1-4 公开发现进证据链——地址、名字、签名结论。只记
+// 结论，不记名片全文。
+peer_discovered: ["url", "name", "signature"],
+// 第 3 批 per-peer token 进证据链——只记给谁，不记 token 原文。
+peer_token_set: ["peer"],
+peer_token_revoked: ["peer"],
+// 第 3 批 G-P1-13 Rendezvous + 队列驱动底座进证据链——节点、任务、
+// 纪元。只记 id 与纪元，不记任务载荷。
+rendezvous_node_registered: ["node", "endpoint"],
+work_task_enqueued: ["task", "key"],
+work_task_claimed: ["task", "node", "epoch"],
+work_task_completed: ["task", "node"],
+work_task_failed: ["task", "node", "retries"],
 // 第 2 批 G-P1-1：群组计划引擎进证据链——计划、步骤、负责人、契约、
 // 验收通过数。只记 id 与结论，不记任务全文。
 group_plan_created: ["plan", "room", "steps"],

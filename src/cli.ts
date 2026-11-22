@@ -220,10 +220,13 @@ nyra shopify <auth|status|products|product|orders|order|inventory>   Shopify 原
 nyra slack <auth|status|channels|history|send|card>   Slack 原生连接器：读频道 / 消息、发消息（须显式批准）、发审批卡（详见 docs/connectors.md）
 nyra connector <status|list|approve|revoke|auth|install|uninstall|usage>   连接器目录：安装 / 一键授权 / 撤销 / 用量（详见 docs/connectors.md）
 nyra mcp server <status|enable|disable|allow-writes-on|allow-writes-off>   对外 MCP 服务开关：别的 agent 经网关 POST /mcp 调记忆与任务（默认关闭，详见 docs/mcp.md）
-nyra peer <status|enable|disable|list|auth|ask|handoff|card|code|add|request|accept|friends|block|circle|share|grant|proposal|branch>   对端协作：问别的 Nyra 实例、交接运行上下文、名片加好友、带 scope 可吊销的 grant、对方写操作提议、外来分支合入（默认关闭，详见 docs/peer.md）
+nyra peer <status|enable|disable|list|auth|ask|handoff|card|code|add|request|accept|friends|block|circle|share|grant|proposal|branch|discover|token>   对端协作：问别的 Nyra 实例、交接运行上下文、名片加好友、带 scope 可吊销的 grant、对方写操作提议、外来分支合入、公开发现与 per-peer token、名片 JWS 签名（默认关闭，详见 docs/peer.md 与 docs/peer-discovery.md）
 nyra circle <create|list|show|invite|revoke|delete|bind|unbind|owner|check|bindings>   信任圈：谁能给 agent 发任务（默认全封闭，圈外消息网关直接丢弃，详见 docs/circles.md）
 nyra session <create|list|show|join|join-request|join-approve|join-decline|join-list|leave|delegate|accept|complete|share|frame|record|end>   跨 agent 联合会话：多人多 agent 视频会（本地扇出模型），会内委派 + 共享任务产物（allowlist），画面默认不留存、录制须全体同意；好友进会要批、默认只读（详见 docs/sessions.md）
-nyra sfu <create|rooms|status|join|leave|turn|record|close|reclaim>   群组语音 SFU（本地实现，选型 mediasoup）：语音房 + 成员 + TURN 凭据 + 录制全体同意门；真媒体面等 mediasoup 接线（详见 docs/sfu.md）
+nyra sfu <create|rooms|status|join|leave|turn|record|close|reclaim|video>   群组语音 SFU（本地实现，选型 mediasoup）：语音房 + 成员 + TURN 凭据 + 录制全体同意门；video 是群组视频（Producer/Consumer、按需看帧、带宽自适应、10 分钟模拟；真媒体面等 mediasoup 接线，详见 docs/sfu.md 与 docs/group-video.md）
+nyra meeting <create|list|join|reconnect|transcript|minutes|record|dispatch>   进外部会议：Meet/Zoom 受控浏览器进会、听字幕出纪要；进会、录制、发言都要机主批（详见 docs/meeting.md）
+nyra rendezvous <register|nodes|route|status|remove|epoch>   Rendezvous 多节点路由：HRW 一致性哈希把任务 key 路由到节点（本机/局域网节点，详见 docs/mesh.md）
+nyra queue <enqueue|list|show|claim|complete|fail>   队列驱动底座：幂等键入队、节点认领 + 租约、纪元防旧指令重执行（详见 docs/mesh.md）
 nyra group <room|chat|plan>   群聊：房间与机器人、swarm 顺序发言（可组合终止条件）、群组计划引擎（步骤 worktree 隔离 + 独立验收，详见 docs/group-chat.md 与 docs/group-plan.md）
 nyra call <ledger|show <通话 id>|summary>   通话成本与隐私仪表：每通电话三本账（传输 / 媒体 / token），录制默认关、须全体同意，纪要进证据链（详见 docs/call-ledger.md）
 nyra budget <list|show|reserve|settle|release|strict>   并发预算预留：模型调用前先预留额度、超上限不发请求；金额未知默认暂停等人工处理（详见 docs/budget.md）
@@ -357,10 +360,13 @@ nyra shopify <auth|status|products|product|orders|order|inventory>   native Shop
 nyra slack <auth|status|channels|history|send|card>   native Slack connector: read channels / messages, send messages (explicit approval required), post approval cards (see docs/connectors.md)
 nyra connector <status|list|approve|revoke|auth|install|uninstall|usage>   connector directory: install / one-click auth / revoke / usage (see docs/connectors.md)
 nyra mcp server <status|enable|disable|allow-writes-on|allow-writes-off>   external MCP server switch: other agents call Nyra memory and tasks via gateway POST /mcp (off by default, see docs/mcp.md)
-nyra peer <status|enable|disable|list|auth|ask|handoff|card|code|add|request|accept|friends|block|circle|share|grant|proposal|branch>   peer collaboration: ask another Nyra instance, hand off run context, agent card and friends, scoped revocable grants, peer write proposals, foreign branch merges (off by default, see docs/peer.md)
+nyra peer <status|enable|disable|list|auth|ask|handoff|card|code|add|request|accept|friends|block|circle|share|grant|proposal|branch|discover|token>   peer collaboration: ask another Nyra instance, hand off run context, agent card and friends, scoped revocable grants, peer write proposals, foreign branch merges, public discovery with per-peer tokens, agent card JWS signatures (off by default, see docs/peer.md and docs/peer-discovery.md)
 nyra circle <create|list|show|invite|revoke|delete|bind|unbind|owner|check|bindings>   trust circles: who may send tasks to the agent (closed by default, out-of-circle messages are dropped at the gateway, see docs/circles.md)
 nyra session <create|list|show|join|join-request|join-approve|join-decline|join-list|leave|delegate|accept|complete|share|frame|record|end>   cross-agent joint sessions: multi-person multi-agent video meetings (local fanout model), in-session delegation + shared task products (allowlist), frames not retained by default, recording needs everyone's consent; friends join only after approval, read-only by default (see docs/sessions.md)
-nyra sfu <create|rooms|status|join|leave|turn|record|close|reclaim>   group voice SFU (local implementation, mediasoup selected): voice rooms + members + TURN credentials + all-consent recording gate; real media plane waits for mediasoup wiring (see docs/sfu.md)
+nyra sfu <create|rooms|status|join|leave|turn|record|close|reclaim|video>   group voice SFU (local implementation, mediasoup selected): voice rooms + members + TURN credentials + all-consent recording gate; video is group video (Producer/Consumer, watch-on-demand, adaptive bandwidth, 10-minute simulation; real media plane waits for mediasoup wiring, see docs/sfu.md and docs/group-video.md)
+nyra meeting <create|list|join|reconnect|transcript|minutes|record|dispatch>   join external meetings: controlled-browser join for Meet/Zoom, listen to captions and build minutes; joining, recording and speaking all need the owner's approval (see docs/meeting.md)
+nyra rendezvous <register|nodes|route|status|remove|epoch>   Rendezvous multi-node routing: HRW consistent hashing routes a task key to a node (local/LAN nodes only, see docs/mesh.md)
+nyra queue <enqueue|list|show|claim|complete|fail>   queue-driven base: idempotent enqueue, node claim + lease, epoch guard against stale re-execution (see docs/mesh.md)
 nyra group <room|chat|plan>   group chat: rooms and bots, swarm turn-taking (composable stop conditions), group plan engine (per-step worktree isolation + independent acceptance, see docs/group-chat.md and docs/group-plan.md)
 nyra call <ledger|show <call id>|summary>   call cost and privacy dashboard: three books per call (transport / media / tokens), recording off by default and needs everyone's consent, minutes go into the evidence chain (see docs/call-ledger.md)
 nyra budget <list|show|reserve|settle|release|strict>   concurrent budget reservation: reserve budget before a model call, over-limit calls are not sent; unknown amounts pause by default until a human handles them (see docs/budget.md)
@@ -2009,7 +2015,428 @@ async function handleSfu(argv: string[], home: string): Promise<number> {
       process.stdout.write(reclaimed.length ? `已回收闲置语音房：${reclaimed.join("、")}\n` : "没有闲置超 60 秒的语音房。\n");
       return 0;
     }
+    // 第 3 批 G-P0-2 视频部分：群组视频（挂在语音房上；开视频须是房里
+    // 说话者，听众只能看）。帧只记指纹，不存视频字节。
+    if (action === "video") {
+      const { VideoRegistry, simulateVideoSession, VIDEO_ROOM_BUDGET_KBPS } = await import("./groupVideo.ts");
+      const video = new VideoRegistry(home);
+      const sub = argv[1];
+      const room = argv[2];
+      const usage = "用法：nyra sfu video <start|stop|list|subscribe|unsubscribe|quality|frames|publish|record|simulate> <房间 id> ...（详见 docs/group-video.md）";
+      if (!sub) { process.stderr.write(`错误：${usage}\n`); return 2; }
+      if (sub === "publish") {
+        const peer = argv[3];
+        const payload = argv.slice(4).join(" ");
+        if (!room || !peer || !payload) { process.stderr.write("错误：用法：nyra sfu video publish <房间 id> <好友名> <帧内容>（调试用：发一帧视频，只记指纹）\n"); return 2; }
+        const frame = video.publishFrame(room, peer, payload);
+        process.stdout.write(`已发视频帧 #${frame.seq}（指纹 ${frame.fingerprint}）\n`);
+        return 0;
+      }
+      if (sub === "start") {
+        const peer = argv[3];
+        if (!room || !peer) { process.stderr.write("错误：用法：nyra sfu video start <房间 id> <好友名> [--kind camera|screen] [--max-kbps <码率>]\n"); return 2; }
+        const kind = get("--kind") ?? "camera";
+        if (kind !== "camera" && kind !== "screen") { process.stderr.write("错误：--kind 只认 camera 或 screen\n"); return 2; }
+        const maxKbpsRaw = get("--max-kbps");
+        const maxKbps = maxKbpsRaw === undefined ? undefined : Number(maxKbpsRaw);
+        const p = video.startProducer(room, peer, kind as "camera" | "screen", maxKbps);
+        process.stdout.write(`${peer} 已在房间 ${room} 开视频（${p.kind}，track ${p.track}，码率上限 ${p.maxKbps} kbps）\n`);
+        return 0;
+      }
+      if (sub === "stop") {
+        const peer = argv[3];
+        if (!room || !peer) { process.stderr.write("错误：用法：nyra sfu video stop <房间 id> <好友名>\n"); return 2; }
+        const ok = video.stopProducer(room, peer);
+        process.stdout.write(ok ? `${peer} 的视频已停（订阅它的消费者已一并退订）。\n` : `${peer} 在房间 ${room} 里没开视频。\n`);
+        return 0;
+      }
+      if (sub === "list") {
+        if (!room) { process.stderr.write("错误：用法：nyra sfu video list <房间 id>\n"); return 2; }
+        const producers = video.listProducers(room);
+        const consumers = video.listConsumers(room);
+        process.stdout.write(`房间 ${room}：${producers.length} 路视频（房级总带宽上限 ${VIDEO_ROOM_BUDGET_KBPS} kbps）\n`);
+        for (const p of producers) process.stdout.write(` ${p.peer}（${p.kind}，track ${p.track}，码率上限 ${p.maxKbps} kbps）\n`);
+        for (const c of consumers) process.stdout.write(` ${c.peer} 在看 ${c.producer} 的视频（${c.tier} 档，可用带宽 ${c.availableKbps} kbps）\n`);
+        return 0;
+      }
+      if (sub === "subscribe" || sub === "unsubscribe") {
+        const peer = argv[3];
+        const producer = argv[4];
+        if (!room || !peer || !producer) { process.stderr.write(`错误：用法：nyra sfu video ${sub} <房间 id> <好友名> <发布者>${sub === "subscribe" ? " --kbps <可用带宽>" : ""}\n`); return 2; }
+        if (sub === "subscribe") {
+          const kbpsRaw = get("--kbps");
+          const kbps = kbpsRaw === undefined ? NaN : Number(kbpsRaw);
+          if (!Number.isFinite(kbps) || kbps <= 0) { process.stderr.write("错误：订阅须报可用带宽：--kbps <正数>（带宽定档用它）\n"); return 2; }
+          const c = video.subscribe(room, peer, producer, kbps);
+          process.stdout.write(`${peer} 已订阅 ${producer} 的视频（${c.tier} 档）\n`);
+        } else {
+          const ok = video.unsubscribe(room, peer, producer);
+          process.stdout.write(ok ? `${peer} 已退订 ${producer} 的视频。\n` : `${peer} 没订阅 ${producer} 的视频。\n`);
+        }
+        return 0;
+      }
+      if (sub === "quality") {
+        const peer = argv[3];
+        const producer = argv[4];
+        const tier = argv[5];
+        if (!room || !peer || !producer || !tier || (tier !== "high" && tier !== "medium" && tier !== "low")) {
+          process.stderr.write("错误：用法：nyra sfu video quality <房间 id> <好友名> <发布者> <high|medium|low>\n");
+          return 2;
+        }
+        const c = video.setQuality(room, peer, producer, tier);
+        process.stdout.write(`${peer} 看 ${producer} 的视频已改 ${c.tier} 档。\n`);
+        return 0;
+      }
+      if (sub === "frames") {
+        const peer = argv[3];
+        const producer = argv[4];
+        if (!room || !peer || !producer) { process.stderr.write("错误：用法：nyra sfu video frames <房间 id> <好友名> <发布者> [--seq <序号>]\n"); return 2; }
+        const seqRaw = get("--seq");
+        const seq = seqRaw === undefined ? 0 : Number(seqRaw);
+        const frames = video.framesFor(room, peer, producer, Number.isFinite(seq) ? seq : 0);
+        if (!frames.length) {
+          process.stdout.write("没有新帧（对方没发帧，或你的档位在下采样跳帧）。\n");
+          return 0;
+        }
+        for (const f of frames) process.stdout.write(`#${f.seq}\t指纹 ${f.fingerprint}\t${f.at}\n`);
+        return 0;
+      }
+      if (sub === "record") {
+        const verb = argv[3];
+        if (!room || (verb !== "start" && verb !== "stop")) { process.stderr.write("错误：用法：nyra sfu video record <start|stop> <房间 id>\n"); return 2; }
+        if (verb === "start") {
+          video.startVideoRecording(room);
+          process.stdout.write(`房间 ${room} 视频录制已开（全体已同意）。\n`);
+        } else {
+          video.stopVideoRecording(room);
+          process.stdout.write(`房间 ${room} 视频录制已停。\n`);
+        }
+        return 0;
+      }
+      if (sub === "simulate") {
+        const peers = [argv[3], argv[4], argv[5]].filter((p): p is string => !!p);
+        if (!room || peers.length !== 3 || argv[6] !== undefined && !argv[6].startsWith("--")) {
+          process.stderr.write("错误：用法：nyra sfu video simulate <房间 id> <好友A> <好友B> <好友C> [--seconds <秒>] [--fps <帧率>]\n");
+          return 2;
+        }
+        const secondsRaw = get("--seconds");
+        const fpsRaw = get("--fps");
+        const seconds = secondsRaw === undefined ? 600 : Number(secondsRaw);
+        const fps = fpsRaw === undefined ? 10 : Number(fpsRaw);
+        const res = simulateVideoSession(home, room, peers, seconds, { fps });
+        process.stdout.write(`模拟 ${res.seconds} 秒：发帧 ${res.framesPublished}、投递 ${res.framesDelivered}、按档下采样 ${res.framesDroppedByTier}、Producer 存活 ${res.producersAlive}、房间${res.roomOpen ? "还开着" : "已关闭"}。\n`);
+        if (!res.roomOpen || res.producersAlive !== 3) {
+          process.stderr.write("模拟失败：房间被回收或 Producer 掉了。\n");
+          return 1;
+        }
+        return 0;
+      }
+      process.stderr.write(`错误：${usage}\n`);
+      return 2;
+    }
     process.stderr.write(`错误：未知子命令 sfu ${action}\n`);
+    return 2;
+  } catch (err: unknown) {
+    process.stderr.write(`错误：${err instanceof Error ? err.message : String(err)}\n`);
+    return 1;
+  }
+}
+
+// ---- 子命令：meeting（第 3 批：进外部会议 Meet/Zoom） ----
+// CLI 是单进程：进会即听 N 秒后离会出纪要（--listen，默认 60 秒）；
+// 常驻听会走网关/daemon，不在本批。进会、录制、发言都要机主批。
+async function handleMeeting(argv: string[], home: string): Promise<number> {
+  const action = argv[0];
+  if (!action) {
+    process.stdout.write("用法：nyra meeting <create|list|join|reconnect|transcript|minutes|record|dispatch> [选项]（详见 docs/meeting.md）\n");
+    return 2;
+  }
+  const get = (flag: string): string | undefined => {
+    const i = argv.indexOf(flag);
+    return i >= 0 ? argv[i + 1] : undefined;
+  };
+  const has = (flag: string): boolean => argv.includes(flag);
+  try {
+    const { createMeeting, listMeetings, joinMeeting, reconnectMeeting, leaveMeeting, listenMeeting, addTranscriptLine, buildMinutes, consentMeetingRecording, startMeetingRecording, dispatchMeetingAction, getMeeting } = await import("./meeting.ts");
+    if (action === "create") {
+      const url = argv[1];
+      if (!url) { process.stderr.write("错误：用法：nyra meeting create <会议链接>（只认 meet.google.com 与 zoom.us）\n"); return 2; }
+      const s = createMeeting(home, url);
+      process.stdout.write(`会议已建：${s.id}（${s.provider}，${s.url}）\n进会：nyra meeting join ${s.id} --yes --listen <秒>\n`);
+      return 0;
+    }
+    if (action === "list") {
+      const list = listMeetings(home);
+      if (!list.length) {
+        process.stdout.write("还没有会议：nyra meeting create <会议链接> 建一场。\n");
+        return 0;
+      }
+      for (const s of list) {
+        process.stdout.write(`${s.id}\t${s.provider}\t${s.status}\t纪元 ${s.epoch}\t${s.transcript.length} 行字幕\t${s.url}\n`);
+      }
+      return 0;
+    }
+    if (action === "join" || action === "reconnect") {
+      const id = argv[1];
+      if (!id) { process.stderr.write(`错误：用法：nyra meeting ${action} <会议 id> --yes [--as <名字>] [--listen <秒>] [--record]\n`); return 2; }
+      if (!has("--yes")) { process.stderr.write("进外部会议须机主批准：请加 --yes\n"); return 2; }
+      const listenRaw = get("--listen");
+      const listenSeconds = listenRaw === undefined ? 60 : Number(listenRaw);
+      if (!Number.isFinite(listenSeconds) || listenSeconds < 0 || listenSeconds > 3600) {
+        process.stderr.write("错误：--listen 只能是 0–3600 秒\n");
+        return 2;
+      }
+      const opts = { approved: true, as: get("--as") ?? undefined };
+      const session = action === "join" ? await joinMeeting(home, id, opts) : await reconnectMeeting(home, id, opts);
+      process.stdout.write(`已进会：${id}（${session.provider}，纪元 ${session.epoch}）\n`);
+      const page = session.__page;
+      if (!page) {
+        process.stderr.write("错误：进会后没拿到页面句柄，没法听字幕。\n");
+        return 1;
+      }
+      if (has("--record")) {
+        try {
+          startMeetingRecording(home, id);
+          process.stdout.write("录制已开（全体已同意）。\n");
+        } catch (e) {
+          process.stderr.write(`录制开不了：${e instanceof Error ? e.message : String(e)}\n`);
+          await leaveMeeting(home, id, page);
+          return 1;
+        }
+      }
+      const deadline = Date.now() + listenSeconds * 1000;
+      while (Date.now() < deadline) {
+        const line = await listenMeeting(home, id, page);
+        if (line) process.stdout.write(`[${line.speaker}] ${line.text}\n`);
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+      await leaveMeeting(home, id, page);
+      const minutes = buildMinutes(home, id);
+      process.stdout.write(`已离会。纪要：${minutes.turns} 轮，决定 ${minutes.decisions.length} 条，待办 ${minutes.actions.length} 条。\n`);
+      for (const d of minutes.decisions) process.stdout.write(`决定：${d}\n`);
+      for (const a of minutes.actions) process.stdout.write(`待办：${a}\n`);
+      return 0;
+    }
+    if (action === "transcript") {
+      const sub = argv[1];
+      const id = argv[2];
+      if (sub === "add") {
+        const speaker = argv[3];
+        const text = argv.slice(4).join(" ");
+        if (!id || !speaker || !text) { process.stderr.write("错误：用法：nyra meeting transcript add <会议 id> <说话人> <文字>\n"); return 2; }
+        const line = addTranscriptLine(home, id, speaker, text);
+        process.stdout.write(`已记字幕 #${line.key.split(":").pop()}（${line.speaker}，纪元 ${line.epoch}）\n`);
+        return 0;
+      }
+      if (sub === "list" || !sub) {
+        if (!id) { process.stderr.write("错误：用法：nyra meeting transcript list <会议 id>\n"); return 2; }
+        const s = getMeeting(home, id);
+        if (!s) { process.stderr.write(`错误：没有这场会议：${id}\n`); return 1; }
+        if (!s.transcript.length) {
+          process.stdout.write("还没有字幕。\n");
+          return 0;
+        }
+        for (const l of s.transcript) process.stdout.write(`[${l.speaker}] ${l.text}（纪元 ${l.epoch}，${l.at}）\n`);
+        return 0;
+      }
+      process.stderr.write("错误：用法：nyra meeting transcript <add|list> <会议 id> ...\n");
+      return 2;
+    }
+    if (action === "minutes") {
+      const id = argv[1];
+      if (!id) { process.stderr.write("错误：用法：nyra meeting minutes <会议 id>\n"); return 2; }
+      const minutes = buildMinutes(home, id);
+      process.stdout.write(`会议 ${minutes.meeting}（${minutes.provider}）：参会 ${minutes.participants.join("、") || "（未知）"}，${minutes.turns} 轮\n`);
+      for (const d of minutes.decisions) process.stdout.write(`决定：${d}\n`);
+      for (const a of minutes.actions) process.stdout.write(`待办：${a}\n`);
+      return 0;
+    }
+    if (action === "record") {
+      const sub = argv[1];
+      const id = argv[2];
+      if (sub === "consent") {
+        const who = argv[3];
+        if (!id || !who) { process.stderr.write("错误：用法：nyra meeting record consent <会议 id> <名字>\n"); return 2; }
+        consentMeetingRecording(home, id, who);
+        process.stdout.write(`${who} 已同意录制（会议 ${id}）\n`);
+        return 0;
+      }
+      if (sub === "start") {
+        if (!id) { process.stderr.write("错误：用法：nyra meeting record start <会议 id>\n"); return 2; }
+        startMeetingRecording(home, id);
+        process.stdout.write(`会议 ${id} 录制已开（全体已同意）。\n`);
+        return 0;
+      }
+      process.stderr.write("错误：用法：nyra meeting record <consent|start> <会议 id> [<名字>]\n");
+      return 2;
+    }
+    if (action === "dispatch") {
+      const id = argv[1];
+      const yesIdx = argv.indexOf("--yes");
+      const text = argv.slice(2).filter((_, i) => i + 2 !== yesIdx).join(" ");
+      if (!id || !text) { process.stderr.write("错误：用法：nyra meeting dispatch <会议 id> <待办文字> --yes\n"); return 2; }
+      if (!has("--yes")) { process.stderr.write("派发待办须机主批准：请加 --yes\n"); return 2; }
+      const res = await dispatchMeetingAction(home, id, text, async (a) => {
+        const { enqueueTask } = await import("./workQueue.ts");
+        return enqueueTask(home, `meeting:${id}`, a).id;
+      });
+      if (!res.dispatched) {
+        process.stdout.write(`没派发：${res.reason}\n`);
+        return 0;
+      }
+      process.stdout.write(`已派发进任务队列：${res.taskId}（${text}）\n`);
+      return 0;
+    }
+    process.stderr.write(`错误：未知子命令 meeting ${action}\n`);
+    return 2;
+  } catch (err: unknown) {
+    process.stderr.write(`错误：${err instanceof Error ? err.message : String(err)}\n`);
+    return 1;
+  }
+}
+
+// ---- 子命令：rendezvous（第 3 批 G-P1-13：Rendezvous 多节点路由） ----
+async function handleRendezvous(argv: string[], home: string): Promise<number> {
+  const action = argv[0];
+  if (!action) {
+    process.stdout.write("用法：nyra rendezvous <register|nodes|route|status|remove|epoch> [选项]（详见 docs/mesh.md）\n");
+    return 2;
+  }
+  const get = (flag: string): string | undefined => {
+    const i = argv.indexOf(flag);
+    return i >= 0 ? argv[i + 1] : undefined;
+  };
+  const has = (flag: string): boolean => argv.includes(flag);
+  try {
+    const { registerNode, listNodes, routeKey, setNodeStatus, removeNode, rendezvousEpoch } = await import("./rendezvous.ts");
+    if (action === "register") {
+      const id = argv[1];
+      const endpoint = argv[2];
+      if (!id || !endpoint) { process.stderr.write("错误：用法：nyra rendezvous register <节点 id> <端点> [--weight <权重>]（只认本机/局域网端点）\n"); return 2; }
+      const weightRaw = get("--weight");
+      const weight = weightRaw === undefined ? 1 : Number(weightRaw);
+      const node = registerNode(home, id, endpoint, weight);
+      process.stdout.write(`节点已登记：${node.id}（${node.endpoint}，权重 ${node.weight}，active）\n`);
+      return 0;
+    }
+    if (action === "nodes") {
+      const nodes = listNodes(home);
+      if (!nodes.length) {
+        process.stdout.write("还没登记节点：nyra rendezvous register <节点 id> <端点>\n");
+        return 0;
+      }
+      for (const n of nodes) process.stdout.write(`${n.id}\t${n.endpoint}\t权重 ${n.weight}\t${n.status}\n`);
+      return 0;
+    }
+    if (action === "route") {
+      const key = argv[1];
+      if (!key) { process.stderr.write("错误：用法：nyra rendezvous route <任务 key>\n"); return 2; }
+      const node = routeKey(home, key);
+      process.stdout.write(`任务 ${key} 路由到节点 ${node.id}（${node.endpoint}）\n`);
+      return 0;
+    }
+    if (action === "status") {
+      const id = argv[1];
+      const status = argv[2];
+      if (!id || !status || (status !== "active" && status !== "drained" && status !== "offline")) {
+        process.stderr.write("错误：用法：nyra rendezvous status <节点 id> <active|drained|offline>\n");
+        return 2;
+      }
+      const node = setNodeStatus(home, id, status);
+      process.stdout.write(`节点 ${node.id} 已改为 ${node.status}（纪元 +1，旧路由作废）。\n`);
+      return 0;
+    }
+    if (action === "remove") {
+      const id = argv[1];
+      if (!id) { process.stderr.write("错误：用法：nyra rendezvous remove <节点 id> --yes\n"); return 2; }
+      if (!has("--yes")) { process.stderr.write("移除节点须加 --yes 确认\n"); return 2; }
+      const ok = removeNode(home, id);
+      process.stdout.write(ok ? `节点 ${id} 已移除（纪元 +1）。\n` : `没有这个节点：${id}\n`);
+      return 0;
+    }
+    if (action === "epoch") {
+      process.stdout.write(`当前 Rendezvous 纪元：${rendezvousEpoch(home)}\n`);
+      return 0;
+    }
+    process.stderr.write(`错误：未知子命令 rendezvous ${action}\n`);
+    return 2;
+  } catch (err: unknown) {
+    process.stderr.write(`错误：${err instanceof Error ? err.message : String(err)}\n`);
+    return 1;
+  }
+}
+
+// ---- 子命令：queue（第 3 批 G-P1-13：队列驱动底座） ----
+async function handleQueue(argv: string[], home: string): Promise<number> {
+  const action = argv[0];
+  if (!action) {
+    process.stdout.write("用法：nyra queue <enqueue|list|show|claim|complete|fail> [选项]（详见 docs/mesh.md）\n");
+    return 2;
+  }
+  const get = (flag: string): string | undefined => {
+    const i = argv.indexOf(flag);
+    return i >= 0 ? argv[i + 1] : undefined;
+  };
+  try {
+    const { enqueueTask, listTasks, getTask, claimTask, completeTask, failTask } = await import("./workQueue.ts");
+    if (action === "enqueue") {
+      const key = argv[1];
+      const idemIdx = argv.indexOf("--idem");
+      const payload = argv.slice(2).filter((_, i) => i + 2 !== idemIdx && i + 2 !== idemIdx + 1).join(" ");
+      if (!key || !payload) { process.stderr.write("错误：用法：nyra queue enqueue <路由 key> <载荷描述> [--idem <幂等键>]\n"); return 2; }
+      const task = enqueueTask(home, key, payload, get("--idem") ?? undefined);
+      process.stdout.write(`任务已入队：${task.id}（key ${task.key}，幂等键 ${task.idempotency_key}，纪元 ${task.epoch}）\n`);
+      return 0;
+    }
+    if (action === "list") {
+      const statusRaw = get("--status");
+      const status = statusRaw === "queued" || statusRaw === "claimed" || statusRaw === "completed" || statusRaw === "failed" ? statusRaw : undefined;
+      if (statusRaw && !status) { process.stderr.write("错误：--status 只认 queued|claimed|completed|failed\n"); return 2; }
+      const tasks = listTasks(home, status);
+      if (!tasks.length) {
+        process.stdout.write("队列里没有任务。\n");
+        return 0;
+      }
+      for (const t of tasks) {
+        process.stdout.write(`${t.id}\t${t.key}\t${t.status}\t${t.node ?? "未派"}\t重试 ${t.retries}\t${t.created_at}\n`);
+      }
+      return 0;
+    }
+    if (action === "show") {
+      const id = argv[1];
+      if (!id) { process.stderr.write("错误：用法：nyra queue show <任务 id>\n"); return 2; }
+      const t = getTask(home, id);
+      if (!t) { process.stderr.write(`错误：没有这个任务：${id}\n`); return 1; }
+      process.stdout.write(
+        `${t.id}\n`
+        + `路由 key：${t.key}\n`
+        + `载荷摘要：${t.payload_hash}\n`
+        + `幂等键：${t.idempotency_key}\n`
+        + `状态：${t.status}\n`
+        + `节点：${t.node ?? "未派"}${t.lease_until ? `（租约至 ${t.lease_until}）` : ""}\n`
+        + `纪元：${t.epoch} · 重试：${t.retries}\n`,
+      );
+      return 0;
+    }
+    if (action === "claim") {
+      const id = argv[1];
+      if (!id) { process.stderr.write("错误：用法：nyra queue claim <任务 id> [--lease <毫秒>]\n"); return 2; }
+      const leaseRaw = get("--lease");
+      const leaseMs = leaseRaw === undefined ? undefined : Number(leaseRaw);
+      const t = claimTask(home, id, { leaseMs });
+      process.stdout.write(`任务 ${t.id} 已认领：节点 ${t.node}，租约至 ${t.lease_until}\n租约令牌（只显示这一次，完成/标失败时凭它认领）：${t.lease_token}\n`);
+      return 0;
+    }
+    if (action === "complete" || action === "fail") {
+      const id = argv[1];
+      const node = get("--node");
+      const token = get("--token");
+      if (!id || !node || !token) { process.stderr.write(`错误：用法：nyra queue ${action} <任务 id> --node <节点> --token <租约令牌>\n`); return 2; }
+      const t = action === "complete" ? completeTask(home, id, node, token) : failTask(home, id, node, token);
+      process.stdout.write(`任务 ${t.id} 已${action === "complete" ? "完成" : t.status === "failed" ? "标失败（重试已用完）" : "标失败，已重回队列待重派"}。\n`);
+      return 0;
+    }
+    process.stderr.write(`错误：未知子命令 queue ${action}\n`);
     return 2;
   } catch (err: unknown) {
     process.stderr.write(`错误：${err instanceof Error ? err.message : String(err)}\n`);
@@ -6360,6 +6787,9 @@ export async function main(argv: string[]): Promise<number> {
   if (args.subcommand === "session") return handleSession(args.subArgs ?? [], home);
   if (args.subcommand === "sfu") return handleSfu(args.subArgs ?? [], home);
   if (args.subcommand === "group") return handleGroupChat(args.subArgs ?? [], home, args);
+  if (args.subcommand === "meeting") return handleMeeting(args.subArgs ?? [], home);
+  if (args.subcommand === "rendezvous") return handleRendezvous(args.subArgs ?? [], home);
+  if (args.subcommand === "queue") return handleQueue(args.subArgs ?? [], home);
   if (args.subcommand === "call") return callLedgerMain(args.subArgs ?? [], home);
   if (args.subcommand === "budget") return budgetMain(args.subArgs ?? [], home);
   if (args.subcommand === "agui") return aguiMain(args.subArgs ?? [], home);

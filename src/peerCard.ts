@@ -26,6 +26,7 @@
 // - 好友请求 / 批准 / 拒绝 / 拉黑 / 删除都进三处审计：对端审计
 //   （peer-audit.jsonl）、运行事件（friend_*，只记对端名与指纹）。
 import { randomBytes, createHash} from "node:crypto";
+import { createInterface } from "node:readline";
 import { chmodSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeSync} from "node:fs";
 import { join} from "node:path";
 import { loadConfig, saveConfig, VERSION} from "./config.ts";
@@ -34,6 +35,8 @@ import { resolveNyraHome} from "./memory.ts";
 import { appendPeerAudit, handoffPeer, peerConfig, PEER_NAME_RE, HANDOFF_DEFAULT_FIELDS, type HandoffField, type PeerCallDeps, type PeerEntry} from "./peer.ts";
 import { RunStore} from "./runs.ts";
 import { loadSoul, resolveSoulAgentId} from "./soul.ts";
+// 第 3 批 G-P1-7：名片签名（cardSignature 不静态 import peerCard，无循环）。
+import { loadSigningKey, signAgentCard, generateSigningKeypair, saveSigningKey, jwkThumbprint, pinCardKey, cardKeyStatus } from "./cardSignature.ts";
 
 export const PEER_CARD_PATH = "/.well-known/agent-card.json";
 export const FRIENDS_FILE = "friends.json";
@@ -49,7 +52,7 @@ export type FriendTier = (typeof FRIEND_TIERS)[number];
 export const PEER_FRIEND_COMMANDS: readonly string[] = [
   "card", "code", "publish", "add", "request", "accept", "decline",
   "friends", "friend", "block", "unblock", "remove", "circle", "share",
-  "grant", "proposal", "branch",
+  "grant", "proposal", "branch", "discover", "token",
 ];
 
 export class PeerCardError extends Error {
@@ -80,6 +83,9 @@ export interface AgentCard {
   defaultInputModes: string[];
   defaultOutputModes: string[];
   endpoints: { mcp: string | null };
+  /** 第 3 批 G-P1-7：JWS 签名（紧凑序列化）与签名公钥 JWK，没开签名时没有这两个字段。 */
+  signature?: string;
+  public_key?: Record<string, unknown>;
 }
 
 export interface PeerCardConfig {
@@ -93,6 +99,11 @@ export interface PeerCardConfig {
    * （null）时不限制圈（只认 publish 开关）。
    */
   visibleCircles: string[] | null;
+  /**
+   * 第 3 批 G-P1-7：名片 JWS 签名开关。开时网关发的名片带 signature
+   * 与 public_key（私钥在密码箱里，网关没密码时发素名片，不报错）。
+   */
+  signing: boolean;
 }
 
 /** config.json 的 peer_card 一节（默认全关；public_url 只认 http/https）。 */
@@ -118,7 +129,7 @@ export function peerCardConfig(config: Record<string, unknown>): PeerCardConfig 
     }
     visibleCircles = circles.length ? [...new Set(circles)] : null;
   }
-  return { publish: raw.publish === true, publicUrl, visibleCircles };
+  return { publish: raw.publish === true, publicUrl, visibleCircles, signing: raw.signing === true };
 }
 
 /**
@@ -145,7 +156,7 @@ export function buildAgentCard(home: string, config: Record<string, unknown>, ag
     name: t.name,
     description: t.description,
   }));
-  return {
+  const card: AgentCard = {
     name,
     description,
     url: cardCfg.publicUrl,
@@ -157,6 +168,17 @@ export function buildAgentCard(home: string, config: Record<string, unknown>, ag
     defaultOutputModes: ["text"],
     endpoints: { mcp: cardCfg.publicUrl ? `${cardCfg.publicUrl}/mcp` : null },
   };
+  // 第 3 批 G-P1-7：开了签名且密码箱里有钥匙时，名片带上 JWS 签名
+  // 与公钥 JWK；没钥匙（网关没密码时）发素名片，不报错、不假装签过。
+  if (cardCfg.signing) {
+    const keypair = loadSigningKey(home);
+    if (keypair) {
+      const sig = signAgentCard(card as unknown as Record<string, unknown>, keypair);
+      card.signature = sig.jws;
+      card.public_key = sig.publicKey;
+    }
+  }
+  return card;
 }
 
 /** 名片指纹：SHA-256 前 12 位（账本与事件里只记指纹，不记名片原文）。 */
@@ -255,8 +277,9 @@ export interface CardFetchDeps {
   fetchFn?: (url: string, init?: Record<string, unknown>) => Promise<{ ok: boolean; status: number; text: () => Promise<string> }>;
 }
 
-/** 从对方网关拉名片：GET <源站>/.well-known/agent-card.json（10 秒超时，64KB 上限）。 */
-export async function fetchAgentCard(url: string, deps?: CardFetchDeps): Promise<{ card: AgentCard; hash: string }> {
+/** 从对方网关拉名片：GET <源站>/.well-known/agent-card.json（10 秒超时，64KB 上限）。
+ *  第 3 批 G-P1-4：给了 authToken 时带 Bearer 调（对方按圈放行要求 grant 时用）。 */
+export async function fetchAgentCard(url: string, deps?: CardFetchDeps, authToken?: string): Promise<{ card: AgentCard; hash: string }> {
   let origin: string;
   try {
     origin = new URL(url).origin;
@@ -264,14 +287,16 @@ export async function fetchAgentCard(url: string, deps?: CardFetchDeps): Promise
     throw new PeerCardError(`对方地址无效：${url}`);
   }
   const target = `${origin}${PEER_CARD_PATH}`;
-  const fn = deps?.fetchFn ?? (async (u: string) => {
-    const res = await fetch(u, { signal: AbortSignal.timeout(10000) });
+  const init: Record<string, unknown> = authToken ? { headers: { Authorization: `Bearer ${authToken}` } } : {};
+  const fn = deps?.fetchFn ?? (async (u: string, _init?: Record<string, unknown>) => {
+    const headers = authToken ? { Authorization: `Bearer ${authToken}` } : undefined;
+    const res = await fetch(u, { signal: AbortSignal.timeout(10000), ...(headers ? { headers } : {}) });
     return { ok: res.ok, status: res.status, text: () => res.text() };
   });
   let text: string;
   let status = 0;
   try {
-    const res = await fn(target);
+    const res = await fn(target, init);
     status = res.status;
     text = await res.text();
   } catch (err) {
@@ -286,6 +311,15 @@ export async function fetchAgentCard(url: string, deps?: CardFetchDeps): Promise
     throw new PeerCardError("对方名片不是合法 JSON");
   }
   const card = parseAgentCard(parsed);
+  // 第 3 批 G-P1-7：签名与公钥不在 parseAgentCard 的重建字段里——
+  // 这里贴回去（只认 string/object 形态，脏的直接丢掉，不让脏字段
+  // 混进名片）。不贴的话发现流程永远验不到签名（verifySignedCard
+  // 只能看到没签名的卡，签了也标 absent）。
+  const rawObj = parsed as Record<string, unknown>;
+  if (typeof rawObj.signature === "string") card.signature = rawObj.signature;
+  if (rawObj.public_key && typeof rawObj.public_key === "object" && !Array.isArray(rawObj.public_key)) {
+    card.public_key = rawObj.public_key as Record<string, unknown>;
+  }
   return { card, hash: cardHash(text) };
 }
 
@@ -306,6 +340,8 @@ export interface FriendEntry {
   inbound: FriendInbound;
   blocked: boolean;
   code_hash: string | null;
+  /** 第 3 批 G-P1-7：TOFU 钉住的对方名片签名公钥指纹，没钉过为 null。 */
+  card_key_fp?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -767,11 +803,23 @@ export function resolveFriendForCall(home: string, name: string): FriendEntry {
 export interface PeerCardCliInput {
   deps?: PeerCallDeps;
   fetchDeps?: CardFetchDeps;
+  /** 测试注入的密码箱主密码（生产走环境变量或交互输入）。 */
+  passwords?: string[];
+  /** 测试注入的待存 token（生产走交互输入，不走 argv）。 */
+  secrets?: string[];
 }
 
 const FRIEND_USAGE = "用法：\n"
   + " nyra peer card [--agent <id>]               看我的名片（JSON）与发布状态\n"
-  + " nyra peer card publish <on|off>             开 / 关名片发布（默认关；关时网关 well-known 路径当不存在）\n"
+  + " nyra peer card keygen [--yes]                生成名片签名钥匙（P-256，私钥只存密码箱；已有钥匙时重生成须 --yes）\n"
+  + " nyra peer card sign <on|off>                 开 / 关名片 JWS 签名（开时发出的名片带 signature 与 public_key）\n"
+  + " nyra peer card trust <好友名> [--fp <指纹>]   钉住对方名片的签名公钥（TOFU；不给 --fp 时拉对方名片现取）\n"
+  + " nyra peer card verify <好友名>               拉对方名片，验钉住的钥匙还对不对得上\n"
+  + " nyra peer discover <地址> [--as <好友名>] [--token <token>]   公开发现：拉对方 well-known 名片、验签名、记进发现账本（--as 时同时发好友请求，仍须对方批准）\n"
+  + " nyra peer discover list                      列出已发现的机器人（名片签名状态 / 公钥指纹）\n"
+  + " nyra peer token set <好友名>                 存一条出站 per-peer token（交互输入，原文只进密码箱）\n"
+  + " nyra peer token list                         列出哪些好友存了出站 token（只列名字，不回原文）\n"
+  + " nyra peer token revoke <好友名> --yes        吊销一条出站 token（只影响这一家）\n"
   + " nyra peer code [--regenerate]               看我的好友码（24 小时有效；过期自动换新）\n"
   + " nyra peer add --name <名字> --url <地址> [--code <好友码>]   发好友请求（先拉对方名片校验）\n"
   + " nyra peer request --name <名字> --url <地址> --code <好友码> 登记对方发来的好友请求\n"
@@ -809,6 +857,40 @@ export async function handlePeerFriends(argv: string[], home: string, input?: Pe
     process.stderr.write(`错误：${msg}\n`);
     return 1;
   };
+  // 密码箱主密码 / 待存 token：测试注入 → 环境变量 → 交互输入，
+  // 绝不从 argv 读（argv 会进进程表和 shell 历史）。
+  const pwQueue = [...(input?.passwords ?? [])];
+  const secretQueue = [...(input?.secrets ?? [])];
+  const ask = async (prompt: string): Promise<string> => {
+    if (pwQueue.length) return pwQueue.shift()!;
+    if (process.env.NYRA_VAULT_PASSWORD) return process.env.NYRA_VAULT_PASSWORD;
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const answer = await new Promise<string>((resolvePromise) => {
+      rl.question(prompt, (a) => { rl.close(); resolvePromise(a); });
+    });
+    return answer;
+  };
+  const askSecret = async (prompt: string): Promise<string> => {
+    if (secretQueue.length) return secretQueue.shift()!;
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const answer = await new Promise<string>((resolvePromise) => {
+      rl.question(prompt, (a) => { rl.close(); resolvePromise(a); });
+    });
+    return answer;
+  };
+  // saveConfig 是顶层浅合并：peer_card 整个节会被替换，所以每次写
+  // 都把现有字段全带上——只改 publish/signing 时也不能丢
+  // visible_circles（第 2 批的 publish 切换曾悄悄丢掉它，已修）。
+  const writePeerCardSection = (next: { publish: boolean; publicUrl: string | null; visibleCircles: string[] | null; signing: boolean }): void => {
+    saveConfig(home, {
+      peer_card: {
+        publish: next.publish,
+        ...(next.publicUrl ? { public_url: next.publicUrl } : {}),
+        ...(next.visibleCircles ? { visible_circles: next.visibleCircles } : {}),
+        signing: next.signing,
+      },
+    });
+  };
   try {
     if (!cmd || cmd === "card") {
       if (argv[1] === "publish") {
@@ -818,9 +900,81 @@ export async function handlePeerFriends(argv: string[], home: string, input?: Pe
           return 2;
         }
         const cfg = peerCardConfig(config);
-        saveConfig(home, { peer_card: { publish: on === "on", ...(cfg.publicUrl ? { public_url: cfg.publicUrl } : {}) } });
+        writePeerCardSection({ publish: on === "on", publicUrl: cfg.publicUrl, visibleCircles: cfg.visibleCircles, signing: cfg.signing });
         process.stdout.write(`名片发布已${on === "on" ? "开启" : "关闭"}${on === "on" ? "（网关 GET /.well-known/agent-card.json 回名片 JSON）" : "（网关 well-known 路径当不存在，不泄露端点）"}\n`);
         return 0;
+      }
+      // 第 3 批 G-P1-7：名片签名钥匙与开关。
+      if (argv[1] === "keygen") {
+        const existing = loadSigningKey(home);
+        if (existing && !has("--yes")) {
+          process.stderr.write("已有签名钥匙，重新生成会让之前签发的名片全部验不过；确认重生成请加 --yes\n");
+          return 2;
+        }
+        const password = await ask("主密码：");
+        const kp = generateSigningKeypair();
+        saveSigningKey(home, kp, password);
+        process.stdout.write(`签名钥匙已生成（公钥指纹 ${jwkThumbprint(kp.publicJwk)}，私钥只存密码箱条目 peer-card-signing-key）\n`);
+        process.stdout.write("开签名：nyra peer card sign on（config.json 的 peer_card.signing）\n");
+        return 0;
+      }
+      if (argv[1] === "sign") {
+        const on = argv[2];
+        if (on !== "on" && on !== "off") {
+          process.stderr.write("用法：nyra peer card sign <on|off>\n");
+          return 2;
+        }
+        if (on === "on" && !loadSigningKey(home)) {
+          process.stderr.write("还没签名钥匙，先生成：nyra peer card keygen\n");
+          return 1;
+        }
+        const cfg = peerCardConfig(config);
+        writePeerCardSection({ publish: cfg.publish, publicUrl: cfg.publicUrl, visibleCircles: cfg.visibleCircles, signing: on === "on" });
+        process.stdout.write(`名片 JWS 签名已${on === "on" ? "开启（发出的名片带 signature 与 public_key）" : "关闭（发素名片）"}\n`);
+        return 0;
+      }
+      if (argv[1] === "trust") {
+        const name = argv[2];
+        if (!name) {
+          process.stderr.write("用法：nyra peer card trust <好友名> [--fp <指纹>]\n");
+          return 2;
+        }
+        const fp = flagValue("--fp") ?? null;
+        if (fp) {
+          await pinCardKey(home, name, fp);
+          process.stdout.write(`${name} 的名片签名公钥已钉住（指纹 ${fp}）\n`);
+          return 0;
+        }
+        const book = loadFriendBook(home);
+        const entry = findFriend(book, name);
+        if (!entry) return err(`好友账本里没有 ${name}：先加好友再钉钥匙`);
+        const { card } = await fetchAgentCard(entry.url, input?.fetchDeps);
+        if (!card.public_key) return err(`${name} 的名片没带公钥（对方没开签名），钉不住`);
+        const keyFp = jwkThumbprint(card.public_key);
+        await pinCardKey(home, name, keyFp);
+        process.stdout.write(`${name} 的名片签名公钥已钉住（指纹 ${keyFp}）\n`);
+        return 0;
+      }
+      if (argv[1] === "verify") {
+        const name = argv[2];
+        if (!name) {
+          process.stderr.write("用法：nyra peer card verify <好友名>\n");
+          return 2;
+        }
+        const book = loadFriendBook(home);
+        const entry = findFriend(book, name);
+        if (!entry) return err(`好友账本里没有 ${name}`);
+        const { card } = await fetchAgentCard(entry.url, input?.fetchDeps);
+        if (!card.public_key) {
+          process.stdout.write(`${name} 的名片没带签名（对方没开签名），无法验证钥匙\n`);
+          return 0;
+        }
+        const keyFp = jwkThumbprint(card.public_key);
+        const status = await cardKeyStatus(home, name, keyFp);
+        if (status === "pinned") process.stdout.write(`${name} 的名片签名钥匙对得上（指纹 ${keyFp}）\n`);
+        else if (status === "mismatch") process.stdout.write(`${name} 的名片签名钥匙变了！钉住的不是这把（当前指纹 ${keyFp}）——先别信这张名片，确认对方是否换了钥匙再重钉。\n`);
+        else process.stdout.write(`${name} 的名片签名钥匙还没钉住（当前指纹 ${keyFp}）——钉住：nyra peer card trust ${name}\n`);
+        return status === "mismatch" ? 1 : 0;
       }
       const agent = flagValue("--agent") ?? undefined;
       const card = buildAgentCard(home, config, agent);
@@ -1175,6 +1329,86 @@ export async function handlePeerFriends(argv: string[], home: string, input?: Pe
         return 0;
       }
       process.stderr.write("用法：nyra peer branch <list|merge|drop> ...\n");
+      return 2;
+    }
+    // 第 3 批 G-P1-4：公开发现（动态 import——peerDiscovery 静态
+    // import peerCard，peerCard 再静态引它会成循环）。
+    if (cmd === "discover") {
+      const { discoverPeer, addDiscoveredPeer, listDiscoveredPeers } = await import("./peerDiscovery.ts");
+      const sub = argv[1];
+      if (sub === "list" || !sub) {
+        const peers = listDiscoveredPeers(home);
+        if (!peers.length) {
+          process.stdout.write("还没发现过机器人：nyra peer discover <地址>（对方 well-known 端点）\n");
+          return 0;
+        }
+        for (const p of peers) {
+          process.stdout.write(`${p.name}\t${p.url}\t签名${p.signature === "verified" ? "已验证" : p.signature === "absent" ? "无" : "无效"}\t${p.key_fp ?? "无公钥"}\t${p.discovered_at}\n`);
+        }
+        return 0;
+      }
+      const url = argv[1];
+      if (!url) {
+        process.stderr.write("用法：nyra peer discover <地址> [--as <好友名>] [--token <token>]\n");
+        return 2;
+      }
+      const as = flagValue("--as") ?? undefined;
+      const token = flagValue("--token") ?? undefined;
+      if (as) {
+        const res = await addDiscoveredPeer(home, config, url, as, { fetchDeps: input?.fetchDeps, authToken: token });
+        process.stdout.write(`已发现 ${res.discovered.name}（${res.discovered.url}，签名${res.discovered.signature === "verified" ? "已验证" : "无"}，名片指纹 ${res.discovered.card_hash}）\n`);
+        process.stdout.write(`好友请求已发给 ${as}——对方仍须在自己那边批准（nyra peer accept），两边都批了才是双向好友。\n`);
+        return 0;
+      }
+      const d = await discoverPeer(home, url, { fetchDeps: input?.fetchDeps, authToken: token });
+      process.stdout.write(`已发现 ${d.name}（${d.url}，名片指纹 ${d.card_hash}）\n`);
+      process.stdout.write(`名片签名：${d.signature === "verified" ? `已验证（公钥指纹 ${d.key_fp}）` : d.signature === "absent" ? "无（对方没开签名）" : "无效"}\n`);
+      process.stdout.write("发现不等于加好友：加好友仍须对方批准：nyra peer discover <地址> --as <好友名>\n");
+      return 0;
+    }
+    // 第 3 批 per-peer token（动态 import，同款避循环）。
+    if (cmd === "token") {
+      const sub = argv[1];
+      const { setPeerToken, revokePeerToken, listPeerTokenNames } = await import("./peerTokens.ts");
+      if (sub === "set") {
+        const peer = argv[2];
+        if (!peer) {
+          process.stderr.write("用法：nyra peer token set <好友名>（token 交互输入，不走 argv）\n");
+          return 2;
+        }
+        const token = await askSecret("对方给你的 token（原文只存密码箱，不记账本）：");
+        const password = await ask("主密码：");
+        setPeerToken(home, peer, token, password);
+        process.stdout.write(`已存 ${peer} 的出站 token（密码箱条目 peer-token-${peer}，原文只进密码箱）\n`);
+        return 0;
+      }
+      if (sub === "list" || !sub) {
+        const password = await ask("主密码：");
+        const names = listPeerTokenNames(home, password);
+        if (!names.length) {
+          process.stdout.write("还没存过出站 token：nyra peer token set <好友名>\n");
+          return 0;
+        }
+        for (const n of names) process.stdout.write(`${n}\n`);
+        process.stdout.write("只列名字，不回 token 原文；吊销一家不影响别家。\n");
+        return 0;
+      }
+      if (sub === "revoke") {
+        const peer = argv[2];
+        if (!peer) {
+          process.stderr.write("用法：nyra peer token revoke <好友名> --yes\n");
+          return 2;
+        }
+        if (!has("--yes")) {
+          process.stderr.write("吊销出站 token 须加 --yes 确认\n");
+          return 2;
+        }
+        const password = await ask("主密码：");
+        const had = revokePeerToken(home, peer, password);
+        process.stdout.write(had ? `${peer} 的出站 token 已吊销（别家的 token 不动）。\n` : `${peer} 本来就没存出站 token。\n`);
+        return 0;
+      }
+      process.stderr.write("用法：nyra peer token <set|list|revoke> ...\n");
       return 2;
     }
   } catch (e) {
