@@ -1,3 +1,8 @@
+## 2026-11-23 — Trusted local listing explicit ToolError redaction (unreleased, static-only)
+
+- Replaced explicit ToolError interpolation in the trusted local `list_dir` structured adapter with a fixed failure message to avoid leaking caller paths. Typed failure outcome preserved; one regression defined but not executed.
+- No tests, scripts, builds, CI, installs, account changes, new dependencies, main merge or release.
+
 ## 2026-11-23 — Local missing-directory path redaction (unreleased, static-only)
 
 - Trusted local `list_dir` now uses a fixed missing-directory message instead of returning the caller-provided path. The structured failure status remains unchanged; successful listings and remote backends are unaffected. Added one unexecuted regression definition.
