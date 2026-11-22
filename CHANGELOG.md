@@ -1,3 +1,8 @@
+## 2026-11-23 — Web search backend exception privacy (unreleased, static-only)
+
+- `web_search` now replaces raw explicit ToolError and unexpected network exception messages with fixed per-provider failure text. Search fallback and successful result content remain unchanged. Three regression definitions added, not executed.
+- No tests, builds, CI dispatch, installs, new dependencies, external account changes, main merge or production release.
+
 ## 2026-11-23 — Legacy local read_file missing-path redaction (unreleased, static-only)
 
 - Legacy local `_tool_read_file` now returns a constant missing-file error instead of echoing the caller's raw path; trusted structured adapter already had this guard. Define a regression case, not executed. Remote backend and successful reads unchanged.
