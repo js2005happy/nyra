@@ -254,7 +254,8 @@ export function getSandboxStatus(
 // 调研报告第 9 项：OS 级分级沙箱（学 Codex CLI）——bwrap 命令行拼接。
 // 工作目录可写（--bind），系统目录只读（--ro-bind，只挂真实存在的目录，
 // 不存在的跳过，不让 bwrap 因缺目录启动失败），默认断网（--unshare-net，
-// allowNet 时不加），--die-with-parent 保证父进程退出时沙箱一起死。
+// allowNet 时不加；断网时先加 --unshare-user-try，否则无特权用户配不了
+// loopback），--die-with-parent 保证父进程退出时沙箱一起死。
 // read-only 模式工作目录也改 --ro-bind；danger-full-access 拒绝进 bwrap，直接抛错。
 /**
  * bwrap 挂载面（buildBwrapArgs 与 buildBwrapArgv 共用）：断网、随父进程死、
@@ -266,7 +267,13 @@ function bwrapBaseArgs(opts: { workdir: string; allowNet: boolean; mode: Sandbox
     throw new Error("danger-full-access 与沙箱互斥：该模式要求无限制执行，不能进 bwrap；如需无限制请用 --sandbox local 并自行承担风险");
   }
   const args: string[] = ["bwrap"];
-  if (!opts.allowNet) args.push("--unshare-net");
+  if (!opts.allowNet) {
+    // 无特权用户在 init user ns 拥有的 net ns 里配不了 loopback（bwrap 报
+    // "loopback: Failed RTM_NEWADDR"）；先建 user ns 才能拿到 CAP_NET_ADMIN。
+    // -try：在禁了无特权 userns 的机器上退回原行为，不硬失败。
+    args.push("--unshare-user-try");
+    args.push("--unshare-net");
+  }
   args.push("--die-with-parent");
   // 只读挂载系统目录：只挂真实存在的，不存在的跳过。
   for (const dir of ["/usr", "/lib", "/lib64", "/bin", "/etc"]) {
