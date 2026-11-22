@@ -1,3 +1,10 @@
+## 2026-11-22 — Generic dispatch exception privacy (static review only)
+
+- Inspected development README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/Tools/classifier, recent main commits, open Issues/PR #113, and available workflow metadata. Source review found raw exception text returned from the generic `execute_tool` fallback.
+- Changed only unexpected TypeError/Exception formatting; explicit ToolError behavior remains unchanged. Defined three mocked regressions, not executed. Potential disclosure is a source inference, not an observed Angel incident.
+- External feedback: [Codex #34233](https://github.com/openai/codex/issues/34233), opened 2026-07-19, describes credential disclosure via agent tool output elsewhere; not proof of Angel impact.
+- **NOT RUN:** tests, scripts, compilation, builds, CI or cross-platform execution. No install, account modification, main merge or production release. ToolError messages and normal tool output can still contain sensitive information; no general DLP guarantee.
+
 ## 2026-11-22 — Local read_file typed outcome (static review only)
 
 - Inspected development README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/Tools/classifier, latest main commits, open PR #113 and Issues, and available CI metadata. Existing list_dir typed adapter is distinct from read_file.
