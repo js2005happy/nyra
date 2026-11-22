@@ -1,3 +1,10 @@
+## 2026-11-23 — P1 web_search exception privacy (static-only)
+
+- **Repository fact:** `web_search` included explicit ToolError and unexpected network exception text in model-visible fallback errors. This is a potential query/credential disclosure inferred from source inspection, not an observed incident. Fixed by using static provider-specific failure labels (implemented, untested).
+- **External feedback:** [Codex #31015](https://github.com/openai/codex/issues/31015), opened 2026-07-03, reports output visible before post-tool redaction; [Codex #34233](https://github.com/openai/codex/issues/34233), opened 2026-07-19, reports credential-bearing tool output. Individual reports, not prevalence estimates or Angel-specific evidence.
+- **Ranked queue (value / difficulty / safety risk / dependency):** P1 web_search exception redaction **high / low / low / existing search handler (implemented, untested)**; P1 remaining explicit ToolError audit **high / medium / medium / individual tool contracts (open)**; P1 trusted read-only structured adapters **high / medium / medium / trusted local provenance (open)**; P1 pre-model/pre-transcript privacy boundary **high / high / high / tool lifecycle design (research)**; P1 independent side-effect receipts **high / high / high / trusted external authority (blocked)**.
+- **Boundaries:** successful search snippets, search queries sent to providers, evidence output and other tool paths are unchanged; no comprehensive secret scanner or automatic retry is claimed.
+
 ## 2026-11-23 — P1 legacy local read_file missing-path privacy (static-only)
 
 - **Repository fact (reviewed 2026-11-23):** `_tool_read_file` still interpolated a caller-provided missing path into model-visible output, even though the trusted structured local adapter had already removed this disclosure. This is a source-derived exposure risk, not a confirmed incident.
