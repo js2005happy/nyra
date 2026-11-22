@@ -9,6 +9,8 @@ import {
   detectBwrap, resolveSandboxBackend, buildBwrapArgs, runSandboxed,
   getSandboxStatus, SandboxUnavailableError, toolLevelFallbackNotice,
 } from "../../src/sandbox.ts";
+import { seatbeltAvailable } from "../../src/seatbelt.ts";
+import { findPowerShell } from "../../src/windowsSandbox.ts";
 import { DEFAULT_CONFIG, VALID_SANDBOXES, resolveSandbox } from "../../src/config.ts";
 import { newToolContext, executeTool } from "../../src/tools.ts";
 
@@ -126,12 +128,14 @@ test("resolveSandbox：NYRA_SANDBOX_ALLOW_NET=1 放开网络；非法 mode 报�
   expect(() => resolveSandboxBackend({ sandbox_mode: "nope" }, "auto")).toThrow("Invalid sandbox_mode");
 });
 
-test("auto 在无 bwrap 时解析为 tool-level（本机即是），并给出工具级提示文案", async () => {
+test("auto 在无 bwrap 且无 sandbox-exec 时解析为 tool-level（本机即是），并给出工具级提示文案", async () => {
   // PATH 换成空目录再解析：GitHub Ubuntu 运行器上有真 bwrap，不控 PATH 时
   // auto 会解析为 bwrap——那是正确行为，测试不能假定运行器没装 bwrap。
+  // macOS 上 sandbox-exec 是固定路径（/usr/bin/sandbox-exec），空 PATH 藏不住它，
+  // auto 会进 Seatbelt——同样是正确行为；要测“无后端可用”须用探测覆盖把 Seatbelt 关掉。
   const emptyPath = tmpDir("nyra-empty-path-");
   await withEnv({ ...cleanSandboxEnv(), PATH: emptyPath }, () => {
-    const r = resolveSandboxBackend({}, "auto");
+    const r = resolveSandboxBackend({}, "auto", { seatbeltAvailable: false });
     expect(r.backend).toBe("local");
     expect(r.level).toBe("tool-level");
     expect(r.mode).toBe("workspace-write");
@@ -218,11 +222,12 @@ test("runSandboxed：假 bwrap shim 端到端跑通一次，参数里含工作�
   });
 });
 
-test("getSandboxStatus：auto 无 bwrap 时 level 为 tool-level；显式 bwrap 缺失时 level 为 none 且不抛错", async () => {
+test("getSandboxStatus：auto 无 bwrap 且无 sandbox-exec 时 level 为 tool-level；显式 bwrap 缺失时 level 为 none 且不抛错", async () => {
   // PATH 换成空目录：运行器有真 bwrap 时 auto 会是 bwrap、forced 不会是 none。
+  // macOS 上 sandbox-exec 是固定路径，空 PATH 藏不住：auto 会进 Seatbelt，须用探测覆盖关掉。
   const emptyPath = tmpDir("nyra-empty-path-");
   await withEnv({ ...cleanSandboxEnv(), PATH: emptyPath }, () => {
-    const auto = getSandboxStatus({});
+    const auto = getSandboxStatus({}, null, { seatbeltAvailable: false });
     expect(auto.level).toBe("tool-level");
     expect(auto.bwrapAvailable).toBe(false);
     expect(auto.detail).toMatch("工具级");
@@ -234,10 +239,12 @@ test("getSandboxStatus：auto 无 bwrap 时 level 为 tool-level；显式 bwrap 
   });
 });
 
-test("toolShell 接线：auto 无 bwrap 时走现有路径跑通；首次执行给一次工具级提示", async () => {
+test("toolShell 接线：auto 无 bwrap 且无 sandbox-exec 时走现有路径跑通；首次执行给一次工具级提示", async () => {
   const wd = tmpDir("nyra-shell-wd-");
   // PATH 换成空目录：运行器有真 bwrap 时 auto 会进 bwrap 分支，不会打印工具级提示。
   // shell 本身走绝对路径 /bin/sh（POSIX）/ ComSpec（Windows），空 PATH 不影响执行。
+  // macOS 上 sandbox-exec 是固定路径，空 PATH 藏不住：须用探测覆盖把 Seatbelt 关掉，
+  // 否则 auto 进 Seatbelt、工具级提示不会出现。
   const emptyPath = tmpDir("nyra-empty-path-");
   await withEnv({ ...cleanSandboxEnv(), PATH: emptyPath }, async () => {
     const errors: string[] = [];
@@ -247,6 +254,7 @@ test("toolShell 接线：auto 无 bwrap 时走现有路径跑通；首次执行�
       const ctx = newToolContext({
         workdir: wd, mode: "full", interactive: false,
         sandbox: { backend: "auto", mode: "workspace-write", allowNet: false },
+        sandboxProbe: { seatbeltAvailable: false },
       });
       const out = await executeTool("shell", { command: "echo hello-shell", timeout: 10 }, ctx);
       expect(out).toContain("hello-shell");
@@ -340,6 +348,10 @@ test("getSandboxStatus：探测覆盖的三后端可用性字段如实上报", (
 
 test("toolShell 接线：jobobject + 断网时联网工具在 PowerShell 启动前就被拦", async () => {
   const wd = tmpDir("nyra-shell-wd-");
+  // 有真 PowerShell 的机器（Windows 运行器）上，未被拦截的命令会真跑：
+  // 回环 curl 发出去、连不上，返回的是 curl 报错 + 沙箱退出码，不是“启动失败”。
+  // 无 PowerShell 的机器（Linux/macOS）上才走到“Job Object 启动失败”。
+  const ps = findPowerShell();
   await withEnv(cleanSandboxEnv(), async () => {
     const ctx = newToolContext({
       workdir: wd, mode: "full", interactive: false,
@@ -348,11 +360,12 @@ test("toolShell 接线：jobobject + 断网时联网工具在 PowerShell 启动�
     });
     const out = await executeTool("shell", { command: "curl https://example.com", timeout: 10 }, ctx);
     expect(out).toMatch("禁止联网工具 curl");
-    // 回环豁免：不触发拦截，继续走到 PowerShell 启动失败（本机无 PowerShell）。
+    // 回环豁免：不触发拦截，继续走到 PowerShell 启动（有则真跑、无则启动失败）。
     const local = await executeTool("shell", { command: "curl http://localhost:3000/x", timeout: 10 }, ctx);
     expect(local).not.toMatch("禁止联网工具");
-    expect(local).toMatch("Job Object 启动失败");
-    // allowNet=true 时不拦截，同样走到 PowerShell 启动失败。
+    if (ps === null) expect(local).toMatch("Job Object 启动失败");
+    else expect(local).toMatch("沙箱命令退出码");
+    // allowNet=true 时不拦截，同样走到 PowerShell 启动。
     const ctxNet = newToolContext({
       workdir: wd, mode: "full", interactive: false,
       sandbox: { backend: "jobobject", mode: "workspace-write", allowNet: true },
@@ -360,6 +373,19 @@ test("toolShell 接线：jobobject + 断网时联网工具在 PowerShell 启动�
     });
     const outNet = await executeTool("shell", { command: "curl https://example.com", timeout: 10 }, ctxNet);
     expect(outNet).not.toMatch("禁止联网工具");
-    expect(outNet).toMatch("Job Object 启动失败");
+    if (ps === null) expect(outNet).toMatch("Job Object 启动失败");
+    else expect(outNet).not.toMatch("Job Object 启动失败");
   });
+});
+
+// 隔离补强批：macOS 真机有 sandbox-exec 时 auto 解析为 Seatbelt（新行为，
+// 探测覆盖版已在上面测过；这里断言真实探测链路，只在 macOS 真机上跑）。
+test("auto：macOS 真机有 sandbox-exec 时解析为 Seatbelt", () => {
+  if (process.platform !== "darwin" || !seatbeltAvailable()) {
+    console.log("跳过：仅 macOS 且有 sandbox-exec 时可断言");
+    return;
+  }
+  const r = resolveSandboxBackend({}, "auto");
+  expect(r.backend).toBe("seatbelt");
+  expect(r.level).toBe("seatbelt");
 });

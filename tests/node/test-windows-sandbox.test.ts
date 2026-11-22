@@ -163,6 +163,7 @@ test("WindowsSandbox.level_text_and_detail", () => {
   });
   expect(notice).toContain("工具级隔离");
   if (process.platform === "win32") expect(notice).toContain("jobobject");
+  else if (process.platform === "darwin") expect(notice).toContain("Seatbelt");
   else expect(notice).toContain("bwrap");
 });
 

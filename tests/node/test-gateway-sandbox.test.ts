@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Gateway } from "../../src/gateway.ts";
 import { fakeProvider } from "./fake-provider.ts";
+import { seatbeltAvailable } from "../../src/seatbelt.ts";
 
 const SANDBOX_ENV_KEYS = [
   "NYRA_SANDBOX", "ANGEL_SANDBOX", "NYRA_SANDBOX_MODE", "ANGEL_SANDBOX_MODE",
@@ -77,7 +78,7 @@ function makeGateway(home: string, workdir: string, config: Record<string, unkno
   });
 }
 
-test("网关沙箱：auto 无 bwrap 时回落工具级，会话正常跑完、命令照常执行、提示只给一次", async () => {
+test("网关沙箱：auto 无 bwrap 时回落工具级（macOS 有 sandbox-exec 时进 Seatbelt），会话正常跑完、命令照常执行、提示只给一次", async () => {
   const home = tmpDir("nyra-gw-sandbox-home-");
   const workdir = tmpDir("nyra-gw-sandbox-wd-");
   const emptyPath = tmpDir("nyra-empty-path-");
@@ -91,7 +92,13 @@ test("网关沙箱：auto 无 bwrap 时回落工具级，会话正常跑完、�
     // shell 输出回到模型消息里，证明命令真跑了（不是被沙箱配置拦下）。
     expect(JSON.stringify(run.agent!.messages)).toContain("gw-auto-fallback");
     // 回落提示只给一次：ToolContext 上的标记已被置位。
-    expect(run.agent!.ctx.sandboxFallbackWarned).toBe(true);
+    // macOS 上 auto 会进 Seatbelt（sandbox-exec 系统自带），不回落工具级、
+    // 不给回落提示——这是隔离补强批的新行为；会话照常跑完、命令照常执行才是要断言的。
+    if (process.platform === "darwin" && seatbeltAvailable()) {
+      expect(run.agent!.ctx.sandboxFallbackWarned).toBeFalsy();
+    } else {
+      expect(run.agent!.ctx.sandboxFallbackWarned).toBe(true);
+    }
     // 接线用的是解析出的配置本身（backend auto、默认断网）。
     expect(run.agent!.ctx.sandbox).toEqual({ backend: "auto", mode: "workspace-write", allowNet: false });
     await gw.stop();
