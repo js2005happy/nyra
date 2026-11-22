@@ -1,3 +1,8 @@
+## 2026-11-23 — Local missing-file path redaction (unreleased, static-only)
+
+- The trusted local read_file adapter now returns a fixed missing-file error rather than echoing the caller-provided path; typed failure status is unchanged. Added an unexecuted regression definition. No change to successful file contents or remote backends.
+- No tests, scripts, CI, installs, new dependencies, main merge or production release.
+
 ## 2026-11-22 — Generic tool dispatch exception redaction (unreleased, static-only)
 
 - `execute_tool` no longer echoes raw TypeError or unexpected exception messages, which may contain sensitive caller paths or credentials. Explicit ToolError messages retain legacy behavior; other tool return text is not sanitized by this change.
