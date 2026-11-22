@@ -1,3 +1,10 @@
+## 2026-11-23 — P1 local missing-directory path privacy (static-only)
+
+- **Source fact (reviewed 2026-11-23):** trusted local `list_dir` returned the caller-provided path verbatim for a missing directory; a private absolute path could enter model-visible output. This is a source-derived risk, not an observed leak. The earlier missing-file redaction did not cover directory listings.
+- **External user reports:** [Codex #34233](https://github.com/openai/codex/issues/34233) (2026-07-19) describes credentials exposed through tool output; [Codex #31059](https://github.com/openai/codex/issues/31059) (2026-07-03) requests pre-model sanitization. Both are individual reports about other software, not evidence of Angel impact or frequency. Reviewed 2026-11-23.
+- **Ranked candidates (value / implementation difficulty / safety risk / dependencies):** P1 local missing-directory path redaction **high / low / low / existing adapter (implemented, untested)**; P1 remaining explicit ToolError privacy audit **high / medium / medium / individual tool contracts (open)**; P1 additional trusted read-only typed adapters **high / medium / medium / provenance-safe local source (open)**; P1 pre-model sensitive-content policy **high / high / high / consent and compatibility (research)**; P1 external side-effect receipts **high / high / high / independent authority (blocked)**.
+- **Scope:** only missing local directory error text is replaced with a constant; typed `reported_error` is preserved. Successful listings, remote backends, and external tools are unchanged. No new dependencies, execution verification, or automatic retry.
+
 ## 2026-11-23 — P1 missing local read_file path privacy (static-only)
 
 - **Repository fact (static inspection):** the local trusted read adapter returned a missing-file error containing the raw caller-provided path. Paths may embed private directory names or sensitive identifiers. This is a source-derived exposure risk, not a reproduced leak.
