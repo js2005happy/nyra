@@ -1,3 +1,7 @@
+## 2026-11-22 — Local directory exception privacy guard (unreleased, static-only)
+
+- The local `list_dir` structured adapter now redacts generic OS exception details from model-visible output, avoiding incidental disclosure of private absolute paths; typed outcome remains `reported_error`. Existing explicit `ToolError` and invalid-argument messages remain unchanged. Added an unexecuted mocked OS-error regression definition. No tests, CI, installs, main merge or release.
+
 ## 2026-11-22 — Local read-only structured listing outcome (static-only)
 
 - Local `list_dir` now exposes a typed in-process report to Agent's optional journal/advisory path while preserving the model-visible text. Remote backends remain on legacy behavior. No tests run; no execution verification or automatic resume.
