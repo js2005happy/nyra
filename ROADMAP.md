@@ -1,3 +1,10 @@
+## 2026-11-22 — P1 generic tool dispatch exception privacy (static-only)
+
+- **Repository fact (source inspection):** `execute_tool` previously appended raw `TypeError` and arbitrary exception strings to model-visible tool results. Exception text may contain caller-supplied paths or credentials. This is a potential exposure inferred from source, not a reproduced incident.
+- **External feedback:** [Codex #34233](https://github.com/openai/codex/issues/34233), opened 2026-07-19, reports accidental credential disclosure in agent tool output. Individual external incident; does not prove an Angel leak. Reviewed 2026-11-22.
+- **Priority (value / difficulty / safety risk / dependency):** P1 unexpected dispatch exception redaction high / low / low / existing dispatch (**implemented; untested**); P1 further trusted read-only adapters high / medium / medium / per-tool provenance (**open**); P1 explicit ToolError content audit high / medium / medium / tool contracts (**open**); P1 independent side-effect receipts high / high / high / trusted authority (**blocked**); P1 private task persistence medium-high / medium / medium-high / secure storage (**blocked**).
+- **Scope:** Generic unexpected exception text is replaced with fixed errors; explicit `ToolError` text is deliberately unchanged for compatibility and remains an audit target. No retry, execution verification, or third-party dependency.
+
 ## 2026-11-22 — P1 trusted local read_file report (static-only)
 
 - **Repository fact (static inspection):** local read_file returned file text to the legacy prefix classifier; a legitimate file beginning with `错误：` could be logged as failed, while an empty file could be logged unknown. This is a source-path inference, not a runtime reproduction.
