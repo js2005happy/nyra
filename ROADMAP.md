@@ -1,3 +1,10 @@
+## 2026-11-22 — P1 trusted local read_file report (static-only)
+
+- **Repository fact (static inspection):** local read_file returned file text to the legacy prefix classifier; a legitimate file beginning with `错误：` could be logged as failed, while an empty file could be logged unknown. This is a source-path inference, not a runtime reproduction.
+- **External user feedback (reviewed 2026-11-22):** [Codex #60104](https://github.com/openai/codex/issues/60104) (2026-11-07) describes long-task rework and unreliable progress. Individual report, not evidence of this file-reading defect or population prevalence.
+- **Engineering response:** opt-in in-process local adapter returns file text and typed reported outcome separately, without changing model-visible file content; remote backend/MCP unaffected. Generic OS/argument errors are redacted; no independent acceptance or auto-resume authority.
+- **Ranked queue (value / difficulty / safety / dependency):** P1 local read_file typed report high / low-medium / low / existing typed protocol (**implemented, untested**); P1 other safe read-only adapters high / medium / medium / per-tool provenance (**open**); P1 independent side-effect receipts high / high / high / trusted external authority (**blocked**); P1 private task persistence medium-high / medium / medium-high / secure storage (**blocked**). No dependency added.
+
 ## 2026-11-22 — P1 local list_dir argument error privacy guard (static-only)
 
 - Source fact: the trusted local listing adapter and Agent fallback echoed raw TypeError messages, potentially including sensitive caller values. Preventive source-based inference; no production incident established.
