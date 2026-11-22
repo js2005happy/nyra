@@ -29,6 +29,9 @@ function makeRepo(): string {
   git(dir, "init", "-q");
   git(dir, "config", "user.email", "test@example.com");
   git(dir, "config", "user.name", "Test");
+  // Windows 上 git 默认 autocrlf 会把 merge --abort 恢复的文件写成 CRLF，
+  // 断言按 LF 写的原文就会误报；仓库级关掉，三个平台行为一致。
+  git(dir, "config", "core.autocrlf", "false");
   writeFileSync(join(dir, "README.md"), "base\n");
   git(dir, "add", ".");
   git(dir, "commit", "-qm", "init");
