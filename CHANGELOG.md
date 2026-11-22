@@ -1,3 +1,8 @@
+## 2026-11-22 — Generic tool dispatch exception redaction (unreleased, static-only)
+
+- `execute_tool` no longer echoes raw TypeError or unexpected exception messages, which may contain sensitive caller paths or credentials. Explicit ToolError messages retain legacy behavior; other tool return text is not sanitized by this change.
+- Added three unexecuted regression definitions. No tests, scripts, CI, installs, main merge, production release or new dependencies.
+
 ## 2026-11-22 — Local read_file structured report (unreleased, static-only)
 
 - Local read_file now returns a typed in-process outcome for journal/advisory classification while preserving the exact file text presented to the model. A file starting with an error prefix and an empty file no longer determine their own status; remote backends unchanged.
