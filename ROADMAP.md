@@ -1,3 +1,10 @@
+## 2026-11-23 — P1 git_status missing-directory path privacy (static-only)
+
+- **Repository fact (source inspection):** local `_tool_git_status` interpolated caller-supplied `path` into its missing-directory error, unlike the hardened local `read_file` and `list_dir` paths. This could expose private directory names in model-visible output; no observed Angel incident is claimed. Replaced only that error with `错误：目录不存在` and defined a regression test (not executed).
+- **External user request (reviewed 2026-11-23):** [Codex #25585](https://github.com/openai/codex/issues/25585) asks for a local pre-submit DLP gate; [Codex #2847](https://github.com/openai/codex/issues/2847) asks for deterministic sensitive-file exclusion. These are individual external requests, not frequency estimates or proof of an Angel vulnerability. Original publication dates were not verified in this run.
+- **Ranked candidates (value / difficulty / safety risk / dependencies):** P1 local git_status missing-directory privacy **high / low / low / existing local handler (implemented, untested)**; P1 remaining explicit ToolError audit **high / medium / medium / per-tool contracts (open)**; P1 trusted read-only structured adapters **high / medium / medium / local provenance (open)**; P1 pre-model/pre-transcript DLP **high / high / high / policy, false positives, user consent (research)**; P1 independent side-effect receipts **high / high / high / trusted external authority (blocked)**.
+- **Boundary:** normal git output, backend execution, remote MCP, other errors and model input are unchanged. No auto retry, permission expansion, dependencies or runtime validation.
+
 ## 2026-11-23 — P1 http_post unexpected-exception privacy (static-only)
 
 - **Source fact:** `_tool_http_post` previously interpolated unexpected exception text into model-visible output; such errors may include private URLs or credentials. This is a code-derived exposure risk, not a confirmed Angel leak. Changed only this catch branch to a fixed message; HTTP status and response-body branches remain unchanged.
