@@ -257,6 +257,40 @@ test("AccountsTest.test_oauth_post_form_error_detail", async () => {
   expect(data).toBeNull();
 });
 
+test("AccountsTest.test_oauth_post_form_sends_accept_json", async () => {
+  // 回归：GitHub 设备码端点不带 Accept: application/json 时回表单格式，
+  // postForm 解析不到 JSON，登录报“无法识别的内容”。postForm 必须带上该头。
+  let seenHeaders: Record<string, string> | undefined;
+  const capturing = async (_url: string, init?: Record<string, unknown>) => {
+    seenHeaders = init?.headers as Record<string, string> | undefined;
+    return { ok: true, status: 200, text: async () => JSON.stringify({ ok: true }) };
+  };
+  const data = await postForm("https://example.com/token", { a: "b" }, capturing);
+  expect((data as Record<string, unknown>).ok).toBe(true);
+  expect(seenHeaders?.Accept).toBe("application/json");
+  expect(seenHeaders?.["Content-Type"]).toBe("application/x-www-form-urlencoded");
+});
+
+test("AccountsTest.test_github_device_code_json_response", async () => {
+  // GitHub 带 Accept: application/json 时回 JSON 设备码（真实端点已核实）。
+  const fetchFn = stubFetch({
+    [GITHUB_DEVICE_CODE_URL]: {
+      device_code: "dc-1",
+      user_code: "ABCD-1234",
+      verification_uri: "https://github.com/login/device",
+      verification_uri_complete: "https://github.com/login/device?user_code=ABCD-1234",
+      expires_in: 900,
+      interval: 5,
+    },
+  });
+  const code = await requestGithubDeviceCode({ clientId: "cid", fetchFn });
+  expect(code.device_code).toBe("dc-1");
+  expect(code.user_code).toBe("ABCD-1234");
+  expect(code.verification_uri).toBe("https://github.com/login/device");
+  expect(code.expires_in).toBe(900);
+  expect(code.interval).toBe(5);
+});
+
 test("AccountsTest.test_oauth_loopback_server_real", async () => {
   const server = await startLoopbackCallbackServer({ state: "state-1", timeoutMs: 5000 });
   expect(server.redirectUri).toContain("http://127.0.0.1:");
