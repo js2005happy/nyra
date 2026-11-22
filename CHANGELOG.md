@@ -1,3 +1,8 @@
+## 2026-11-22 — Opt-in advisory idle Agent events (unreleased, untested)
+
+- Optional no_progress_detector constructor parameter; model responses and tool returns are untrusted observations. At threshold, emit one no_progress_attention metadata event per run. Default disabled.
+- No automatic cancellation, retry, trust escalation, new dependencies, tests, CI, main merge or release.
+
 ## 2026-11-22 — Advisory event classification for idle detection (unreleased, untested)
 
 - Added `NoProgressDetector.observe_event()` with a fixed event vocabulary. Model messages, polls and generic tool returns count as idle; only explicitly trusted deliverable/acceptance events reset the counter. Unknown events and invalid trust flags fail closed without changing state.
