@@ -704,7 +704,7 @@ def execute_local_list_dir_report(ctx: ToolContext, path: str = ".") -> tuple[st
             else f"{entry.name} ({entry.stat().st_size} 字节)"
             for entry in entries
         ]
-        return "\\n".join(lines) or "（空目录）", StructuredToolReport("reported_ok")
+        return "\n".join(lines) or "（空目录）", StructuredToolReport("reported_ok")
     except ToolError as exc:
         return f"错误：{exc}", StructuredToolReport("reported_error")
     except TypeError as exc:
