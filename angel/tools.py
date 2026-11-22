@@ -684,20 +684,39 @@ def _tool_apply_patch(ctx: ToolContext, path: str, patch: str) -> str:
     return f"已应用补丁 {relative}"
 
 
+def execute_local_list_dir_report(ctx: ToolContext, path: str = ".") -> tuple[str, "StructuredToolReport"]:
+    """Return local directory listing and in-process outcome separately.
+
+    This is not an external acceptance receipt. Do not use for remote backends.
+    """
+    from .tool_report_status import StructuredToolReport
+
+    if ctx.backend is not None:
+        raise ToolError("structured local listing requires a local backend")
+    try:
+        target = _resolve_path(ctx, path)
+        if not target.is_dir():
+            return f"错误：目录不存在：{path}", StructuredToolReport("reported_error")
+        entries = sorted(target.iterdir(), key=lambda entry: (not entry.is_dir(), entry.name))
+        lines = [
+            f"{entry.name}/"
+            if entry.is_dir()
+            else f"{entry.name} ({entry.stat().st_size} 字节)"
+            for entry in entries
+        ]
+        return "\\n".join(lines) or "（空目录）", StructuredToolReport("reported_ok")
+    except ToolError as exc:
+        return f"错误：{exc}", StructuredToolReport("reported_error")
+    except TypeError as exc:
+        return f"错误：工具参数不正确：{exc}", StructuredToolReport("reported_error")
+    except Exception as exc:
+        return f"执行失败：{type(exc).__name__}: {exc}", StructuredToolReport("reported_error")
+
+
 def _tool_list_dir(ctx: ToolContext, path: str = ".") -> str:
     if ctx.backend is not None:
         return ctx.backend.list_dir(_resolve_backend_path(ctx, path))
-    target = _resolve_path(ctx, path)
-    if not target.is_dir():
-        return f"错误：目录不存在：{path}"
-    entries = sorted(target.iterdir(), key=lambda entry: (not entry.is_dir(), entry.name))
-    lines = [
-        f"{entry.name}/"
-        if entry.is_dir()
-        else f"{entry.name} ({entry.stat().st_size} 字节)"
-        for entry in entries
-    ]
-    return "\n".join(lines) or "（空目录）"
+    return execute_local_list_dir_report(ctx, path)[0]
 
 
 def _tool_shell(
