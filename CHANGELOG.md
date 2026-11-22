@@ -1,3 +1,7 @@
+## 2026-11-22 — Local read-only structured listing outcome (static-only)
+
+- Local `list_dir` now exposes a typed in-process report to Agent's optional journal/advisory path while preserving the model-visible text. Remote backends remain on legacy behavior. No tests run; no execution verification or automatic resume.
+
 ## 2026-11-22 — Blank legacy tool reports remain unknown (unreleased, static-only)
 
 - Static source finding: empty or whitespace-only string returns previously passed the prefix classifier as neither failed nor unknown, allowing the optional ToolJournal to record reported success despite no outcome information. Blank reports now classify as unknown; explicit exceptions remain failures. No external verification or automatic retry/resume.
