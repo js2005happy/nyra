@@ -1,3 +1,8 @@
+## 2026-11-22 — Local read_file structured report (unreleased, static-only)
+
+- Local read_file now returns a typed in-process outcome for journal/advisory classification while preserving the exact file text presented to the model. A file starting with an error prefix and an empty file no longer determine their own status; remote backends unchanged.
+- Added six unexecuted regression definitions; generic local OS/argument failures no longer echo raw exception details in this adapter. No tests, CI, merge, release or new dependency.
+
 ## 2026-11-22 — Local listing argument error redaction (unreleased, static-only)
 
 - Replaced raw TypeError text in the trusted local list_dir adapter and Agent fallback with a generic argument error, avoiding potential exposure of caller values. Added unexecuted regression definition. No tests, CI, installs, main merge or release.
