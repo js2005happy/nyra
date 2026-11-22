@@ -253,6 +253,7 @@ nyra bot status   Bot 总览：Telegram/Discord/Slack/WhatsApp 运行态 + 电�
 nyra channels <start|stop|status|health|bindings|explain>   缺口 27：常驻多渠道网关（四渠道一个进程、bindings 确定性路由、渠道会话默认进沙箱、每条入站路由进证据链，详见 docs/channels.md）
 nyra bot redlines <status|list|show|tighten|loosen|set>   Bot 缺口 51：业务动作硬红线表——发消息/付款/删除永远须人批，转钱/交易证券永远禁做（详见 docs/business-redlines.md）
 nyra reviewer <status|enable|disable|set-model|add-rule|remove-rule|list-rules|check>   独立审查层：敏感工具调用先过独立审查 agent（便宜模型、独立上下文），审查失败即拦截（详见 docs/reviewer.md）
+nyra judge <status|enable|disable|set-model|set-thresholds|check>   意向验证 judge：敏感工具调用先打风险分（0-100 + 引用证据），高分拒绝、中段转人工（详见 docs/tool-judge.md）
 nyra verifier <status|enable|disable|set-model|rework-on|rework-off|add-rule|remove-rule|list-rules|check>   验收者：并行产出合入前先过验收门（确定性检查 + 便宜模型复核），未通过打回重做（详见 docs/verifier.md）
 nyra skills <status|enable|disable|draft|drafts|show|approve|reject|archive|sweep>   技能自沉淀：成功任务自动起草技能草稿，人工批准后才安装，低质自动归档（详见 docs/skill-sedimentation.md）
 nyra bughunt <install|status|scope|template|check>   授权漏洞挖掘技能包：范围卡 + 证伪验证 + 提交前七问 + 证据卫生，提交前核对（详见 docs/bughunt.md）
@@ -390,6 +391,7 @@ nyra bot status   bot overview: Telegram/Discord/Slack/WhatsApp state + computer
 nyra channels <start|stop|status|health|bindings|explain>   gap 27: persistent multi-channel gateway (four channels in one process, bindings-based deterministic routing, channel sessions sandboxed by default, every inbound route in the evidence chain, see docs/channels.md)
 nyra bot redlines <status|list|show|tighten|loosen|set>   bot gap 51: business-action hard redlines — sending messages / payments / deletions always need approval, moving money / trading securities are always forbidden (see docs/business-redlines.md)
 nyra reviewer <status|enable|disable|set-model|add-rule|remove-rule|list-rules|check>   independent review layer: sensitive tool calls go through an independent reviewer agent first (cheap model, independent context); review failure blocks (see docs/reviewer.md)
+nyra judge <status|enable|disable|set-model|set-thresholds|check>   intent-validation judge: sensitive tool calls get a risk score first (0-100 plus cited evidence); high scores are refused, middle scores go to a human (see docs/tool-judge.md)
 nyra verifier <status|enable|disable|set-model|rework-on|rework-off|add-rule|remove-rule|list-rules|check>   verifier: parallel output passes an acceptance gate before merging (deterministic checks + cheap-model review); failures are sent back for rework (see docs/verifier.md)
 nyra skills <status|enable|disable|draft|drafts|show|approve|reject|archive|sweep>   skill sedimentation: successful runs auto-draft skill drafts, installed only after your approval, low-quality ones auto-archived (see docs/skill-sedimentation.md)
 nyra bughunt <install|status|scope|template|check>   authorized bug-hunting skill pack: scope card + falsification + pre-submit seven questions + evidence hygiene, pre-submit gate (see docs/bughunt.md)
@@ -1760,6 +1762,104 @@ async function handleReviewer(argv: string[], workdir: string): Promise<number> 
       return verdict.decision === "BLOCK" ? 3 : 0;
     }
     process.stderr.write(`错误：未知子命令 reviewer ${action}\n`);
+    return 2;
+  } catch (err: unknown) {
+    process.stderr.write(`错误：${err instanceof Error ? err.message : String(err)}\n`);
+    return 1;
+  }
+}
+
+// ---- 子命令：judge（Turnstone 意向验证 judge） ----
+async function handleJudge(argv: string[], workdir: string): Promise<number> {
+  const action = argv[0];
+  const home = resolveHome();
+  if (!action) {
+    process.stdout.write("用法：nyra judge <status|enable|disable|set-model|set-thresholds|check> [选项]\n");
+    return 2;
+  }
+  const get = (flag: string): string | undefined => {
+    const i = argv.indexOf(flag);
+    return i >= 0 ? argv[i + 1] : undefined;
+  };
+  try {
+    const { judgeConfig, judgeStatus, resolveJudgeModel, buildJudgeRunner, judgeToolCall } = await import("./toolJudge.ts");
+    const config = loadConfig(home);
+    if (action === "status") {
+      const st = judgeStatus(config, home);
+      process.stdout.write(`意向验证 judge：${st.enabled ? "启用" : "禁用（默认关闭）"}\n`);
+      process.stdout.write(`judge 模型：${st.provider}:${st.model}${st.hasCredentials ? "" : "（无凭证：开启后被审工具会被拒绝，请先配好该模型的凭证）"}\n`);
+      process.stdout.write(`被审工具（${st.tools.length}）：${st.tools.join("、")}\n`);
+      process.stdout.write(`分段：>= ${st.denyAt} 分拒绝，>= ${st.escalateAt} 分转人工，低于 ${st.escalateAt} 分放行\n`);
+      return 0;
+    }
+    if (action === "enable" || action === "disable") {
+      const cfg = judgeConfig(config);
+      // 显式写全 snake_case 键：解析后的 cfg 用 camelCase（denyAt/escalateAt），
+      // 直接 ...cfg 会把 camelCase 键写进文件、下次 set-model 时丢掉分段。
+      saveConfig(home, { judge: { enabled: action === "enable", provider: cfg.provider, model: cfg.model, tools: cfg.tools, deny_at: cfg.denyAt, escalate_at: cfg.escalateAt } });
+      process.stdout.write(`已${action === "enable" ? "启用" : "禁用"}意向验证 judge${action === "enable" ? "（敏感工具调用先打风险分，高分拒绝、中段转人工）" : ""}\n`);
+      return 0;
+    }
+    if (action === "set-model") {
+      const spec = argv[1];
+      if (!spec) { process.stderr.write("错误：用法：nyra judge set-model <provider:模型> 或 <模型>\n"); return 2; }
+      const cfg = judgeConfig(config);
+      let provider = cfg.provider;
+      let model: string | null = cfg.model;
+      const idx = spec.indexOf(":");
+      if (idx >= 0) {
+        provider = spec.slice(0, idx).trim() || null;
+        model = spec.slice(idx + 1).trim() || null;
+      } else {
+        model = spec.trim();
+      }
+      if (!model) { process.stderr.write("错误：set-model 需要模型名\n"); return 2; }
+      saveConfig(home, { judge: { enabled: cfg.enabled, provider, model, tools: cfg.tools, deny_at: cfg.denyAt, escalate_at: cfg.escalateAt } });
+      const resolved = resolveJudgeModel(loadConfig(home));
+      process.stdout.write(`judge 模型已设为 ${resolved.provider}:${resolved.model}\n`);
+      return 0;
+    }
+    if (action === "set-thresholds") {
+      const deny = parseInt(argv[1] ?? "", 10);
+      const escalate = parseInt(argv[2] ?? "", 10);
+      if (!Number.isInteger(deny) || !Number.isInteger(escalate) || deny < 0 || deny > 100 || escalate < 0 || escalate > 100) {
+        process.stderr.write("错误：用法：nyra judge set-thresholds <拒绝线 0-100> <转人工线 0-100>\n");
+        return 2;
+      }
+      if (escalate > deny) {
+        process.stderr.write("错误：转人工线不能高于拒绝线\n");
+        return 2;
+      }
+      const cfg = judgeConfig(config);
+      saveConfig(home, { judge: { enabled: cfg.enabled, provider: cfg.provider, model: cfg.model, tools: cfg.tools, deny_at: deny, escalate_at: escalate } });
+      process.stdout.write(`judge 分段已设为：>= ${deny} 分拒绝，>= ${escalate} 分转人工\n`);
+      return 0;
+    }
+    if (action === "check") {
+      const tool = get("--tool");
+      const argsJson = get("--args") ?? "{}";
+      if (!tool) { process.stderr.write("错误：用法：nyra judge check --tool <工具> --args '<JSON 对象>' [--task <任务>]\n"); return 2; }
+      let args: Record<string, unknown>;
+      try {
+        const parsed: unknown = JSON.parse(argsJson);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("not an object");
+        args = parsed as Record<string, unknown>;
+      } catch {
+        process.stderr.write("错误：--args 必须是 JSON 对象\n");
+        return 2;
+      }
+      const cfg = judgeConfig(config);
+      // 试运行：即使 judge 未开启也按开启后的口径打一次分（生产上未开启时不审）。
+      const verdict = await judgeToolCall({
+          config: { ...config, judge: { ...cfg, enabled: true } },
+          tool, args, task: get("--task") ?? "", recentMessages: [],
+          runner: buildJudgeRunner(config, home),
+        });
+      if (!cfg.enabled) process.stdout.write("（judge 当前未开启，以下是开启后的试运行结果）\n");
+      process.stdout.write(`judge 结论：${verdict.verdict}（风险 ${verdict.riskScore} 分，${verdict.source}）\n证据：${verdict.evidence.length ? verdict.evidence.join("；") : "（无）"}\n原因：${verdict.reason}\njudge 模型：${verdict.judgeModel ?? "—"}\n`);
+      return verdict.verdict === "deny" ? 3 : verdict.verdict === "escalate" ? 2 : 0;
+    }
+    process.stderr.write(`错误：未知子命令 judge ${action}\n`);
     return 2;
   } catch (err: unknown) {
     process.stderr.write(`错误：${err instanceof Error ? err.message : String(err)}\n`);
@@ -5805,6 +5905,7 @@ export async function main(argv: string[]): Promise<number> {
   if (args.subcommand === "bot") return handleBot(args.subArgs ?? [], home);
   if (args.subcommand === "channels") return handleChannels(args.subArgs ?? [], home);
   if (args.subcommand === "reviewer") return handleReviewer(args.subArgs ?? [], resolve(args.workdir));
+  if (args.subcommand === "judge") return handleJudge(args.subArgs ?? [], resolve(args.workdir));
   if (args.subcommand === "verifier") return handleVerifier(args.subArgs ?? [], home);
   if (args.subcommand === "mcp") return handleMcpServer(args.subArgs ?? [], home);
   if (args.subcommand === "peer") {

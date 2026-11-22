@@ -993,6 +993,17 @@ export function buildTimeline(store: RunStore, runId: string): Timeline {
       case "reviewer_verdict":
         push(at, "verdict", `审查 ${str(ev.tool) ?? "?"}：${str(ev.decision) ?? "?"}`, safeText(ev.reason) || null, str(ev.decision) === "allow" ? true : str(ev.decision) === "deny" ? false : null, null);
         break;
+      case "tool_judge_verdict": {
+        const verdict = str(ev.verdict) ?? "?";
+        const score = num(ev.risk_score);
+        const evidence = safeText(ev.evidence);
+        const reason = safeText(ev.reason);
+        const detailParts: string[] = [];
+        if (evidence) detailParts.push(`证据：${evidence}`);
+        if (reason) detailParts.push(reason);
+        push(at, "verdict", `judge ${str(ev.tool) ?? "?"}：${verdict}${score !== null ? `（风险 ${score} 分）` : ""}`, detailParts.length ? detailParts.join(" · ") : null, verdict === "allow" ? true : verdict === "deny" ? false : null, null);
+        break;
+      }
       case "review_decision":
         push(at, "verdict", `审阅批复 ${str(ev.item_id) ?? "?"}：${str(ev.decision) ?? "?"}`, null, str(ev.decision) === "approve" ? true : str(ev.decision) === "reject" ? false : null, null);
         break;

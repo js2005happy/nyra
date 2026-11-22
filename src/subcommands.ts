@@ -14,7 +14,7 @@ export const SUBCOMMANDS: readonly string[] = [
   // 成本与用量
   "cost", "savings", "stats", "budget",
   // 配置与开关
-  "config", "features", "tools", "models", "reviewer", "verifier", "account",
+  "config", "features", "tools", "models", "reviewer", "judge", "verifier", "account",
   // 记忆与复用
   "recall", "memory", "soul", "style", "skills", "bughunt", "market",
   // 后台与协作
