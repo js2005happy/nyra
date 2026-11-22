@@ -45,8 +45,9 @@ def classify_tool_report(result: object, *, raised: bool = False) -> ToolReportS
             reported_failure=raised or result.outcome == "reported_error",
             reported_unknown=not raised and result.outcome == "unknown",
         )
-    failed = raised or (
-        isinstance(result, str)
-        and result.startswith(("错误：", "执行失败："))
-    )
+    # Legacy adapters are expected to return text. Non-text values have no
+    # authenticated outcome and must not be journaled as reported success.
+    if not isinstance(result, str):
+        return ToolReportStatus(reported_failure=raised, reported_unknown=not raised)
+    failed = raised or result.startswith(("错误：", "执行失败："))
     return ToolReportStatus(reported_failure=failed)
