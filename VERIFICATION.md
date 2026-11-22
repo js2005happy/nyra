@@ -1,3 +1,9 @@
+## 2026-11-22 — Advisory idle Agent wiring (static review only)
+
+- Reviewed agent loop and no_progress event vocabulary. Added optional observation after model response and tool return; emits only bounded idle count and false authority flags. No task content or tool arguments in attention event.
+- Added unexecuted regression definitions for disabled default and advisory-only final response. No tests, scripts, build, CI, installs, main merge or production release.
+- Caveats: successful tools are not proof of progress; productive work may trigger advisory; reused caller-owned detector may retain counts; no runtime cancellation or verified completion.
+
 ## 2026-11-22 — Advisory progress-event classification (static review only)
 
 - Reviewed development README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/Tools, no-progress module and tests; checked recent repository commits, open Issues/PR, development branch, prior commit statuses and PR-triggered workflow runs (no status/run records returned).
