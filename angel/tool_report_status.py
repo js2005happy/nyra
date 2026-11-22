@@ -49,5 +49,9 @@ def classify_tool_report(result: object, *, raised: bool = False) -> ToolReportS
     # authenticated outcome and must not be journaled as reported success.
     if not isinstance(result, str):
         return ToolReportStatus(reported_failure=raised, reported_unknown=not raised)
+    # An empty or whitespace-only response contains no outcome information.
+    # Keep it unknown instead of treating it as a positive tool report.
+    if not result.strip():
+        return ToolReportStatus(reported_failure=raised, reported_unknown=not raised)
     failed = raised or result.startswith(("错误：", "执行失败："))
     return ToolReportStatus(reported_failure=failed)
