@@ -56,6 +56,9 @@ orchestrator?: boolean;
  * 据此把写者名额从参谋长移交给这条线程的成员，线程结束时名额还回去。
  */
 writeFiles?: string[];
+/** 第 2 批 G-P1-8：外来隔离分支——为 true 时这条线程强制 worktree 隔离，
+ * 且 worktree 建在具名分支 nyra/foreign/<task> 上，改动等机主合入。 */
+foreign?: boolean;
 }
 
 export type ParallelThreadStatus = "ok" | "failed" | "timeout" | "rejected" | "cancelled";

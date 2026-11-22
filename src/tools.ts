@@ -58,6 +58,7 @@ import { t as tr } from "./i18n.ts";
 import { loadConfig, resolveHome } from "./config.ts";
 import { LspClient, resolveLspServers, formatDiagnostics, formatSymbols, formatLocations, formatHover, type LspDiagnostic, type LspSymbol, type LspLocation } from "./lsp.ts";
 import { DEFAULT_VISION_CONFIG, loadImageFile, type VisionConfig, type VisionImageInput } from "./vision.ts";
+import type { ContentLabel, TaskOrigin } from "./contentLabels.ts";
 import { exportOfficeDocument, parseOfficeDocument, resolveOfficeConfig, type OfficeDocument, type OfficeExportResult } from "./office.ts";
 import { KnowledgeBase, recordKnowledgeSearch, type KnowledgeSearchOptions, type Note } from "./knowledge.ts";
 import { ingestMedia, formatMediaTranscript, resolveMediaConfig, type MediaIngestResult } from "./mediaIngest.ts";
@@ -163,6 +164,29 @@ export interface DelegateOptions {
    * delegateDetailed 里把当轮信号传进来；不传时子任务只认自己的信号。
    */
   signal?: AbortSignal;
+  /**
+   * 第 2 批 G-P1-8：外来 agent 隔离分支——为 true 时强制 worktree 隔离
+   * （isolation 哪怕传了 none 也会被改成 worktree），且 worktree 建在具名
+   * 分支 nyra/foreign/<task> 上（不是 detached），跑完改动留在分支上等
+   * 机主合入（nyra peer branch merge <task> --yes），不自动进主工作区。
+   * 只由 MCP 派发 / session 委派等“对方来的任务”入口传，模型调 delegate
+   * 工具可通过 foreign 参数显式传。
+   */
+  foreign?: boolean;
+  /** 第 2 批 G-P1-8：外来任务是谁派的（好友名；分支账本里记它）。 */
+  foreignPeer?: string;
+  /**
+   * 第 2 批 G-P1-9：委派审批回调——子 agent 在非交互下要审批时先问父级
+   * （父级当审批人，批了才放行）。delegateDetailed 把它注入子 agent 的
+   * ToolContext.delegateApprovalCallback。模型调 delegate 工具不能传
+   * （回调是函数，工具参数里没有它）。
+   */
+  approvalCallback?: (tool: string, summary: string) => boolean | Promise<boolean>;
+  /**
+   * 第 2 批 G-P1-3：团队纪元——团队模式下传参谋长发任务时写的纪元；子
+   * 任务执行前校验纪元，过期（lead 已换人）直接拒绝，不开工。
+   */
+  epoch?: number;
 }
 
 export interface ToolContext {
@@ -311,6 +335,28 @@ export interface ToolContext {
    */
   judgeRunner?: ReviewerLike | null;
   judgeEscalation?: { tool: string; riskScore: number; reason: string } | null;
+  /** 第 2 批 G-P1-12：启发式升级信息（启发式层，零成本规则；与 judge 层
+   * 同款“本次调用内有效、checkApproval 消费后清掉”口径）。 */
+  heuristicEscalation?: { tool: string; riskScore: number; reason: string } | null;
+  /** 第 2 批 G-P1-10/G-P1-11：本次运行的任务来源（local/peer）与内容标签。
+   * peer 来源的写操作进提议门，不直接执行。 */
+  origin?: TaskOrigin;
+  contentLabel?: ContentLabel;
+  /** 第 2 批 G-P1-10：对方的身份名（提议账本里记谁发的；MCP 派发默认
+   * mcp-peer，session 委派由调用方传真实好友名）。 */
+  peerName?: string;
+  /**
+   * 第 2 批 G-P1-8 × G-P1-10：当前是不是在外来隔离分支里干活。
+   * 为 true 时，写文件类操作（write_file/edit_file/apply_patch）不进
+   * 提议门——workspaceWritePath 已把它们物理限制在工作目录内，而这个
+   * Agent 的工作目录就是隔离 worktree，写不出去；shell、发邮件、改记忆
+   * 等能对外产生副作用的工具仍进提议门。只由 delegateDetailed 在建外来
+   * 子任务时设，根 agent 不设。
+   */
+  inForeignWorktree?: boolean;
+  /** 第 2 批 G-P1-9：委派审批回调——子 agent 在非交互下要审批时，先问父级；
+   * 父级批了才放行，拒了按拒绝处理。只由 delegateDetailed 注入，根 agent 不设。 */
+  delegateApprovalCallback?: ((tool: string, summary: string) => boolean | Promise<boolean>) | null;
 }
 
 export function newToolContext(partial: Partial<ToolContext> & { workdir: string }): ToolContext {
@@ -437,7 +483,7 @@ export const TOOL_SCHEMAS: Record<string, unknown>[] = [
   schema("read_skill", "按名读取一个技能的全文（描述、适用时机与完整步骤）。只读，不改文件、不需审批；不存在的技能名会返回可用技能列表",
     { name: { type: "string", description: "技能名，如 debugging" } },
     ["name"]),
-  schema("delegate", "把子任务交给子 agent 执行并返回摘要；每层最多 8 个子 agent（每层独立记账），最多嵌套 2 层（config.delegate_max_depth 可配 1–5），单个子任务最多 12 轮。子 agent 默认不能再委派（flat）：委派时传 orchestrator: true 才允许它再派子 agent（嵌套编排 opt-in）；循环委派（派回已在委派链里的人）直接拒绝。isolation=worktree 时子 agent 在独立 git worktree 里干活，主工作区不受影响；output_schema 给了时子 agent 的最终回答里必须包含符合该 JSON Schema 的 JSON，父级校验、失败给一次有界纠正轮。GROK-1：团队模式下 agent 填成员名（只认团队成员），分派给该成员的 Soul 跑；团队模式不填 agent 会被拒绝。第 1 批 G-P0-4：团队模式下要让成员写某个文件，分派时把文件列进 write_files（写者名额就移交过去了），不给时成员第一次写该文件会被单写者门拦下",
+  schema("delegate", "把子任务交给子 agent 执行并返回摘要；每层最多 8 个子 agent（每层独立记账），最多嵌套 2 层（config.delegate_max_depth 可配 1–5），单个子任务最多 12 轮。子 agent 默认不能再委派（flat）：委派时传 orchestrator: true 才允许它再派子 agent（嵌套编排 opt-in）；循环委派（派回已在委派链里的人）直接拒绝。isolation=worktree 时子 agent 在独立 git worktree 里干活，主工作区不受影响；output_schema 给了时子 agent 的最终回答里必须包含符合该 JSON Schema 的 JSON，父级校验、失败给一次有界纠正轮。GROK-1：团队模式下 agent 填成员名（只认团队成员），分派给该成员的 Soul 跑；团队模式不填 agent 会被拒绝。第 1 批 G-P0-4：团队模式下要让成员写某个文件，分派时把文件列进 write_files（写者名额就移交过去了），不给时成员第一次写该文件会被单写者门拦下。第 2 批 G-P1-8：foreign=true 时强制 worktree 隔离（isolation 哪怕传了 none 也改成 worktree），且 worktree 建在具名分支 nyra/foreign/<task> 上，跑完改动留在分支上等机主合入，不自动进主工作区",
     {
       task: { type: "string", minLength: 1 },
       max_turns: { type: "integer", default: 6, minimum: 1, maximum: 12 },
@@ -448,6 +494,7 @@ export const TOOL_SCHEMAS: Record<string, unknown>[] = [
       agent: { type: "string", description: "团队模式下分派给哪个成员（Soul agent 名）；只认团队成员" },
       orchestrator: { type: "boolean", default: false, description: "H-7：授予这个子 agent 的 orchestrator 角色，允许它再委派（嵌套编排 opt-in）；默认 false，子 agent 是 flat 的" },
       write_files: { type: "array", items: { type: "string" }, description: "第 1 批 G-P0-4：这次委派要写的 workspace 相对路径；给了就把写者名额从参谋长移交给这个成员，子任务结束时名额自动还回去" },
+      foreign: { type: "boolean", default: false, description: "第 2 批 G-P1-8：外来 agent 隔离分支——为 true 时强制 worktree 隔离，且 worktree 建在具名分支 nyra/foreign/<task> 上，跑完改动留在分支上等机主合入，不自动进主工作区" },
     },
     ["task"]),
   schema("delegate_parallel", "把多个互不依赖的子任务并行交给子 agent 跑并汇总结果（缺口 3a，opt-in：只有显式调这个工具才并行）。默认最多 5 个同时跑（硬顶，给再大也只按 5 跑）、单个子任务 10 分钟超时；失败/超时的线程不拖垮其他线程，只返回成功者的结果并注明失败原因与已花成本。每个线程继承 delegate 的工具白名单与 worktree 隔离，收敛规则写进子任务系统提示；本批不做自动验证，验证结论待 review queue 验收。H-6：background 默认 true——立即回 handle（后台跑，等回填），不阻塞聊天，全部跑完以单条消息回填收件箱（nyra fanout show <id> 查进度，任务板上有行）；要等结果传 background: false。H-5：merge: true 时批跑完再跑一个合并步（只读合成子 agent 把各线程结果合成为一份交付物，确定性检查后进审阅队列），合并要花一次模型调用，成本如实记账",
@@ -466,9 +513,10 @@ export const TOOL_SCHEMAS: Record<string, unknown>[] = [
             agent: { type: "string", description: "团队模式下这条线程分派给哪个成员（Soul agent 名），与 delegate 的 agent 同义" },
             orchestrator: { type: "boolean", default: false, description: "H-7：授予这条线程的子 agent 的 orchestrator 角色，允许它再委派，与 delegate 的 orchestrator 同义" },
             write_files: { type: "array", items: { type: "string" }, description: "第 1 批 G-P0-4：这条线程要写的 workspace 相对路径，与 delegate 的 write_files 同义" },
+            foreign: { type: "boolean", default: false, description: "第 2 批 G-P1-8：外来 agent 隔离分支，与 delegate 的 foreign 同义" },
           },
         },
-        description: "并行子任务列表（每项至少含 task；isolation/tools/model/output_schema/agent/orchestrator/write_files 与 delegate 同义）",
+        description: "并行子任务列表（每项至少含 task；isolation/tools/model/output_schema/agent/orchestrator/write_files/foreign 与 delegate 同义）",
       },
       max_concurrency: { type: "integer", default: 5, minimum: 1, maximum: 5, description: "同时跑的线程数上限，默认 5，也是硬顶" },
       timeout_ms: { type: "integer", default: 600000, minimum: 1000, description: "单个子任务超时（毫秒），默认 600000（10 分钟），到点即判该线程超时" },
@@ -780,6 +828,71 @@ export function resetPermissionRulesCache(): void {
   permissionRulesCache.clear();
 }
 
+/**
+ * 第 2 批 G-P1-9：委派审批回调——子 agent 在非交互下要审批时，先问父级
+ * （父级当审批人）。父级批了放行（不记“始终允许”——回调每次都要问，
+ * 不把一次批准变成长期放行）；拒了或回调抛错都按拒绝处理。没设回调
+ * 时返回 false，调用方按原来的拒绝文案抛错。
+ */
+async function consultDelegateCallback(ctx: ToolContext, toolName: string, summary: string): Promise<boolean> {
+  if (!ctx.delegateApprovalCallback) return false;
+  let ok = false;
+  try {
+    ok = Boolean(await ctx.delegateApprovalCallback(toolName, summary));
+  } catch {
+    ok = false;
+  }
+  try { ctx.onEvent?.("delegate_approval_callback", { tool: toolName, approved: ok, via: "parent" }); } catch { /* ignore */ }
+  if (ok) observeApproval(ctx, toolName, true);
+  return ok;
+}
+
+/** 第 2 批 G-P1-12：启发式前置——零成本规则先扫一遍；critical 直接拒绝
+ * （不调 judge 模型）；high 转人工（把升级标记交给 checkApproval，judge
+ * 开了继续打分，没开时 checkApproval 强制走人工链）；medium 只留痕放行。
+ * 结论落库 intent-verdicts.jsonl（只记工具名、层、结论、规则、理由，不记参数原文）。 */
+async function runIntentHeuristic(ctx: ToolContext, toolName: string, args: Record<string, unknown>, task?: string): Promise<void> {
+  if (!ctx.home) return;
+  const { checkIntentHeuristic, heuristicDecision, appendIntentVerdict } = await import("./intentVerdict.ts");
+  const hit = checkIntentHeuristic(toolName, args, task ?? "");
+  if (hit.level === "none" || hit.level === "low") return;
+  const decision = heuristicDecision(hit);
+  appendIntentVerdict(ctx.home, { tool: toolName, layer: "heuristic", decision, rule: hit.rule, reason: hit.reason, risk_score: null });
+  try { ctx.onEvent?.("intent_verdict", { tool: toolName, layer: "heuristic", decision, rule: hit.rule, reason: hit.reason }); } catch { /* ignore */ }
+  if (decision === "deny") {
+    throw new ToolError(`启发式拦截了 ${toolName}：${hit.reason}`);
+  }
+  if (decision === "escalate") {
+    // high：风险 85 分——“拿不准、须人看”的档位（judge 的转人工区间是
+    // 40–69，这里直接标 85 是为了让审批摘要里一眼看出是启发式升的，
+    // checkApproval 里 escalationLabel 会写明是启发式检查）。
+    ctx.heuristicEscalation = { tool: toolName, riskScore: 85, reason: hit.reason };
+  }
+}
+
+/** 第 2 批 G-P1-10：对方写操作默认进提议——peer 来源的写操作不执行，
+ * 只记一条提议等机主批（nyra peer proposal accept <id> --yes）；提议门
+ * 在单写者门之前：提议不占写者名额。返回给模型的交回文本。 */
+async function recordPeerProposalGate(ctx: ToolContext, toolName: string, args: Record<string, unknown>): Promise<string> {
+  const { recordPeerProposal } = await import("./peerProposals.ts");
+  const { labelToolArgs } = await import("./contentLabels.ts");
+  const label = labelToolArgs(toolName, args, ctx.contentLabel ?? {
+    integrity: "untrusted",
+    confidentiality: "internal",
+    principal: "peer",
+    reason: "对端发来的任务按不可信输入处理",
+  });
+  const proposal = recordPeerProposal(ctx.home!, {
+    peer: ctx.peerName ?? "mcp-peer",
+    tool: toolName,
+    args,
+    label,
+    reason: "对方写操作默认进提议：须机主批准后才执行",
+  });
+  try { ctx.onEvent?.("peer_proposal_recorded", { proposal_id: proposal.id, peer: proposal.peer, tool: toolName }); } catch { /* ignore */ }
+  return `对方写操作已记为提议（${proposal.id}）：${toolName} 须机主批准后才执行（nyra peer proposal accept ${proposal.id} --yes）；本次未执行任何写操作。`;
+}
+
 export async function checkApproval(
   ctx: ToolContext,
   toolName: string,
@@ -919,6 +1032,16 @@ export async function checkApproval(
   // runToolJudge 每次调用都会刷新它，不会把上一次的转人工漏到下一次调用上。
   const judgeEscalated = ctx.judgeEscalation?.tool === toolName ? ctx.judgeEscalation : null;
   ctx.judgeEscalation = null;
+  // 第 2 批 G-P1-12：启发式层转人工与 judge 层同款处理——两层都强制走人工
+  // 审批链；标记只认本次调用的工具名，读完就清掉。escalated 是“任一层升级
+  // 了”的合一标记，escalationLabel 说明是哪一层升的（审批摘要里写清楚）。
+  const heuristicEscalated = ctx.heuristicEscalation?.tool === toolName ? ctx.heuristicEscalation : null;
+  ctx.heuristicEscalation = null;
+  const escalated = judgeEscalated ?? heuristicEscalated;
+  const escalationLabel = judgeEscalated ? "意向验证 judge" : heuristicEscalated ? "启发式检查" : "";
+  const escalationNote = escalated
+    ? `[${escalationLabel}：风险 ${escalated.riskScore} 分，${escalated.reason}——本次须人工确认]`
+    : null;
 
   // P0-5：权限规则语言。deny > ask > allow，空规则集时行为与之前完全一致。
   // 注意 readonly 的拒绝在上面已经发生——规则**不能**放开只读模式，这是刻意的硬约束。
@@ -932,7 +1055,7 @@ export async function checkApproval(
     throw new ToolError(`已被权限规则拒绝：${decision.rule.raw}`);
   }
   const preApproved = decision?.action === "allow";
-  if (preApproved && !judgeEscalated) {
+  if (preApproved && !escalated) {
     // 规则显式 allow：跳过弹窗，但仍然记录一次审批事件，便于审计。
     observeApproval(ctx, toolName, true);
     return;
@@ -944,7 +1067,7 @@ export async function checkApproval(
   // 只读拒绝与权限规则 deny 之后：重试仍受这两条硬控制约束，跳过的只是
   // 人工弹窗 / approveFn 这一层。judge 转人工时不走这条短路：首次调用被转
   // 人工还没批过，重试不能当成“已批”直接执行。
-  if (ctx.idempotentRetry === true && !judgeEscalated) return;
+  if (ctx.idempotentRetry === true && !escalated) return;
 
   // Pi Bot 借鉴第 1 条：纯脚本 + 摘要预授权快路径——只在例行上下文里
   // 生效（ctx.routineId 已设，工作流步骤）；聊天/单次运行不设 routineId，
@@ -953,7 +1076,7 @@ export async function checkApproval(
   // 变了则直接拒绝（fail-closed：非交互例行里没人可问，停下比悄悄跑
   // 改过的脚本安全）。判定结果走 ctx.onEvent 进证据链（script_pure /
   // script_preauth_used），预授权的使用与拒绝另记脚本审计。
-  if (toolName === "shell" && opts?.command !== undefined && ctx.routineId && !judgeEscalated) {
+  if (toolName === "shell" && opts?.command !== undefined && ctx.routineId && !escalated) {
     const fast = checkScriptFastPath({
       home: ctx.home ?? null,
       routineId: ctx.routineId,
@@ -970,6 +1093,10 @@ export async function checkApproval(
 
   if (ctx.mode === "auto" || ctx.mode === "creator") {
     if (!ctx.interactive) {
+      // 第 2 批 G-P1-9：委派审批回调——子 agent 非交互下要审批时先问父级；
+      // 父级批了放行（不记“始终允许”——回调每次都要问），拒了按拒绝处理；
+      // 没回调时按以前的文案拒绝。
+      if (await consultDelegateCallback(ctx, toolName, escalationNote ? `${summary}\n${escalationNote}` : summary)) return;
       throw new ToolError("非交互模式下 auto 模式不执行写入操作，请使用 --mode full 重新运行");
     }
     // 缺口 19：PermissionRequest 钩子——在"记住的允许规则"与人工弹窗之前跑。
@@ -978,7 +1105,7 @@ export async function checkApproval(
     // 已记下的“允许并不再询问”规则：匹配时会重新做简单命令检查，
     // `; && | $() 反引号 换行` 一律匹配不上（见 approvalRules.prefixMatches）。
     const ruleHit = findApprovalRule(ctx, toolName, opts?.command);
-    if (ruleHit && !judgeEscalated) {
+    if (ruleHit && !escalated) {
       observeApproval(ctx, toolName, true);
       try { ctx.onEvent?.("approval_rule_applied", { tool: toolName, rule: ruleHit.label, scope: ruleHit.scope, id: ruleHit.id }); } catch { /* ignore */ }
       return;
@@ -990,14 +1117,12 @@ export async function checkApproval(
     const shellScope = toolName === "shell" && opts?.command !== undefined && opts?.cwd !== undefined
       ? JSON.stringify([opts.command, opts.cwd, approvalRoot(ctx), opts.timeout ?? 60, backendKey(ctx.backend ?? null)])
       : null;
-    // judge 转人工时把风险分与理由写进审批摘要：人批的时候能看到为什么被转过来。
-    const approvalSummary = judgeEscalated
-      ? `${summary}\n[意向验证 judge：风险 ${judgeEscalated.riskScore} 分，${judgeEscalated.reason}——本次须人工确认]`
-      : summary;
+    // judge/启发式转人工时把风险分与理由写进审批摘要：人批的时候能看到为什么被转过来。
+    const approvalSummary = escalationNote ? `${summary}\n${escalationNote}` : summary;
 
     if (ctx.approveFn) {
       const grant = fileScope ?? shellScope;
-      if (grant !== null && ctx.approveFnGrants?.has(grant) && !judgeEscalated) return;
+      if (grant !== null && ctx.approveFnGrants?.has(grant) && !escalated) return;
       observeApproval(ctx, toolName, null);
       // 第 3 阶段 smart approvals 需要命令原文做静态规则与评审：
       // 把 opts 原样透传给 approveFn（旧调用方忽略第 3 个参数）。
@@ -1016,8 +1141,8 @@ export async function checkApproval(
       if (approved === APPROVE_ALWAYS && grant !== null) ctx.approveFnGrants?.add(grant);
       return;
     }
-    if (fileScope !== null && ctx.approvedFileTools?.has(fileScope) && !judgeEscalated) return;
-    if (shellScope !== null && ctx.approvedShellCommands?.has(shellScope) && !judgeEscalated) return;
+    if (fileScope !== null && ctx.approvedFileTools?.has(fileScope) && !escalated) return;
+    if (shellScope !== null && ctx.approvedShellCommands?.has(shellScope) && !escalated) return;
 
     console.log(approvalSummary);
     observeApproval(ctx, toolName, null);
@@ -1044,9 +1169,11 @@ export async function checkApproval(
     }
     throw new ToolError("用户拒绝执行");
   }
-  // judge 转人工 + full 模式：没人可问，转人工等于拒绝（fail-closed）。
-  if (judgeEscalated) {
-    throw new ToolError(`意向验证 judge 认为 ${toolName} 风险 ${judgeEscalated.riskScore} 分须人工确认，full 模式下无人可问，拒绝执行`);
+  // judge/启发式转人工 + full 模式：没人可问，转人工等于拒绝（fail-closed）。
+  // 委派审批回调例外：子 agent 在 full 模式下被 judge/启发式转人工时，先问父级。
+  if (escalated) {
+    if (await consultDelegateCallback(ctx, toolName, escalationNote ? `${summary}\n${escalationNote}` : summary)) return;
+    throw new ToolError(`${escalationLabel}认为 ${toolName} 风险 ${escalated.riskScore} 分须人工确认，full 模式下无人可问，拒绝执行`);
   }
   // full 模式：直接放行（denylist 仍在 shell 入口先行检查）。
 }
@@ -2517,6 +2644,8 @@ async function toolDelegateParallel(
       const files = (raw.write_files as unknown[]).map((f) => String(f)).filter(Boolean);
       if (files.length) spec.writeFiles = files;
     }
+    // 第 2 批 G-P1-8：并行线程的外来隔离分支（与 delegate 的 foreign 同义）。
+    if (raw.foreign === true) spec.foreign = true;
     tasks.push(spec);
   }
   const merge = extra.merge === true;
@@ -2909,6 +3038,19 @@ async function runToolJudge(ctx: ToolContext, tool: string, args: Record<string,
       judge_model: verdict.judgeModel ?? "",
     });
   } catch { /* 观察器故障不破坏拦截 */ }
+  // 第 2 批 G-P1-12：judge 层结论落库（与启发式层同一本账，nyra judge
+  // verdicts 一次查两层；只记工具名、层、结论、理由、风险分，不记参数原文）。
+  try {
+    const { appendIntentVerdict } = await import("./intentVerdict.ts");
+    appendIntentVerdict(ctx.home, {
+      tool,
+      layer: "judge",
+      decision: verdict.verdict,
+      rule: null,
+      reason: verdict.reason,
+      risk_score: verdict.riskScore,
+    });
+  } catch { /* 落库失败不破坏拦截（结论仍在 tool_judge_verdict 事件里） */ }
   if (verdict.verdict === "deny") {
     ctx.judgeEscalation = null;
     throw new ToolError(`意向验证 judge 拒绝了 ${tool}（风险 ${verdict.riskScore} 分）：${verdict.reason}`);
@@ -3004,6 +3146,27 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
     if (ctx.idempotentRetry !== true) {
       await runToolJudge(ctx, name, args);
     }
+    // 第 2 批 G-P1-12：启发式前置——零成本规则先扫一遍（critical 直接拒绝，
+    // 不调 judge 模型；high 转人工，标记交给 checkApproval；medium 只留痕）。
+    // 顺序在 judge 之后：judge 是模型打分、启发式是规则，两层结论都落库；
+    // 幂等重试不重扫（首次已扫过）。
+    if (ctx.idempotentRetry !== true && ctx.home) {
+      await runIntentHeuristic(ctx, name, args, ctx.reviewTask ?? "");
+    }
+    // 第 2 批 G-P1-10：对方写操作默认进提议——peer 来源的写操作不执行，
+    // 只记一条提议等机主批。提议门在单写者门之前：提议不占写者名额，
+    // 也不触发写后租约补记（没写就没租约）。幂等重试不重记提议（首次已记过）。
+    // 动态 import（requiresProposal 在 contentLabels 里；contentLabels 只
+    // 依赖 memory，不引 tools，没有循环）。
+    // 例外：隔离分支内的文件写操作（CONFINED_WRITE_TOOLS）不进提议门——
+    // workspaceWritePath 已把它们限制在工作目录内，而外来子任务的工作目录
+    // 就是隔离 worktree，写不出去；shell、发邮件、改记忆仍进提议门。
+    if (ctx.idempotentRetry !== true && ctx.home) {
+      const { requiresProposal, CONFINED_WRITE_TOOLS } = await import("./contentLabels.ts");
+      if (requiresProposal(ctx.origin, name) && !(ctx.inForeignWorktree === true && CONFINED_WRITE_TOOLS.has(name))) {
+        return recordPeerProposalGate(ctx, name, args);
+      }
+    }
     // 第 1 批 G-P0-4：单写者门——团队模式下写文件前先查门。门外路径（绝对路径 /
     // `..`）不归门管，交给 workspaceWritePath 拦。重试不跳过这道门：移交后
     // 重试能放行，没移交重试也照样拦。被拦返回带标记的错误文案，幂等重试
@@ -3079,6 +3242,8 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
           ...(args.orchestrator === true ? { orchestrator: true } : {}),
           // 第 1 批 G-P0-4：写者名额文件（只认字符串数组；脏项在 agent.ts 里过滤）。
           ...(Array.isArray(args.write_files) ? { writeFiles: (args.write_files as unknown[]).map((f) => String(f)).filter(Boolean) } : {}),
+          // 第 2 批 G-P1-8：外来隔离分支（只认 true；没给就是本机任务）。
+          ...(args.foreign === true ? { foreign: true } : {}),
         },
       );
       case "delegate_parallel": return await toolDelegateParallel(
@@ -3324,6 +3489,12 @@ const APPROVAL_REFUSAL_MARKERS = [
   // 只会再被同一道门拦下；跳过门去执行等于把两个 agent 同时写同一文件
   // 的竞态放进来。
   "单写者门拦截",
+  // 第 2 批 G-P1-12：启发式拦截同样是硬拒绝——重试会跳过启发式门，把
+  // 拦住的危险调用执行掉。
+  "启发式拦截",
+  // 第 2 批 G-P1-10：提议不是拒绝，但重试不能把它变成执行——重试的提议
+  // 门返回的是同一条提议文案（不重复记账），认下标记只是双保险。
+  "对方写操作已记为提议",
 ];
 
 /** 该工具结果是不是一次审批拒绝（是就绝不重试，见 executeToolIdempotent）。 */

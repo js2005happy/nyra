@@ -110,6 +110,16 @@ export interface SessionFrame {
   at: string;
 }
 
+export interface SessionJoinRequest {
+  id: string;
+  identity: string;
+  requested_at: string;
+  requested_by: string;
+  status: "pending" | "approved" | "declined";
+  decided_at: string | null;
+  decided_by: string | null;
+}
+
 export interface JointSession {
   id: string;
   title: string;
@@ -124,6 +134,13 @@ export interface JointSession {
   frames: SessionFrame[];
   /** 录制同意：每位在会成员的显式同意（身份 + 时间）。 */
   recording_consented_by: { identity: string; at: string }[];
+  /**
+   * 第 2 批 G-P1-5：待批入会请求——好友进群要批：先 request（准入闸预检
+   * 不过直接拒绝，连请求都不记），再由机主 approve/decline；批准时重查
+   * 准入闸（请求后被拉黑/移出圈的，批准时拦下）。默认只读：进会不等于
+   * 能写东西，写操作仍走提议门。
+   */
+  pending_joins: SessionJoinRequest[];
 }
 
 export interface SessionBook {
@@ -198,7 +215,8 @@ export function loadSessionBook(home: string): SessionBook {
   if (!isPlainObject(parsed) || !Array.isArray(parsed.sessions)) {
     throw new SessionError(`${SESSIONS_FILE} 结构不对（须含 sessions 列表）`);
   }
-  return { version: 1, sessions: parsed.sessions as JointSession[] };
+  // 第 2 批 G-P1-5：老会话没有 pending_joins 字段，读时补空数组（不改写账本）。
+  return { version: 1, sessions: (parsed.sessions as JointSession[]).map((s) => ({ ...s, pending_joins: s.pending_joins ?? [] })) };
 }
 
 export function saveSessionBook(home: string, book: SessionBook): void {
@@ -274,6 +292,7 @@ export function createSession(home: string, title: string, by?: string): JointSe
     shares: [],
     frames: [],
     recording_consented_by: [],
+    pending_joins: [],
   };
   book.sessions.push(session);
   saveSessionBook(home, book);
@@ -322,6 +341,102 @@ export function joinSession(home: string, sessionId: string, identity: string, b
   appendPeerAudit(home, { action: "session_joined", session: sessionId, peer: identity, by: who });
   recordSessionEvent(home, "session_joined", { session: sessionId, peer: identity });
   return member;
+}
+
+/**
+ * 第 2 批 G-P1-5：好友请求进会——先记一条待批请求。准入闸预检不过直接
+ * 拒绝（连请求都不记）；已在会里、已有待批请求时直接报错。
+ */
+export function requestJoinSession(home: string, sessionId: string, identity: string, by?: string): SessionJoinRequest {
+  const who = by ?? identity;
+  const book = loadSessionBook(home);
+  const session = findSession(book, sessionId);
+  if (!session) throw new SessionError(`没有这个会话：${sessionId}`);
+  if (session.status !== "active") throw new SessionError(`会话 ${sessionId} 已结束，不能再加入`);
+  if (isActiveMember(session, identity)) throw new SessionError(`${identity} 已在会话 ${sessionId} 里`);
+  if (session.pending_joins.some((r) => r.identity === identity && r.status === "pending")) {
+    throw new SessionError(`${identity} 已有一条待批的进会请求，先处理它`);
+  }
+  const admission = checkSessionAdmission(home, identity);
+  if (!admission.admitted) throw new SessionError(`${identity} 进不了会：${admission.reason}`);
+  const req: SessionJoinRequest = {
+    id: newId("join"),
+    identity,
+    requested_at: nowIso(),
+    requested_by: who,
+    status: "pending",
+    decided_at: null,
+    decided_by: null,
+  };
+  session.pending_joins.push(req);
+  saveSessionBook(home, book);
+  appendPeerAudit(home, { action: "session_join_requested", session: sessionId, peer: identity, by: who });
+  recordSessionEvent(home, "session_join_requested", { session: sessionId, peer: identity });
+  return req;
+}
+
+/** 第 2 批 G-P1-5：批准进会请求——只有机主能批；批准时重查准入闸
+ * （请求后被拉黑/移出圈的，批准时拦下，请求保持 pending 等机主处理）。 */
+export function approveJoinSession(home: string, sessionId: string, requestId: string, by?: string): SessionMember {
+  const who = by ?? OWNER_IDENTITY;
+  if (who !== OWNER_IDENTITY) throw new SessionError("只有机主能批准进会请求");
+  const book = loadSessionBook(home);
+  const session = findSession(book, sessionId);
+  if (!session) throw new SessionError(`没有这个会话：${sessionId}`);
+  if (session.status !== "active") throw new SessionError(`会话 ${sessionId} 已结束，不能再加入`);
+  const req = session.pending_joins.find((r) => r.id === requestId);
+  if (!req) throw new SessionError(`没有这个进会请求：${requestId}`);
+  if (req.status !== "pending") throw new SessionError(`进会请求 ${requestId} 已是 ${req.status} 状态，不能再批`);
+  const admission = checkSessionAdmission(home, req.identity);
+  if (!admission.admitted) throw new SessionError(`${req.identity} 现在进不了会：${admission.reason}（请求保持待批）`);
+  if (isActiveMember(session, req.identity)) {
+    // 请求后已通过别的方式进会（直接 join）：请求直接标 approved，不重复加人。
+    req.status = "approved";
+    req.decided_at = nowIso();
+    req.decided_by = who;
+    saveSessionBook(home, book);
+    return session.members.find((m) => m.identity === req.identity && m.left_at === null)!;
+  }
+  const member: SessionMember = { identity: req.identity, kind: memberKind(req.identity), joined_at: nowIso(), left_at: null };
+  session.members.push(member);
+  req.status = "approved";
+  req.decided_at = nowIso();
+  req.decided_by = who;
+  saveSessionBook(home, book);
+  appendPeerAudit(home, { action: "session_join_approved", session: sessionId, peer: req.identity, by: who });
+  recordSessionEvent(home, "session_join_approved", { session: sessionId, peer: req.identity });
+  return member;
+}
+
+/** 第 2 批 G-P1-5：拒绝进会请求——只有机主能拒；拒绝是终态。 */
+export function declineJoinSession(home: string, sessionId: string, requestId: string, by?: string): SessionJoinRequest {
+  const who = by ?? OWNER_IDENTITY;
+  if (who !== OWNER_IDENTITY) throw new SessionError("只有机主能拒绝进会请求");
+  const book = loadSessionBook(home);
+  const session = findSession(book, sessionId);
+  if (!session) throw new SessionError(`没有这个会话：${sessionId}`);
+  const req = session.pending_joins.find((r) => r.id === requestId);
+  if (!req) throw new SessionError(`没有这个进会请求：${requestId}`);
+  if (req.status !== "pending") throw new SessionError(`进会请求 ${requestId} 已是 ${req.status} 状态，不能再拒`);
+  req.status = "declined";
+  req.decided_at = nowIso();
+  req.decided_by = who;
+  saveSessionBook(home, book);
+  appendPeerAudit(home, { action: "session_join_declined", session: sessionId, peer: req.identity, by: who });
+  recordSessionEvent(home, "session_join_declined", { session: sessionId, peer: req.identity });
+  return req;
+}
+
+/** 第 2 批 G-P1-5：列出待批的进会请求（不给会话时列全部会话的待批请求）。 */
+export function listPendingJoins(home: string, sessionId?: string): { session: string; request: SessionJoinRequest }[] {
+  const out: { session: string; request: SessionJoinRequest }[] = [];
+  for (const s of loadSessionBook(home).sessions) {
+    if (sessionId && s.id !== sessionId) continue;
+    for (const r of s.pending_joins) {
+      if (r.status === "pending") out.push({ session: s.id, request: r });
+    }
+  }
+  return out;
 }
 
 /** 离开联合会话（任何一方可随时单方退出；人都走光了会话自动结束，
@@ -652,6 +767,10 @@ const SESSION_USAGE = "用法：\n"
   + " nyra session list                           列出联合会话（状态、成员数、委派数）\n"
   + " nyra session show <会话>                    看一个会话：成员、委派、共享、录制同意状态\n"
   + " nyra session join <会话> <好友名>           邀好友进会（好友须已批准且在信任圈里，圈外直接拒绝）\n"
+  + " nyra session join-request <会话> <好友名>    好友请求进会（先记一条待批请求；准入闸预检不过直接拒绝）\n"
+  + " nyra session join-approve <会话> <请求 id> --yes   批准进会请求（批准时重查准入闸）\n"
+  + " nyra session join-decline <会话> <请求 id> --yes   拒绝进会请求\n"
+  + " nyra session join-list [<会话>]              列出待批的进会请求\n"
   + " nyra session leave <会话> [--who <身份>]    离开会话（任何一方可随时单方退出；人都走光了会话自动结束）\n"
   + " nyra session delegate <会话> --to <成员> --task <任务> --accept <标准> [--accept <标准> ...] [--from <成员>]   会内委派（验收标准落成缺口 29 的交付契约；交付走缺口 12 的交接，发不出去时任务留在账本里）\n"
   + " nyra session accept <会话> <委派id> [--by <身份>]    被委派方接下任务\n"
@@ -729,6 +848,11 @@ export async function handleSession(argv: string[], home: string): Promise<numbe
       }
       process.stdout.write(`帧扇出记录：${session.frames.length} 条（只记指纹，会话结束时清空，默认不留存）\n`);
       process.stdout.write(`录制同意：${session.recording_consented_by.map((c) => c.identity).join("、") || "无人同意"}（${recordingAllowed(session) ? "全体已同意，可以录制" : "未获全体同意，不能录制"}）\n`);
+      const pendingJoins = session.pending_joins.filter((r) => r.status === "pending");
+      process.stdout.write(`待批进会：${pendingJoins.length} 条\n`);
+      for (const r of pendingJoins) {
+        process.stdout.write(` ${r.id} ${r.identity}（${r.requested_at} 申请）\n`);
+      }
       return 0;
     }
     if (cmd === "join") {
@@ -740,6 +864,49 @@ export async function handleSession(argv: string[], home: string): Promise<numbe
       }
       joinSession(home, id, identity);
       process.stdout.write(`${identity} 已进会 ${id}（准入闸已过：已批准好友且在信任圈里）\n`);
+      return 0;
+    }
+    if (cmd === "join-request") {
+      const id = argv[1];
+      const identity = argv[2];
+      if (!id || !identity) {
+        process.stderr.write("用法：nyra session join-request <会话> <好友名>\n");
+        return 2;
+      }
+      const req = requestJoinSession(home, id, identity);
+      process.stdout.write(`进会请求已记：${req.id}（${identity} 想进 ${id}；批准：nyra session join-approve ${id} ${req.id} --yes）\n`);
+      return 0;
+    }
+    if (cmd === "join-approve" || cmd === "join-decline") {
+      const id = argv[1];
+      const requestId = argv[2];
+      if (!id || !requestId) {
+        process.stderr.write(`用法：nyra session ${cmd} <会话> <请求 id> --yes\n`);
+        return 2;
+      }
+      if (!has("--yes")) {
+        process.stderr.write(`${cmd === "join-approve" ? "批准" : "拒绝"}进会请求须加 --yes 确认\n`);
+        return 2;
+      }
+      if (cmd === "join-approve") {
+        const member = approveJoinSession(home, id, requestId);
+        process.stdout.write(`${member.identity} 已进会 ${id}（批准时重查了准入闸）\n`);
+      } else {
+        declineJoinSession(home, id, requestId);
+        process.stdout.write(`进会请求 ${requestId} 已拒绝\n`);
+      }
+      return 0;
+    }
+    if (cmd === "join-list") {
+      const id = argv[1] ?? undefined;
+      const pending = listPendingJoins(home, id);
+      if (!pending.length) {
+        process.stdout.write("没有待批的进会请求。\n");
+        return 0;
+      }
+      for (const p of pending) {
+        process.stdout.write(`${p.request.id}\t${p.request.identity}\t会话 ${p.session}\t${p.request.requested_at}\n`);
+      }
       return 0;
     }
     if (cmd === "leave") {

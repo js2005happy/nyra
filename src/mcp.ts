@@ -1462,7 +1462,10 @@ export class NyraMcpServer {
     if (verdict.decision === "BLOCK") {
       return { text: `独立审查拦截了本次派发：${verdict.reason}`, reviewerDecision: "BLOCK", runId: "" };
     }
-    const created = await addTask(task.trim(), { mode: modeRaw, home: this.ctx.home, config: this.ctx.config });
+    // 第 2 批 G-P1-10：MCP 派发的任务来源记 peer（对外服务接进来的任务
+    // 一律按对端任务处理，写操作进提议门，不直接执行）。来源记失败时
+    // addTask 直接抛错——这条任务不该悄悄按 local 跑。
+    const created = await addTask(task.trim(), { mode: modeRaw, home: this.ctx.home, config: this.ctx.config, origin: "peer" });
     return { text: `任务已入队：run_id ${created.run_id}（模式 ${modeRaw}，状态 queued）`, reviewerDecision: "ALLOW", runId: created.run_id };
   }
 

@@ -13,6 +13,8 @@ import { RunStore, prepareResume, resolveVerifyOrigin, acceptVerifyCommand, reso
 import { ApprovalRequired } from "./tools.ts";
 import { Agent } from "./agent.ts";
 import { resolveReviewerModel } from "./reviewer.ts";
+import { markTaskOrigin, readTaskOrigin } from "./taskOrigin.ts";
+import type { TaskOrigin } from "./contentLabels.ts";
 import { pythonJsonDump } from "./pyjson.ts";
 import { t } from "./i18n.ts";
 
@@ -90,6 +92,12 @@ export function addTask(
      * 人工运行不设：它们走“写操作挂起等审批”，不是无人值守。
      */
     unattended?: boolean;
+    /**
+     * 第 2 批 G-P1-10：任务来源（local/peer；不传默认 local）。MCP 派发
+     * 传 peer，来源记进 ~/.nyra/task-origins.json，runOne 起 Agent 前
+     * 读出来传给 Agent（peer 任务的写操作进提议门）。
+     */
+    origin?: TaskOrigin;
   },
 ): RunState {
   const workdir = opts?.workdir ?? process.cwd();
@@ -115,6 +123,9 @@ export function addTask(
   const store = opts?.store ?? taskStore(opts?.home);
   const state = store.create(task, newSessionIdForTask(), workdir, mode, maxTurns, "queued", verifyCmd, { unattended });
   if (skipReason) store.update(state.run_id, { verify_result: { skip_reason: skipReason } });
+  // 第 2 批 G-P1-10：来源记进任务来源账本（只记 run_id + 来源，不记任务文本）。
+  // 记失败直接让派发报错——来源记不下来时这条任务不该悄悄按 local 跑。
+  markTaskOrigin(opts?.home ?? null, state.run_id, opts?.origin ?? "local");
   return state;
 }
 
@@ -237,11 +248,16 @@ export async function runOne(
   const messages = loadSession(state.session_id, opts.home) ?? [];
   const defer = opts.approveFn !== undefined && opts.approveFn !== null ? opts.approveFn : (!opts.interactive ? deferApproval : null);
   const { RunRecorder } = await import("./runs.ts");
+  // 第 2 批 G-P1-10：任务来源——起 Agent 前读来源账本传给 Agent；读不到
+  // 按 local 处理（老任务没有来源记录）。对方身份名用默认 mcp-peer
+  // （来源账本只记来源不记人名；MCP 派发的任务本来就来自 mcp-peer）。
+  const taskOrigin = readTaskOrigin(opts.home ?? null, state.run_id);
   const agent = new Agent(opts.provider, {
     workdir: state.workdir, mode: state.mode, maxTurns: state.max_turns,
     // 缺口 8：运行记录里记了 unattended 的任务，Agent 同样以无人值守跑
     //（只读锁定 + 写操作工具层直接拒绝）；队列任务与人工运行不设。
     unattended: state.unattended === true,
+    origin: taskOrigin ?? "local",
     sessionId: state.session_id, messages,
     interactive: defer !== null ? true : (opts.interactive ?? false),
     approveFn: defer ?? undefined, skillsDirs: [], home: opts.home,

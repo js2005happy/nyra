@@ -262,6 +262,12 @@ export interface AgentOptions {
   teamId?: string | null;
   /** GROK-1：团队里的角色（chief = 参谋长，独占入口；member = 下游成员，只做执行）。 */
   teamRole?: "chief" | "member" | null;
+  /**
+   * 第 2 批 G-P1-3：团队纪元——本 Agent 本次分派用的纪元（CLI dispatch
+   * 时按计划写进来；delegateDetailed 校验它，过期直接拒绝）。不是模型
+   * 填的——模型填的纪元不可信。不传时不校验（老调用方不受影响）。
+   */
+  teamEpoch?: number | null;
   memoryPath?: string | null;
   /** 缺口 4：分应用文风学习——当前代笔渠道（如 gmail）；null = 不注入文风画像。 */
   channel?: string | null;
@@ -321,6 +327,28 @@ export interface AgentOptions {
    * Bot 队列与 CLI 的 /stop 走 Agent.run(task, { signal })，不走这里。
    */
   cancelSignal?: AbortSignal;
+  /**
+   * 第 2 批 G-P1-9：委派审批回调——父级当审批人，子 agent 在非交互下要
+   * 审批时先问父级（批了才放行）。只由 delegateDetailed 在构造子 Agent
+   * 时传；根 agent 不设。模型不能自设（AgentOptions 只由代码构造）。
+   */
+  parentApprovalCallback?: ((tool: string, summary: string) => boolean | Promise<boolean>) | null;
+  /**
+   * 第 2 批 G-P1-10/G-P1-11：本次运行的任务来源（local = 机主自己的任务，
+   * peer = 对端发来的任务；不传默认 local）。子任务继承父级的来源——
+   * peer 任务派出的子任务仍是 peer 任务，提议门不能靠再委派绕过。
+   * 只由 MCP 派发 / session 委派等入口传。
+   */
+  origin?: import("./contentLabels.ts").TaskOrigin;
+  /** 第 2 批 G-P1-10：对方的身份名（提议账本里记谁发的；MCP 派发默认
+   * mcp-peer，session 委派由调用方传真实好友名）。 */
+  peerName?: string;
+  /**
+   * 第 2 批 G-P1-8 × G-P1-10：当前是不是在外来隔离分支里干活。只由
+   * delegateDetailed 在建外来子任务时设（子任务的工作目录就是隔离
+   * worktree）；子任务再委派时沿着同一条 contained 工作树往下传。
+   */
+  inForeignWorktree?: boolean;
   /**
    * 工具检索（延迟加载）。两档行为：
    * - 默认：MCP 工具 > MCP_LAZY_LOAD_THRESHOLD 个时自动开（见 toolSchemas）
@@ -511,6 +539,15 @@ export class Agent {
   teamId: string | null;
   /** GROK-1：团队里的角色（chief = 参谋长；member = 下游成员；null = 不在团队里）。 */
   teamRole: "chief" | "member" | null;
+  /** 第 2 批 G-P1-3：本 Agent 本次分派用的团队纪元（null = 不校验）。 */
+  teamEpoch: number | null;
+  /** 第 2 批 G-P1-10/G-P1-11：本次运行的任务来源（local/peer）；子任务继承
+   * 父级的来源，peer 任务派出的子任务仍是 peer 任务。 */
+  origin: import("./contentLabels.ts").TaskOrigin;
+  /** 第 2 批 G-P1-10：对方的身份名（提议账本里记谁发的）。 */
+  peerName: string;
+  /** 第 2 批 G-P1-8 × G-P1-10：当前是不是在外来隔离分支里干活。 */
+  inForeignWorktree: boolean;
   memoryPath: string;
   /** 缺口 4：当前代笔渠道；null = 不注入文风画像。 */
   channel: string | null;
@@ -663,6 +700,13 @@ export class Agent {
     // GROK-1：常驻团队模式（不在团队里时两者都为 null，行为与以前一致）。
     this.teamId = opts.teamId ?? null;
     this.teamRole = opts.teamRole ?? null;
+    // 第 2 批 G-P1-3：团队纪元（CLI dispatch 时按计划写进来；不传不校验）。
+    this.teamEpoch = opts.teamEpoch ?? null;
+    // 第 2 批 G-P1-10/G-P1-11：任务来源与对方身份名（不传默认 local；
+    // 子任务由 delegateDetailed 继承父级的来源）。
+    this.origin = opts.origin ?? "local";
+    this.peerName = opts.peerName ?? "mcp-peer";
+    this.inForeignWorktree = opts.inForeignWorktree ?? false;
     this.home = opts.home ?? process.env.NYRA_HOME ?? join(process.env.HOME ?? "", ".nyra");
     this.memoryPath = opts.memoryPath ?? join(this.home, "MEMORY.md");
     this.channel = opts.channel ?? null;
@@ -772,6 +816,18 @@ export class Agent {
       soulAgent: this.soulAgent,
       // GROK-1：团队审批门（GROK-3）要知道当前 Agent 在哪个团队、扮演谁。
       teamId: this.teamId,
+      // 第 2 批 G-P1-9/G-P1-10/G-P1-11：任务来源、对方身份、委派审批回调与
+      // 内容标签透传给工具层（peer 来源的写操作进提议门；子 agent 非交互
+      // 下要审批时先问父级；标签是本轮的基础标签，工具层按参数再细化）。
+      origin: this.origin,
+      peerName: this.peerName,
+      // 第 2 批 G-P1-8 × G-P1-10：隔离分支内干活时，文件写操作不进提议门
+      // （workspaceWritePath 已把它们限制在工作目录 = 隔离 worktree 内）。
+      inForeignWorktree: this.inForeignWorktree,
+      delegateApprovalCallback: opts.parentApprovalCallback ?? null,
+      contentLabel: this.origin === "peer"
+        ? { integrity: "untrusted", confidentiality: "internal", principal: "peer", reason: "对端发来的任务按不可信输入处理" }
+        : { integrity: "verified", confidentiality: "internal", principal: "owner", reason: "机主任务" },
       sessionId: this.sessionId,
       skillsDir: join(this.home, "skills"),
       // 调研报告第 2 项：技能渐进披露——read_skill 按需读全文时用 Agent 当前
@@ -2518,6 +2574,24 @@ export class Agent {
         return delegateFailed(`错误：${err instanceof Error ? err.message : String(err)}`);
       }
     }
+    // 第 2 批 G-P1-3：团队纪元——参谋长发任务时写的纪元过期（lead 已换人）
+    // 时直接拒绝，不开工。纪元来源：本次委派显式传的 opts.epoch 优先，
+    // 否则用本 Agent 的 teamEpoch（CLI dispatch 时按计划写进去的机器状态，
+    // 不是模型填的——模型填的纪元不可信）。团队模式外 / 两边都没给时不校验
+    // （老调用方与单机模式不受影响）。账本读失败时 fail-closed：纪元校验
+    // 不出来就别开工（停下比在旧纪元下干活安全）。
+    if (this.teamId && !opts.internal) {
+      const epochToCheck = opts.epoch ?? this.teamEpoch;
+      if (epochToCheck !== undefined && epochToCheck !== null) {
+        try {
+          const { checkTeamEpoch } = await import("./teamLease.ts");
+          const checked = checkTeamEpoch(this.home, this.teamId, epochToCheck, this.soulAgent);
+          if (!checked.ok) return delegateFailed(`错误：${checked.reason}`);
+        } catch (err: unknown) {
+          return delegateFailed(`错误：团队纪元校验失败：${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+    }
     // H-7：默认 flat——子 agent 再委派须有 orchestrator 角色；根 agent
     // （第 0 层）不受此限。内部机械步同样走旁路（它本来就不再委派）。
     // 团队门先于 flat 门：团队成员收到的应是更具体的团队门文案。
@@ -2615,28 +2689,59 @@ export class Agent {
 
     // S4-3：worktree 隔离。子 Agent 在独立工作树里干活，主工作区一个字节都不动；
     // 干完把 diff 摘要交回父级，由人决定要不要合并。
+    // 第 2 批 G-P1-8：外来任务强制 worktree 隔离（isolation 哪怕传了 none
+    // 也改成 worktree），且 worktree 建在具名分支 nyra/foreign/<task> 上
+    // （不是 detached——具名分支才能按名合并、按名删除），跑完改动留在
+    // 分支上等机主合入，不自动进主工作区。
     let childWorkdir = this.workdir;
     let worktreePath: string | null = null;
-    if (opts.isolation === "worktree") {
+    let foreignBranch: string | null = null;
+    const isForeign = opts.foreign === true;
+    const foreignPeer = opts.foreignPeer ?? (this.origin === "peer" ? this.peerName : "foreign");
+    const effectiveIsolation = isForeign ? "worktree" : opts.isolation;
+    if (effectiveIsolation === "worktree") {
       const probe = spawnSync("git", ["rev-parse", "--git-dir"], { cwd: this.workdir, encoding: "utf-8", windowsHide: true });
       if (probe.status !== 0) {
-        return delegateFailed(`错误：worktree 隔离要求工作目录是 git 仓库（${this.workdir} 不是，或本机没有 git）；改用 isolation:none 或先 git init`);
+        return delegateFailed(isForeign
+          ? `错误：外来任务要求隔离分支，但工作目录不是 git 仓库（${this.workdir} 不是，或本机没有 git）：外来任务不许直接在主工作区干活`
+          : `错误：worktree 隔离要求工作目录是 git 仓库（${this.workdir} 不是，或本机没有 git）；改用 isolation:none 或先 git init`);
       }
       try {
-        const dir = mkdtempSync(join(tmpdir(), "nyra-subagent-"));
-        const add = spawnSync("git", ["worktree", "add", "--detach", dir, "HEAD"], {
-          cwd: this.workdir, encoding: "utf-8", windowsHide: true,
-        });
-        if (add.status !== 0) {
-          rmSync(dir, { recursive: true, force: true });
-          return delegateFailed(`错误：创建 worktree 失败：${`${add.stdout ?? ""}${add.stderr ?? ""}`.trim().slice(0, 300)}`);
+        if (isForeign) {
+          const { createForeignWorktree, recordForeignBranch } = await import("./foreignBranch.ts");
+          const fb = createForeignWorktree(this.workdir, taskId);
+          childWorkdir = fb.worktree;
+          worktreePath = fb.worktree;
+          foreignBranch = fb.branch;
+          recordForeignBranch(this.home, { taskId, peer: foreignPeer, branch: fb.branch, worktree: fb.worktree, workdir: this.workdir });
+          notes.push(`外来任务隔离分支：${fb.branch}（改动留在分支上，须机主合入）`);
+        } else {
+          const dir = mkdtempSync(join(tmpdir(), "nyra-subagent-"));
+          const add = spawnSync("git", ["worktree", "add", "--detach", dir, "HEAD"], {
+            cwd: this.workdir, encoding: "utf-8", windowsHide: true,
+          });
+          if (add.status !== 0) {
+            rmSync(dir, { recursive: true, force: true });
+            return delegateFailed(`错误：创建 worktree 失败：${`${add.stdout ?? ""}${add.stderr ?? ""}`.trim().slice(0, 300)}`);
+          }
+          childWorkdir = dir;
+          worktreePath = dir;
         }
-        childWorkdir = dir;
-        worktreePath = dir;
       } catch (err: unknown) {
         return delegateFailed(`错误：创建 worktree 失败：${err instanceof Error ? err.message : String(err)}`);
       }
     }
+
+    // 第 2 批 G-P1-8：外来分支清理——任务取消/失败/无改动时，worktree 与
+    // 分支一并删掉、账本标 dropped（改动不进主工作区）。清理失败不破坏
+    // 主流程（分支仍在账本里，机主可手动处理）。
+    const cleanupForeignBranch = async (note: string): Promise<void> => {
+      if (!foreignBranch) return;
+      try {
+        const { dropForeignBranch } = await import("./foreignBranch.ts");
+        dropForeignBranch(this.home, taskId, "system", note);
+      } catch { /* ignore */ }
+    };
 
     // H-2/H-3：委派调用点自动注册——子任务从此在注册表里有一行，花名册
     // 看得见、stop/steer 找得到、心跳有地方落。注册表写不上时不毁掉委派，
@@ -2666,6 +2771,9 @@ export class Agent {
     if (opts.orchestrator) {
       childSystemInstructions += `\n（你是 orchestrator：你可以把子任务再派给别的子 agent，但最多嵌套 ${this.maxDelegateDepth} 层；不要把任务派回已经在委派链里的人，不要循环委派。）`;
     }
+    if (isForeign) {
+      childSystemInstructions += `\n（你是外来 agent 派来的子任务：你在隔离分支 ${foreignBranch} 上干活，改动留在分支上，跑完由机主决定合不合入；不要尝试合并分支、不要碰主工作区以外的目录。）`;
+    }
     const child = new Agent(provider, {
       workdir: childWorkdir,
       mode: this.mode,
@@ -2693,6 +2801,16 @@ export class Agent {
       // 可靠性打磨第 1 项第一批：父级当轮信号 + 本次委派传入的信号，
       // 合并后传给子 Agent——父级被取消时子任务的在途调用跟着 abort。
       cancelSignal: combineSignals([this.runSignal, opts.signal]),
+      // 第 2 批 G-P1-9：委派审批回调——子 agent 在非交互下要审批时先问父级
+      // （父级当审批人）。只由本次委派显式传 approvalCallback 时设。
+      parentApprovalCallback: opts.approvalCallback ?? null,
+      // 第 2 批 G-P1-10/G-P1-11：任务来源与对方身份——子任务继承父级的来源
+      // （peer 任务派出的子任务仍是 peer 任务，提议门不能靠再委派绕过）。
+      origin: this.origin,
+      peerName: opts.foreignPeer ?? this.peerName,
+      // 第 2 批 G-P1-8 × G-P1-10：外来子任务在隔离 worktree 里干活，文件写
+      // 操作不进提议门；沿着同一条 contained 工作树再委派时继续豁免。
+      inForeignWorktree: isForeign || this.inForeignWorktree,
       // 缺口 3a：并行线程的收敛规则写进子任务的系统提示（只做自己那件任务、
       // 不碰别线程的文件、收尾写收敛小结）；串行 delegate 不受影响。
       systemInstructions: childSystemInstructions,
@@ -2830,6 +2948,7 @@ export class Agent {
           // 移交失败 = 这次委派不跑；已建的隔离 worktree 不能留着（与
           // 成功路径的清理同款，失败路径没有 finally 兜底）。
           if (worktreePath) spawnSync("git", ["worktree", "remove", "--force", worktreePath], { cwd: this.workdir, windowsHide: true });
+          await cleanupForeignBranch("写者名额移交失败");
           return delegateFailed(`错误：${res.reason}`);
         }
         leasedFiles.push(key);
@@ -2884,6 +3003,7 @@ export class Agent {
           } catch { /* 观察器故障绝不破坏主流程 */ }
           await this.runSubagentStopHook(taskId, task, false);
           if (worktreePath) spawnSync("git", ["worktree", "remove", "--force", worktreePath], { cwd: this.workdir, windowsHide: true });
+          await cleanupForeignBranch("子任务已取消");
           const reasonText = child.lastCancelledReason === "budget" ? "成本上限已触顶" : child.lastCancelledReason === "timeout" ? "超时" : "收到停止请求";
           return { ...delegateFailed(`子任务已取消（${reasonText}）：在途调用已 abort、子进程已退出，运行在第 ${child.turn} 轮后停下。已做的部分成果保留，未做的步骤不再继续。\n${summary}`), spentUsd: childSpentUsd, model: child.provider.model ?? null };
         }
@@ -2901,6 +3021,7 @@ export class Agent {
           diffStat = statText || null;
           if (!changed) {
             spawnSync("git", ["worktree", "remove", "--force", worktreePath], { cwd: this.workdir, windowsHide: true });
+            await cleanupForeignBranch("无改动");
             worktreePath = null;
             changedFiles = [];
             diffStat = null;
@@ -2983,11 +3104,23 @@ export class Agent {
       if (!worktreePath) {
         return detail(head + summary + cleanedNote + verdictLine + schemaLine + charterLine, { verification, ...schemaOverride });
       }
+      // 第 2 批 G-P1-8：外来任务有改动——改动清单记进分支账本（合入时人看得
+      // 见改了什么），交回文本写合入/丢弃命令（不自动合入，机主决定）。
+      if (foreignBranch) {
+        try {
+          const { updateForeignBranchResult } = await import("./foreignBranch.ts");
+          updateForeignBranchResult(this.home, taskId, { changedFiles, diffStat });
+        } catch { /* 账本写失败不破坏交回（分支本身已在账本里） */ }
+      }
+      const foreignNote = foreignBranch
+        ? `\n外来分支：${foreignBranch}——改动留在分支上，合入：nyra peer branch merge ${taskId} --yes；不要：nyra peer branch drop ${taskId} --yes`
+        : "";
       return detail(
         head + summary +
         `\n\n（worktree 隔离：改动留在独立工作树，主工作区未受影响）\n路径：${worktreePath}\n` +
         (diffStat ? `diffstat：\n${diffStat}` : "") +
         `\n审查：git -C "${worktreePath}" diff HEAD\n合并后清理：git worktree remove --force "${worktreePath}"` +
+        foreignNote +
         verdictLine + schemaLine + charterLine,
         { worktreePath, changedFiles, diffStat: diffStat || null, verification, ...schemaOverride },
       );
@@ -3007,6 +3140,7 @@ export class Agent {
         } catch { /* 观察器故障绝不破坏主流程 */ }
         await this.runSubagentStopHook(taskId, task, false);
         if (worktreePath) spawnSync("git", ["worktree", "remove", "--force", worktreePath], { cwd: this.workdir, windowsHide: true });
+        await cleanupForeignBranch("子任务已取消");
         const reasonText = (err as CancelError).reason === "budget" ? "成本上限已触顶" : (err as CancelError).reason === "timeout" ? "超时" : "收到停止请求";
         return { ...delegateFailed(`子任务已取消（${reasonText}）：在途调用已 abort、子进程已退出，运行在第 ${child.turn} 轮后停下。已做的部分成果保留，未做的步骤不再继续。`), spentUsd: childSpentUsd, model: child.provider.model ?? null };
       }
@@ -3018,6 +3152,7 @@ export class Agent {
       // 缺口 19：子任务失败时 SubagentStop 同样触发（只通知）。
       await this.runSubagentStopHook(taskId, task, false);
       if (worktreePath) spawnSync("git", ["worktree", "remove", "--force", worktreePath], { cwd: this.workdir, windowsHide: true });
+      await cleanupForeignBranch("子任务失败");
       const text = err instanceof AgentError
         ? `子任务失败：${err.message}`
         : `子任务异常：${(err as Error)?.name ?? "Error"}: ${err instanceof Error ? err.message : String(err)}`;
@@ -3192,6 +3327,8 @@ export class Agent {
           ...(spec.orchestrator === true ? { orchestrator: true } : {}),
           // 第 1 批 G-P0-4：并行线程的写者名额文件（delegateDetailed 里移交）。
           ...(Array.isArray(spec.writeFiles) ? { writeFiles: spec.writeFiles } : {}),
+          // 第 2 批 G-P1-8：并行线程的外来隔离分支（只认 true）。
+          ...(spec.foreign === true ? { foreign: true } : {}),
           // 可靠性打磨第 1 项第一批：线程取消信号传给子任务（超时/整批
           // 取消时子任务的在途调用跟着 abort）。
           ...(signal ? { signal } : {}),

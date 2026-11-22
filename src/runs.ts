@@ -486,6 +486,55 @@ write_gate_released: ["team_id", "file", "by"],
 // 第 1 批 G-P2-17：语音输入先审后发——转写文字给人看过之后的结论
 //（采纳/改后采纳/丢弃），只记结论与文本指纹，不记转写原文。
 voice_input_reviewed: ["decision", "chars", "text_hash"],
+// 第 2 批 G-P0-2：群组语音 SFU 进证据链——房间、成员、TURN 凭据过期时间、
+// 录制同意人。帧只记指纹，不记音频；TURN 密码不进事件。
+sfu_room_created: ["room", "encryption"],
+sfu_peer_joined: ["room", "peer"],
+sfu_peer_left: ["room", "peer"],
+sfu_room_closed: ["room", "reason"],
+sfu_turn_credential_issued: ["room", "peer", "expires_at"],
+sfu_recording_started: ["room", "consented_by"],
+// 第 2 批 G-P1-1：群组计划引擎进证据链——计划、步骤、负责人、契约、
+// 验收通过数。只记 id 与结论，不记任务全文。
+group_plan_created: ["plan", "room", "steps"],
+group_plan_step_started: ["plan", "step", "assignee", "worktree"],
+group_plan_step_completed: ["plan", "step", "contract_id", "checks_passed"],
+group_plan_step_failed: ["plan", "step", "reason"],
+// 第 2 批 G-P1-2：swarm 群聊进证据链——房间、发言模式、发言者、交接、
+// 终止原因。只记发言者与轮数，不记消息全文。
+group_chat_started: ["room", "mode", "speakers"],
+group_chat_turn: ["room", "speaker", "turn"],
+group_chat_handoff: ["room", "from", "to"],
+group_chat_terminated: ["room", "reason", "turns"],
+// 第 2 批 G-P1-3：团队租约 + 纪元进证据链——团队、lead、纪元。只记
+// 身份与纪元号，不记消息内容。
+team_lease_acquired: ["team_id", "lead", "epoch"],
+team_lease_released: ["team_id", "lead", "epoch"],
+team_lease_transferred: ["team_id", "from", "to", "epoch"],
+team_stale_epoch_rejected: ["team_id", "epoch", "expected_epoch"],
+// 第 2 批 G-P1-5：进群待批进证据链——会话、好友、结论。
+session_join_requested: ["session", "peer"],
+session_join_approved: ["session", "peer"],
+session_join_declined: ["session", "peer"],
+// 第 2 批 G-P1-6：好友 grant 进证据链——好友、授权 id、scope。token
+// 原文绝不进事件，只记授权 id。
+friend_grant_issued: ["peer", "grant_id", "scope"],
+friend_grant_revoked: ["peer", "grant_id"],
+// 第 2 批 G-P1-8：外来分支进证据链——任务、好友、分支名。只记分支名，
+// 不记改动内容。
+foreign_branch_created: ["task_id", "peer", "branch"],
+foreign_branch_merged: ["task_id", "peer", "branch"],
+foreign_branch_dropped: ["task_id", "peer", "branch"],
+// 第 2 批 G-P1-9：委派审批回调进证据链——工具、批没批、谁批的（父级）。
+delegate_approval_callback: ["tool", "approved", "via"],
+// 第 2 批 G-P1-10：对方写操作提议进证据链——提议 id、好友、工具、结论。
+// 参数原文不进事件。
+peer_proposal_recorded: ["proposal_id", "peer", "tool"],
+peer_proposal_decided: ["proposal_id", "peer", "decision"],
+// 第 2 批 G-P1-12：两层意向验证进证据链——工具、层（启发式/judge）、
+// 结论、规则、理由。judge 打分的 risk_score 另记在 tool_judge_verdict
+// 里，这里只记启发式层与落库口径。
+intent_verdict: ["tool", "layer", "decision", "rule", "reason"],
 // 缺口 37：视频通话进证据链——通话 id、帧 id、ICE 对、字节数、图像指纹、
 // 花费。只记元数据与 SHA-256 前 12 位指纹，不记图像内容与绝对路径。
 video_call_started: ["call_id", "agent", "peer", "transport"],

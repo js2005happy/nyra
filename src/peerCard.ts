@@ -49,6 +49,7 @@ export type FriendTier = (typeof FRIEND_TIERS)[number];
 export const PEER_FRIEND_COMMANDS: readonly string[] = [
   "card", "code", "publish", "add", "request", "accept", "decline",
   "friends", "friend", "block", "unblock", "remove", "circle", "share",
+  "grant", "proposal", "branch",
 ];
 
 export class PeerCardError extends Error {
@@ -86,6 +87,12 @@ export interface PeerCardConfig {
   publish: boolean;
   /** 对外公开的网关根地址（如 https://nyra.example.com）；不配时名片里 url 为 null。 */
   publicUrl: string | null;
+  /**
+   * 第 2 批 G-P1-5：名片 per-circle 可见性——配了时，只有这些圈的好友
+   * 凭有效 grant 才能拉到名片（网关 well-known 端点按圈放行）；不配
+   * （null）时不限制圈（只认 publish 开关）。
+   */
+  visibleCircles: string[] | null;
 }
 
 /** config.json 的 peer_card 一节（默认全关；public_url 只认 http/https）。 */
@@ -102,7 +109,26 @@ export function peerCardConfig(config: Record<string, unknown>): PeerCardConfig 
       process.stderr.write("peer_card.public_url 必须是 http:// 或 https:// 开头的地址，已忽略\n");
     }
   }
-  return { publish: raw.publish === true, publicUrl };
+  // 第 2 批 G-P1-5：visible_circles 只认合法圈名（CIRCLE_NAME_RE），脏项跳过并警告。
+  let visibleCircles: string[] | null = null;
+  if (Array.isArray(raw.visible_circles)) {
+    const circles = raw.visible_circles.filter((c): c is string => typeof c === "string" && CIRCLE_NAME_RE.test(c));
+    if (circles.length !== raw.visible_circles.length) {
+      process.stderr.write("peer_card.visible_circles 里有不合法的圈名，已跳过\n");
+    }
+    visibleCircles = circles.length ? [...new Set(circles)] : null;
+  }
+  return { publish: raw.publish === true, publicUrl, visibleCircles };
+}
+
+/**
+ * 第 2 批 G-P1-5：名片对这个圈可不可见。没配 visible_circles 时不限制圈
+ * （只认 publish 开关）；配了时只有配了的圈能拉到名片。
+ */
+export function cardVisibleToCircle(config: Record<string, unknown>, circle: string): boolean {
+  const cfg = peerCardConfig(config);
+  if (cfg.visibleCircles === null) return true;
+  return cfg.visibleCircles.includes(circle);
 }
 
 /** 本 agent 的名片：名字与描述取 Soul 身份，技能取对外 MCP 服务的工具清单。 */
@@ -758,6 +784,16 @@ const FRIEND_USAGE = "用法：\n"
   + " nyra peer remove <名字> --yes              删除好友（单方）\n"
   + " nyra peer circle <create|list|delete> [圈名]   建圈 / 列圈 / 删圈（删圈须先移空）\n"
   + " nyra peer share --to <好友名|圈名> --run <运行ID> [--share evidence]   分享一次运行的任务产物（只读，须审查放行）\n"
+  + " nyra peer grant issue <好友名> --scope <scope> [--days <天数>]   给好友签一个带 scope 的 grant（token 只显示一次，过期默认 30 天）\n"
+  + " nyra peer grant list [<好友名>]                    列出 grant（状态 / scope / 过期）\n"
+  + " nyra peer grant revoke <grant-id> --yes           吊销一个 grant（只影响这一条，别家的 grant 不动）\n"
+  + " nyra peer grant verify <token>                     验一个 grant token（只回结论，不回原文）\n"
+  + " nyra peer proposal list [--peer <名>] [--status pending|accepted|declined|executed]   列出对方写操作的提议\n"
+  + " nyra peer proposal accept <提议 id> --yes         批准一条提议（只标 accepted，执行由机主上下文另跑）\n"
+  + " nyra peer proposal decline <提议 id> --yes        拒绝一条提议\n"
+  + " nyra peer branch list [--status open|merged|dropped]   列出外来 agent 的隔离分支\n"
+  + " nyra peer branch merge <任务 id> --yes            合入一条外来分支（冲突时失败、分支保持 open）\n"
+  + " nyra peer branch drop <任务 id> --yes             丢弃一条外来分支（改动直接丢掉）\n"
   + "好友码是双方人工比对的共享口令（格式 NYR-XXXX-XXXX）；双向批准才互认：\n"
   + "你发请求 + 对方批准，另一边同样走一遍。详见 docs/peer.md";
 
@@ -981,6 +1017,165 @@ export async function handlePeerFriends(argv: string[], home: string, input?: Pe
         process.stdout.write(`分享给 ${r.name}：${r.status === "accepted" ? "已接下" : r.status === "rejected" ? "被对端拒绝" : "发送失败"}${r.peerRunId ? `（对端运行 ${r.peerRunId}）` : ""}\n`);
       }
       return results.every((r) => r.status === "accepted") ? 0 : 1;
+    }
+    if (cmd === "grant") {
+      const sub = argv[1];
+      const { issueFriendGrant, listFriendGrants, revokeFriendGrant, verifyFriendGrant, isGrantLive, GRANT_SCOPES } = await import("./friendGrants.ts");
+      if (sub === "issue") {
+        const peer = argv[2];
+        const scopeRaw = flagValue("--scope");
+        const daysRaw = flagValue("--days");
+        if (!peer || !scopeRaw) {
+          process.stderr.write("用法：nyra peer grant issue <好友名> --scope <scope> [--days <天数>]\n");
+          process.stderr.write(`scope 只认：${GRANT_SCOPES.join("、")}（可逗号拼多个；默认 30 天，1–90 天可配）\n`);
+          return 2;
+        }
+        const scope = scopeRaw.split(",").map((s) => s.trim()).filter(Boolean);
+        const days = daysRaw === undefined ? undefined : Number(daysRaw);
+        const { grant, token } = issueFriendGrant(home, peer, scope, days);
+        process.stdout.write(`已给 ${peer} 签 grant（${grant.id}，scope：${grant.scope.join("、")}，有效期至 ${grant.expires_at}）\n`);
+        process.stdout.write(`token（只显示这一次，账本里只记 SHA-256，丢了就吊销重签）：${token}\n`);
+        return 0;
+      }
+      if (sub === "list" || !sub) {
+        const peer = argv[2] ?? flagValue("--peer") ?? undefined;
+        const grants = listFriendGrants(home, peer);
+        if (!grants.length) {
+          process.stdout.write(peer ? `${peer} 没有 grant。\n` : "还没有 grant。\n");
+          return 0;
+        }
+        for (const g of grants) {
+          const status = g.revoked ? "已吊销" : isGrantLive(g) ? "有效" : "已过期";
+          process.stdout.write(`${g.id}\t${g.peer}\t${g.scope.join(",")}\t${status}\t有效期至 ${g.expires_at}\n`);
+        }
+        return 0;
+      }
+      if (sub === "revoke") {
+        const id = argv[2];
+        if (!id) {
+          process.stderr.write("用法：nyra peer grant revoke <grant-id> --yes\n");
+          return 2;
+        }
+        if (!has("--yes")) {
+          process.stderr.write("吊销 grant 须加 --yes 确认\n");
+          return 2;
+        }
+        const g = revokeFriendGrant(home, id);
+        process.stdout.write(`已吊销 ${g.peer} 的 grant（${g.id}，scope：${g.scope.join("、")}）——只影响这一条，别家的 grant 不动。\n`);
+        return 0;
+      }
+      if (sub === "verify") {
+        const token = argv[2];
+        if (!token) {
+          process.stderr.write("用法：nyra peer grant verify <token>\n");
+          return 2;
+        }
+        const res = verifyFriendGrant(home, token);
+        if (!res) {
+          process.stdout.write("无效：对不上、已吊销或已过期\n");
+          return 1;
+        }
+        process.stdout.write(`有效：${res.peer}，scope：${res.scope.join("、")}，有效期至 ${res.grant.expires_at}\n`);
+        return 0;
+      }
+      process.stderr.write("用法：nyra peer grant <issue|list|revoke|verify> ...\n");
+      return 2;
+    }
+    if (cmd === "proposal") {
+      const sub = argv[1];
+      const { listPeerProposals, getPeerProposal, acceptPeerProposal, declinePeerProposal } = await import("./peerProposals.ts");
+      if (sub === "list" || !sub) {
+        const peer = flagValue("--peer") ?? undefined;
+        const statusRaw = flagValue("--status");
+        const status = statusRaw === "pending" || statusRaw === "accepted" || statusRaw === "declined" || statusRaw === "executed" ? statusRaw : undefined;
+        const list = listPeerProposals(home, status).filter((p) => !peer || p.peer === peer);
+        if (!list.length) {
+          process.stdout.write("没有提议。\n");
+          return 0;
+        }
+        for (const p of list) {
+          process.stdout.write(`${p.id}\t${p.peer}\t${p.tool}\t${p.status}\t${p.created_at}\n`);
+        }
+        return 0;
+      }
+      if (sub === "show") {
+        const id = argv[2];
+        if (!id) {
+          process.stderr.write("用法：nyra peer proposal show <提议 id>\n");
+          return 2;
+        }
+        const p = getPeerProposal(home, id);
+        if (!p) return err(`没有这个提议：${id}`);
+        process.stdout.write(
+          `${p.id}\n`
+          + `好友：${p.peer}\n`
+          + `工具：${p.tool}\n`
+          + `状态：${p.status}\n`
+          + `内容标签：完整性 ${p.label.integrity} · 密级 ${p.label.confidentiality} · 主体 ${p.label.principal}\n`
+          + `原因：${p.reason}\n`
+          + `参数：${JSON.stringify(p.args).slice(0, 500)}\n`
+          + `创建于：${p.created_at}${p.decided_at ? ` · 决定于：${p.decided_at}（${p.decided_by}）` : ""}\n`,
+        );
+        return 0;
+      }
+      if (sub === "accept" || sub === "decline") {
+        const id = argv[2];
+        if (!id) {
+          process.stderr.write(`用法：nyra peer proposal ${sub} <提议 id> --yes\n`);
+          return 2;
+        }
+        if (!has("--yes")) {
+          process.stderr.write(`${sub === "accept" ? "批准" : "拒绝"}提议须加 --yes 确认\n`);
+          return 2;
+        }
+        const p = sub === "accept" ? acceptPeerProposal(home, id) : declinePeerProposal(home, id);
+        process.stdout.write(`提议 ${p.id} 已${sub === "accept" ? "批准" : "拒绝"}（${p.tool}，${p.peer}）${sub === "accept" ? "——只标 accepted，执行由机主上下文另跑，不自动执行" : ""}\n`);
+        return 0;
+      }
+      process.stderr.write("用法：nyra peer proposal <list|show|accept|decline> ...\n");
+      return 2;
+    }
+    if (cmd === "branch") {
+      const sub = argv[1];
+      const { listForeignBranches, mergeForeignBranch, dropForeignBranch } = await import("./foreignBranch.ts");
+      if (sub === "list" || !sub) {
+        const statusRaw = flagValue("--status");
+        const status = statusRaw === "open" || statusRaw === "merged" || statusRaw === "dropped" ? statusRaw : undefined;
+        const list = listForeignBranches(home, status);
+        if (!list.length) {
+          process.stdout.write("没有外来分支。\n");
+          return 0;
+        }
+        for (const b of list) {
+          process.stdout.write(`${b.task_id}\t${b.peer}\t${b.branch}\t${b.status}\t改 ${b.changed_files.length} 个文件\t${b.created_at}\n`);
+        }
+        return 0;
+      }
+      if (sub === "merge" || sub === "drop") {
+        const taskId = argv[2];
+        if (!taskId) {
+          process.stderr.write(`用法：nyra peer branch ${sub} <任务 id> --yes\n`);
+          return 2;
+        }
+        if (!has("--yes")) {
+          process.stderr.write(`${sub === "merge" ? "合入" : "丢弃"}外来分支须加 --yes 确认\n`);
+          return 2;
+        }
+        if (sub === "merge") {
+          const res = mergeForeignBranch(home, taskId);
+          if (!res.ok) {
+            process.stderr.write(`合入失败，分支保持 open（机主手动解决冲突后再合）：\n${res.output}\n`);
+            return 1;
+          }
+          process.stdout.write(`已合入外来分支 ${taskId}。\n`);
+          return 0;
+        }
+        dropForeignBranch(home, taskId, "owner");
+        process.stdout.write(`已丢弃外来分支 ${taskId}（改动直接丢掉，没进主工作区）。\n`);
+        return 0;
+      }
+      process.stderr.write("用法：nyra peer branch <list|merge|drop> ...\n");
+      return 2;
     }
   } catch (e) {
     return err(e instanceof Error ? e.message : String(e));

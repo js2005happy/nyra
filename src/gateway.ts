@@ -1687,9 +1687,30 @@ export class Gateway {
     // 缺口 38：Agent 名片——GET /.well-known/agent-card.json（公开：名片本身
     // 就是公开信息，不含密钥与内部状态）。默认不发布：关闭时当不存在（404），
     // 不泄露端点；peer_card.publish 开后才回名片 JSON。
+    // 第 2 批 G-P1-5：配了 peer_card.visible_circles 时，名片只对配了的圈
+    // 开放——请求须带有效 grant（Bearer nyra-grant-...，scope 含 card:read），
+    // 且 grant 的好友须在可见圈里；验不过一律 404（不泄露限制细节）。
     if (method === "GET" && path === "/.well-known/agent-card.json") {
-      const { peerCardConfig, buildAgentCard } = await import("./peerCard.ts");
-      if (!peerCardConfig(this.config).publish) { this.sendError(res, 404, "未找到"); return; }
+      const { peerCardConfig, buildAgentCard, cardVisibleToCircle } = await import("./peerCard.ts");
+      const cfg = peerCardConfig(this.config);
+      if (!cfg.publish) { this.sendError(res, 404, "未找到"); return; }
+      if (cfg.visibleCircles !== null) {
+        const auth = req.headers.authorization ?? "";
+        const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+        let admitted = false;
+        if (token) {
+          try {
+            const { verifyFriendGrant } = await import("./friendGrants.ts");
+            const { loadFriendBook, findFriend } = await import("./peerCard.ts");
+            const v = verifyFriendGrant(this.home, token, "card:read");
+            if (v) {
+              const entry = findFriend(loadFriendBook(this.home), v.peer);
+              if (entry && !entry.blocked && cardVisibleToCircle(this.config, entry.circle)) admitted = true;
+            }
+          } catch { admitted = false; }
+        }
+        if (!admitted) { this.sendError(res, 404, "未找到"); return; }
+      }
       this.sendJson(res, 200, buildAgentCard(this.home, this.config) as unknown as Record<string, unknown>);
       return;
     }

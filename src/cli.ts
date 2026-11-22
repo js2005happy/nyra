@@ -190,7 +190,7 @@ nyra roster <list|show>   实时花名册：每个子 agent 一行——状态 +
 nyra side-effects <list|show|record|mark|recover>   先存后做的副作用队列：执行前先落库，重启按年龄恢复、带 recovery note（详见 docs/kanban.md）
 nyra heartbeat <add|list|remove|enable|disable|run|commitments>   静默巡查：无事安静、有发现先记证据再写收件箱；推断承诺须用户确认一次、过期自动失效（详见 docs/heartbeat.md）
 nyra fanout <list|show|recover>   后台扇出：顶层委派立即回 handle，跑完单条回填收件箱；跑一半的进程退出后须 recover 回收（详见 docs/merge-fanout.md）
-nyra team <create|list|show|add|remove|dissolve|dispatch|handover>   团队模式（新缺口 52）：参谋长独占入口，只拆解、分派、汇总；成员须有完整 Charter 才能接单；交接走 inbox/outbox/变更日志；对外动作一律回参谋长/人批（详见 docs/team.md）
+nyra team <create|list|show|add|remove|dissolve|dispatch|handover|lead|writer>   团队模式（新缺口 52）：参谋长独占入口，只拆解、分派、汇总；成员须有完整 Charter 才能接单；交接走 inbox/outbox/变更日志；对外动作一律回参谋长/人批；lead 租约 + 纪元防旧参谋长晚到指令（详见 docs/team.md）
 nyra governance <policy|mandate|mode|dry-runs>   企业治理：版本化策略 + 不可变授权 + observe/auto 接单模式 + 干跑记录（详见 docs/governance.md）
 nyra governance caps <set|list|show|check|assign-team|pause|resume|discard|pauses>   分层成本上限：按 Bot/角色/团队/人设设月度上限，触顶进可恢复暂停态
 nyra governance audit <export|verify>   审计导出：治理审计日志导出给 SIEM（JSONL + 哈希链，可验证）
@@ -220,9 +220,11 @@ nyra shopify <auth|status|products|product|orders|order|inventory>   Shopify 原
 nyra slack <auth|status|channels|history|send|card>   Slack 原生连接器：读频道 / 消息、发消息（须显式批准）、发审批卡（详见 docs/connectors.md）
 nyra connector <status|list|approve|revoke|auth|install|uninstall|usage>   连接器目录：安装 / 一键授权 / 撤销 / 用量（详见 docs/connectors.md）
 nyra mcp server <status|enable|disable|allow-writes-on|allow-writes-off>   对外 MCP 服务开关：别的 agent 经网关 POST /mcp 调记忆与任务（默认关闭，详见 docs/mcp.md）
-nyra peer <status|enable|disable|list|auth|ask|handoff|card|code|add|request|accept|friends|block|circle|share>   对端协作：问别的 Nyra 实例、交接运行上下文、名片加好友（默认关闭，详见 docs/peer.md）
+nyra peer <status|enable|disable|list|auth|ask|handoff|card|code|add|request|accept|friends|block|circle|share|grant|proposal|branch>   对端协作：问别的 Nyra 实例、交接运行上下文、名片加好友、带 scope 可吊销的 grant、对方写操作提议、外来分支合入（默认关闭，详见 docs/peer.md）
 nyra circle <create|list|show|invite|revoke|delete|bind|unbind|owner|check|bindings>   信任圈：谁能给 agent 发任务（默认全封闭，圈外消息网关直接丢弃，详见 docs/circles.md）
-nyra session <create|list|show|join|leave|delegate|accept|complete|share|frame|record|end>   跨 agent 联合会话：多人多 agent 视频会（本地扇出模型），会内委派 + 共享任务产物（allowlist），画面默认不留存、录制须全体同意（详见 docs/sessions.md）
+nyra session <create|list|show|join|join-request|join-approve|join-decline|join-list|leave|delegate|accept|complete|share|frame|record|end>   跨 agent 联合会话：多人多 agent 视频会（本地扇出模型），会内委派 + 共享任务产物（allowlist），画面默认不留存、录制须全体同意；好友进会要批、默认只读（详见 docs/sessions.md）
+nyra sfu <create|rooms|status|join|leave|turn|record|close|reclaim>   群组语音 SFU（本地实现，选型 mediasoup）：语音房 + 成员 + TURN 凭据 + 录制全体同意门；真媒体面等 mediasoup 接线（详见 docs/sfu.md）
+nyra group <room|chat|plan>   群聊：房间与机器人、swarm 顺序发言（可组合终止条件）、群组计划引擎（步骤 worktree 隔离 + 独立验收，详见 docs/group-chat.md 与 docs/group-plan.md）
 nyra call <ledger|show <通话 id>|summary>   通话成本与隐私仪表：每通电话三本账（传输 / 媒体 / token），录制默认关、须全体同意，纪要进证据链（详见 docs/call-ledger.md）
 nyra budget <list|show|reserve|settle|release|strict>   并发预算预留：模型调用前先预留额度、超上限不发请求；金额未知默认暂停等人工处理（详见 docs/budget.md）
 nyra agui <register|list|show|link|connect|disconnect|send|exec|accept-write|revoke-write|a2a>   协议中立接入：接任意 AG-UI endpoint 当 Bot（只读先行，写操作须机主显式接受），A2A 复用名片 + 交接（详见 docs/agui.md）
@@ -253,7 +255,7 @@ nyra bot status   Bot 总览：Telegram/Discord/Slack/WhatsApp 运行态 + 电�
 nyra channels <start|stop|status|health|bindings|explain>   缺口 27：常驻多渠道网关（四渠道一个进程、bindings 确定性路由、渠道会话默认进沙箱、每条入站路由进证据链，详见 docs/channels.md）
 nyra bot redlines <status|list|show|tighten|loosen|set>   Bot 缺口 51：业务动作硬红线表——发消息/付款/删除永远须人批，转钱/交易证券永远禁做（详见 docs/business-redlines.md）
 nyra reviewer <status|enable|disable|set-model|add-rule|remove-rule|list-rules|check>   独立审查层：敏感工具调用先过独立审查 agent（便宜模型、独立上下文），审查失败即拦截（详见 docs/reviewer.md）
-nyra judge <status|enable|disable|set-model|set-thresholds|check>   意向验证 judge：敏感工具调用先打风险分（0-100 + 引用证据），高分拒绝、中段转人工（详见 docs/tool-judge.md）
+nyra judge <status|enable|disable|set-model|set-thresholds|check|verdicts>   意向验证 judge：敏感工具调用先打风险分（0-100 + 引用证据），高分拒绝、中段转人工；verdicts 查两层验证结论账本（启发式 + judge，详见 docs/tool-judge.md）
 nyra verifier <status|enable|disable|set-model|rework-on|rework-off|add-rule|remove-rule|list-rules|check>   验收者：并行产出合入前先过验收门（确定性检查 + 便宜模型复核），未通过打回重做（详见 docs/verifier.md）
 nyra skills <status|enable|disable|draft|drafts|show|approve|reject|archive|sweep>   技能自沉淀：成功任务自动起草技能草稿，人工批准后才安装，低质自动归档（详见 docs/skill-sedimentation.md）
 nyra bughunt <install|status|scope|template|check>   授权漏洞挖掘技能包：范围卡 + 证伪验证 + 提交前七问 + 证据卫生，提交前核对（详见 docs/bughunt.md）
@@ -325,7 +327,7 @@ nyra roster <list|show>   live roster: one line per sub-agent — status + elaps
 nyra side-effects <list|show|record|mark|recover>   store-before-do side-effect queue: recorded before execution, recovered oldest-first with a recovery note (see docs/kanban.md)
 nyra heartbeat <add|list|remove|enable|disable|run|commitments>   silent patrol: quiet when nothing is wrong, findings go to evidence first then inbox; inferred commitments need one user confirmation and auto-expire (see docs/heartbeat.md)
 nyra fanout <list|show|recover>   background fan-out: top-level delegation returns a handle immediately, results backfill the inbox as one message; half-run fan-outs need recover after the process exits (see docs/merge-fanout.md)
-nyra team <create|list|show|add|remove|dissolve|dispatch|handover>   team mode (new gap 52): the chief is the single entry point — splits, dispatches and summarizes only; members need a complete Charter to take work; handovers go through inbox/outbox/change log; outbound actions always go back to the chief / a human for approval (see docs/team.md)
+nyra team <create|list|show|add|remove|dissolve|dispatch|handover|lead|writer>   team mode (new gap 52): the chief is the single entry point — splits, dispatches and summarizes only; members need a complete Charter to take work; handovers go through inbox/outbox/change log; outbound actions always go back to the chief / a human for approval; lead lease + epoch guards against stale chief instructions (see docs/team.md)
 nyra governance <policy|mandate|mode|dry-runs>   enterprise governance: versioned policy + immutable mandates + observe/auto intake modes + dry-run ledger (see docs/governance.md)
 nyra governance caps <set|list|show|check|assign-team|pause|resume|discard|pauses>   tiered cost caps: monthly USD/token limits per Bot/role/team/persona, over-cap tasks pause recoverably
 nyra governance audit <export|verify>   audit export: governance audit logs to SIEM (JSONL + hash chain, verifiable)
@@ -355,9 +357,11 @@ nyra shopify <auth|status|products|product|orders|order|inventory>   native Shop
 nyra slack <auth|status|channels|history|send|card>   native Slack connector: read channels / messages, send messages (explicit approval required), post approval cards (see docs/connectors.md)
 nyra connector <status|list|approve|revoke|auth|install|uninstall|usage>   connector directory: install / one-click auth / revoke / usage (see docs/connectors.md)
 nyra mcp server <status|enable|disable|allow-writes-on|allow-writes-off>   external MCP server switch: other agents call Nyra memory and tasks via gateway POST /mcp (off by default, see docs/mcp.md)
-nyra peer <status|enable|disable|list|auth|ask|handoff|card|code|add|request|accept|friends|block|circle|share>   peer collaboration: ask another Nyra instance, hand off run context, agent card and friends (off by default, see docs/peer.md)
+nyra peer <status|enable|disable|list|auth|ask|handoff|card|code|add|request|accept|friends|block|circle|share|grant|proposal|branch>   peer collaboration: ask another Nyra instance, hand off run context, agent card and friends, scoped revocable grants, peer write proposals, foreign branch merges (off by default, see docs/peer.md)
 nyra circle <create|list|show|invite|revoke|delete|bind|unbind|owner|check|bindings>   trust circles: who may send tasks to the agent (closed by default, out-of-circle messages are dropped at the gateway, see docs/circles.md)
-nyra session <create|list|show|join|leave|delegate|accept|complete|share|frame|record|end>   cross-agent joint sessions: multi-person multi-agent video meetings (local fanout model), in-session delegation + shared task products (allowlist), frames not retained by default, recording needs everyone's consent (see docs/sessions.md)
+nyra session <create|list|show|join|join-request|join-approve|join-decline|join-list|leave|delegate|accept|complete|share|frame|record|end>   cross-agent joint sessions: multi-person multi-agent video meetings (local fanout model), in-session delegation + shared task products (allowlist), frames not retained by default, recording needs everyone's consent; friends join only after approval, read-only by default (see docs/sessions.md)
+nyra sfu <create|rooms|status|join|leave|turn|record|close|reclaim>   group voice SFU (local implementation, mediasoup selected): voice rooms + members + TURN credentials + all-consent recording gate; real media plane waits for mediasoup wiring (see docs/sfu.md)
+nyra group <room|chat|plan>   group chat: rooms and bots, swarm turn-taking (composable stop conditions), group plan engine (per-step worktree isolation + independent acceptance, see docs/group-chat.md and docs/group-plan.md)
 nyra call <ledger|show <call id>|summary>   call cost and privacy dashboard: three books per call (transport / media / tokens), recording off by default and needs everyone's consent, minutes go into the evidence chain (see docs/call-ledger.md)
 nyra budget <list|show|reserve|settle|release|strict>   concurrent budget reservation: reserve budget before a model call, over-limit calls are not sent; unknown amounts pause by default until a human handles them (see docs/budget.md)
 nyra agui <register|list|show|link|connect|disconnect|send|exec|accept-write|revoke-write|a2a>   protocol-neutral access: attach any AG-UI endpoint as a Bot (read-only first, writes need the owner's explicit acceptance), A2A reuses peer cards + handoff (see docs/agui.md)
@@ -391,7 +395,7 @@ nyra bot status   bot overview: Telegram/Discord/Slack/WhatsApp state + computer
 nyra channels <start|stop|status|health|bindings|explain>   gap 27: persistent multi-channel gateway (four channels in one process, bindings-based deterministic routing, channel sessions sandboxed by default, every inbound route in the evidence chain, see docs/channels.md)
 nyra bot redlines <status|list|show|tighten|loosen|set>   bot gap 51: business-action hard redlines — sending messages / payments / deletions always need approval, moving money / trading securities are always forbidden (see docs/business-redlines.md)
 nyra reviewer <status|enable|disable|set-model|add-rule|remove-rule|list-rules|check>   independent review layer: sensitive tool calls go through an independent reviewer agent first (cheap model, independent context); review failure blocks (see docs/reviewer.md)
-nyra judge <status|enable|disable|set-model|set-thresholds|check>   intent-validation judge: sensitive tool calls get a risk score first (0-100 plus cited evidence); high scores are refused, middle scores go to a human (see docs/tool-judge.md)
+nyra judge <status|enable|disable|set-model|set-thresholds|check|verdicts>   intent-validation judge: sensitive tool calls get a risk score first (0-100 plus cited evidence); high scores are refused, middle scores go to a human; verdicts lists the two-layer verdict ledger (heuristic + judge, see docs/tool-judge.md)
 nyra verifier <status|enable|disable|set-model|rework-on|rework-off|add-rule|remove-rule|list-rules|check>   verifier: parallel output passes an acceptance gate before merging (deterministic checks + cheap-model review); failures are sent back for rework (see docs/verifier.md)
 nyra skills <status|enable|disable|draft|drafts|show|approve|reject|archive|sweep>   skill sedimentation: successful runs auto-draft skill drafts, installed only after your approval, low-quality ones auto-archived (see docs/skill-sedimentation.md)
 nyra bughunt <install|status|scope|template|check>   authorized bug-hunting skill pack: scope card + falsification + pre-submit seven questions + evidence hygiene, pre-submit gate (see docs/bughunt.md)
@@ -723,7 +727,7 @@ interface BuiltAgent {
   switchRunId: { current: string | null };
 }
 
-async function buildAgent(args: CliArgs, opts?: { interactive: boolean; skillsDirs?: string[]; onRetry?: (record: RetryRecord) => void; agentId?: string | null; soulAgent?: string | null; teamId?: string | null; teamRole?: "chief" | "member" | null }): Promise<BuiltAgent> {
+async function buildAgent(args: CliArgs, opts?: { interactive: boolean; skillsDirs?: string[]; onRetry?: (record: RetryRecord) => void; agentId?: string | null; soulAgent?: string | null; teamId?: string | null; teamRole?: "chief" | "member" | null; teamEpoch?: number | null }): Promise<BuiltAgent> {
   const home = resolveHome();
   const config = loadConfig(home);
   const profile = resolveProfile(args.profile ?? null, config);
@@ -879,6 +883,8 @@ async function buildAgent(args: CliArgs, opts?: { interactive: boolean; skillsDi
       // GROK-1：常驻团队模式——不在团队里时两者都为 null（普通运行行为不变）。
       teamId: opts?.teamId ?? null,
       teamRole: opts?.teamRole ?? null,
+      // 第 2 批 G-P1-3：团队纪元（team dispatch 时按计划传进来；delegateDetailed 校验它）。
+      teamEpoch: opts?.teamEpoch ?? null,
       // 缺口 24：子 agent 独立推理档位（delegate_reasoning_effort）。
       delegateReasoningEffort: typeof config.delegate_reasoning_effort === "string" ? config.delegate_reasoning_effort : null,
       // H-7：嵌套委派深度上限（config.delegate_max_depth，默认 2，可配 1–5）。
@@ -1777,7 +1783,7 @@ async function handleJudge(argv: string[], workdir: string): Promise<number> {
   const action = argv[0];
   const home = resolveHome();
   if (!action) {
-    process.stdout.write("用法：nyra judge <status|enable|disable|set-model|set-thresholds|check> [选项]\n");
+    process.stdout.write("用法：nyra judge <status|enable|disable|set-model|set-thresholds|check|verdicts> [选项]\n");
     return 2;
   }
   const get = (flag: string): string | undefined => {
@@ -1862,7 +1868,396 @@ async function handleJudge(argv: string[], workdir: string): Promise<number> {
       process.stdout.write(`judge 结论：${verdict.verdict}（风险 ${verdict.riskScore} 分，${verdict.source}）\n证据：${verdict.evidence.length ? verdict.evidence.join("；") : "（无）"}\n原因：${verdict.reason}\njudge 模型：${verdict.judgeModel ?? "—"}\n`);
       return verdict.verdict === "deny" ? 3 : verdict.verdict === "escalate" ? 2 : 0;
     }
+    if (action === "verdicts") {
+      // 第 2 批 G-P1-12：两层意向验证的结论账本——启发式层 + judge 层一次查。
+      // 只记工具名、层、结论、规则、理由、风险分，不记参数原文。
+      const { listIntentVerdicts } = await import("./intentVerdict.ts");
+      const limitRaw = get("--limit");
+      const limit = limitRaw === undefined ? 20 : parseInt(limitRaw, 10);
+      const layerRaw = get("--layer");
+      const layer = layerRaw === "heuristic" || layerRaw === "judge" ? layerRaw : undefined;
+      const decisionRaw = get("--decision");
+      const decision = decisionRaw === "allow" || decisionRaw === "escalate" || decisionRaw === "deny" ? decisionRaw : undefined;
+      const list = listIntentVerdicts(home, Number.isInteger(limit) && limit > 0 ? limit : 20)
+        .filter((v) => !layer || v.layer === layer)
+        .filter((v) => !decision || v.decision === decision);
+      if (!list.length) {
+        process.stdout.write("还没有意向验证结论。\n");
+        return 0;
+      }
+      for (const v of list) {
+        process.stdout.write(`${v.at}\t${v.tool}\t${v.layer}\t${v.decision}${v.risk_score !== null ? `（${v.risk_score} 分）` : ""}${v.rule ? ` [${v.rule}]` : ""}\t${v.reason}\n`);
+      }
+      return 0;
+    }
     process.stderr.write(`错误：未知子命令 judge ${action}\n`);
+    return 2;
+  } catch (err: unknown) {
+    process.stderr.write(`错误：${err instanceof Error ? err.message : String(err)}\n`);
+    return 1;
+  }
+}
+
+// ---- 子命令：sfu（第 2 批 G-P0-2：群组语音 SFU，本地实现） ----
+// 选型定案是 mediasoup（Node 原生库，嵌进单 Node 运行时），但本批不装
+// 服务器、不起真 mediasoup 服务：本地 SFU 只做房间 + 成员 + TURN 凭据
+// + 录制同意门 + 帧指纹记账（假信令、假媒体、内存转发），真媒体面等
+// mediasoup 接线（见 docs/sfu.md 的“待真机验证”）。
+async function handleSfu(argv: string[], home: string): Promise<number> {
+  const action = argv[0];
+  if (!action) {
+    process.stdout.write("用法：nyra sfu <create|rooms|status|join|leave|turn|record|close|reclaim> [选项]\n");
+    return 2;
+  }
+  const get = (flag: string): string | undefined => {
+    const i = argv.indexOf(flag);
+    return i >= 0 ? argv[i + 1] : undefined;
+  };
+  try {
+    const { SfuRegistry, SFU_MAX_SPEAKERS, SFU_MAX_LISTENERS } = await import("./sfu.ts");
+    const registry = new SfuRegistry(home);
+    if (action === "create") {
+      const room = argv[1];
+      if (!room) { process.stderr.write("错误：用法：nyra sfu create <房间 id>\n"); return 2; }
+      const r = registry.createRoom({ id: room });
+      process.stdout.write(`语音房已建：${r.id}（说话者上限 ${SFU_MAX_SPEAKERS}，听众上限 ${SFU_MAX_LISTENERS}，闲置 60 秒回收；本地实现，不走网络）\n`);
+      return 0;
+    }
+    if (action === "rooms") {
+      const rooms = registry.listRooms();
+      if (!rooms.length) {
+        process.stdout.write("还没有语音房：nyra sfu create <房间 id> 建一个。\n");
+        return 0;
+      }
+      for (const r of rooms) {
+        process.stdout.write(`${r.id}\t${r.closed_at ? "已关闭" : "开着"}\t${r.members.length} 人在房\t录制${r.recording ? "开着" : "没开"}\n`);
+      }
+      return 0;
+    }
+    if (action === "status") {
+      const room = argv[1];
+      if (!room) { process.stderr.write("错误：用法：nyra sfu status <房间 id>\n"); return 2; }
+      const r = registry.getRoom(room);
+      if (!r) { process.stderr.write(`错误：没有这个语音房：${room}\n`); return 1; }
+      process.stdout.write(`${r.id} ${r.closed_at ? "已关闭" : "开着"} — 加密 ${r.encryption}\n`);
+      process.stdout.write(`成员（${r.members.length}）：\n`);
+      for (const m of r.members) {
+        process.stdout.write(` ${m.peer}（${m.role}）${m.recording_consented ? " 已同意录制" : ""}\n`);
+      }
+      process.stdout.write(`录制：${r.recording ? "开着" : "没开"}（全体同意门：房里每个人都同意才开得起来）\n`);
+      return 0;
+    }
+    if (action === "join" || action === "leave") {
+      const room = argv[1];
+      const peer = argv[2];
+      if (!room || !peer) { process.stderr.write(`错误：用法：nyra sfu ${action} <房间 id> <好友名>${action === "join" ? " [--role speaker|listener]" : ""}\n`); return 2; }
+      if (action === "join") {
+        const role = get("--role");
+        if (role && role !== "speaker" && role !== "listener") { process.stderr.write("错误：--role 只认 speaker 或 listener\n"); return 2; }
+        registry.joinRoom(room, peer, (role ?? "speaker") as "speaker" | "listener");
+        process.stdout.write(`${peer} 已进语音房 ${room}（${role ?? "speaker"}）\n`);
+      } else {
+        registry.leaveRoom(room, peer);
+        process.stdout.write(`${peer} 已离开语音房 ${room}\n`);
+      }
+      return 0;
+    }
+    if (action === "turn") {
+      const room = argv[1];
+      const peer = argv[2];
+      if (!room || !peer) { process.stderr.write("错误：用法：nyra sfu turn <房间 id> <好友名> [--ttl <秒>]\n"); return 2; }
+      const ttlRaw = get("--ttl");
+      const ttl = ttlRaw === undefined ? undefined : parseInt(ttlRaw, 10);
+      const cred = registry.issueTurnCredential(room, peer, ttl);
+      process.stdout.write(`TURN 凭据（${peer}，房间 ${room}，有效期至 ${cred.expires_at}）：\n用户名：${cred.username}\n密码：${cred.password}\n`);
+      return 0;
+    }
+    if (action === "record") {
+      const sub = argv[1];
+      const room = argv[2];
+      const peer = argv[3] ?? get("--who") ?? undefined;
+      if (sub === "consent") {
+        if (!room || !peer) { process.stderr.write("错误：用法：nyra sfu record consent <房间 id> <好友名>\n"); return 2; }
+        registry.consentRecording(room, peer);
+        process.stdout.write(`${peer} 已同意录制（房间 ${room}）\n`);
+        return 0;
+      }
+      if (sub === "start") {
+        if (!room) { process.stderr.write("错误：用法：nyra sfu record start <房间 id>\n"); return 2; }
+        registry.startRecording(room);
+        process.stdout.write(`房间 ${room} 已开录制（全体已同意）\n`);
+        return 0;
+      }
+      if (sub === "stop") {
+        if (!room) { process.stderr.write("错误：用法：nyra sfu record stop <房间 id>\n"); return 2; }
+        registry.stopRecording(room);
+        process.stdout.write(`房间 ${room} 已停录制\n`);
+        return 0;
+      }
+      process.stderr.write("错误：用法：nyra sfu record <consent|start|stop> <房间 id> [<好友名>]\n");
+      return 2;
+    }
+    if (action === "close") {
+      const room = argv[1];
+      if (!room) { process.stderr.write("错误：用法：nyra sfu close <房间 id> [--reason <原因>]\n"); return 2; }
+      const ok = registry.closeRoom(room, get("--reason") ?? "manual");
+      process.stdout.write(ok ? `语音房 ${room} 已关闭（帧文件已清，录制文件保留）。\n` : `语音房 ${room} 已经关了（或不存在）。\n`);
+      return 0;
+    }
+    if (action === "reclaim") {
+      const reclaimed = registry.reclaimIdleRooms();
+      process.stdout.write(reclaimed.length ? `已回收闲置语音房：${reclaimed.join("、")}\n` : "没有闲置超 60 秒的语音房。\n");
+      return 0;
+    }
+    process.stderr.write(`错误：未知子命令 sfu ${action}\n`);
+    return 2;
+  } catch (err: unknown) {
+    process.stderr.write(`错误：${err instanceof Error ? err.message : String(err)}\n`);
+    return 1;
+  }
+}
+
+// ---- 子命令：group（第 2 批 G-P1-1 群组计划 + G-P1-2 swarm 群聊） ----
+// 房间与机器人沿用第 1 批的 GroupStore（网关同一套）；计划步骤的执行者
+// 是真实 agent（在步骤的隔离 worktree 里跑），验收走 completePlanStep
+// 的独立验收（确定性检查 + 逐项核验收项，执行者自己说了不算）。
+async function handleGroupChat(argv: string[], home: string, args: CliArgs): Promise<number> {
+  const action = argv[0];
+  if (!action) {
+    process.stdout.write("用法：nyra group <room|chat|plan> ...（nyra group room --help / nyra group chat --help / nyra group plan --help 看细分用法）\n");
+    return 2;
+  }
+  const get = (flag: string): string | undefined => {
+    const i = argv.indexOf(flag);
+    return i >= 0 ? argv[i + 1] : undefined;
+  };
+  const getAll = (flag: string): string[] => {
+    const out: string[] = [];
+    for (let i = 0; i < argv.length; i++) {
+      if (argv[i] === flag && argv[i + 1] !== undefined) out.push(argv[i + 1]);
+    }
+    return out;
+  };
+  try {
+    const { GroupStore } = await import("./groups.ts");
+    const store = new GroupStore(join(home, "groups"), { home });
+    if (action === "room") {
+      const sub = argv[1];
+      if (sub === "create") {
+        const roomId = argv[2];
+        const name = argv[3];
+        const bots = getAll("--bot");
+        if (!roomId || !name || !bots.length) {
+          process.stderr.write("错误：用法：nyra group room create <房间 id> <名字> --bot <机器人 id> [--bot <机器人 id> ...]（每个机器人用默认模型跑，说明走默认提示词）\n");
+          return 2;
+        }
+        const created = store.create(roomId, name, bots.map((id) => ({
+          id,
+          name: id,
+          role: "群聊成员",
+          instructions: `你是群聊里的机器人 ${id}。按群聊里的讨论发言；被 @ 到或被交接时回应；分工任务完成时说一声“完成”并写清你做了什么。`,
+        })));
+        process.stdout.write(`群聊已建：${created.id}（${created.name}），机器人：${created.bots.map((b) => b.id).join("、")}\n`);
+        return 0;
+      }
+      if (sub === "list" || !sub) {
+        const rooms = store.listRooms();
+        if (!rooms.length) {
+          process.stdout.write("还没有群聊：nyra group room create 建一个。\n");
+          return 0;
+        }
+        for (const r of rooms) {
+          process.stdout.write(`${r.id}\t${r.name}\t${r.bots} 个机器人\t${r.messages} 条消息\n`);
+        }
+        return 0;
+      }
+      if (sub === "show") {
+        const roomId = argv[2];
+        if (!roomId) { process.stderr.write("错误：用法：nyra group room show <房间 id>\n"); return 2; }
+        const room = store.get(roomId);
+        process.stdout.write(`${room.id} — ${room.name}\n机器人：${room.bots.map((b) => b.id).join("、")}\n`);
+        for (const m of room.messages.slice(-20)) {
+          process.stdout.write(`[${m.sender}] ${m.content.slice(0, 200)}\n`);
+        }
+        return 0;
+      }
+      process.stderr.write("错误：用法：nyra group room <create|list|show> ...\n");
+      return 2;
+    }
+    if (action === "chat") {
+      const sub = argv[1];
+      if (sub === "run") {
+        const roomId = argv[2];
+        const task = get("--task");
+        if (!roomId || !task) {
+          process.stderr.write("错误：用法：nyra group chat run <房间 id> --task <任务> [--mode round-robin|selector|handoff] [--max-messages <轮数>] [--mention-text <文本>] [--timeout-ms <毫秒>]\n");
+          return 2;
+        }
+        const modeRaw = get("--mode");
+        const mode = modeRaw === "selector" || modeRaw === "handoff" ? modeRaw : "round-robin";
+        const maxMessagesRaw = get("--max-messages");
+        const maxMessages = maxMessagesRaw === undefined ? undefined : parseInt(maxMessagesRaw, 10);
+        const timeoutRaw = get("--timeout-ms");
+        const timeoutMs = timeoutRaw === undefined ? undefined : parseInt(timeoutRaw, 10);
+        const mentionText = get("--mention-text");
+        const { runGroupChat } = await import("./groupChat.ts");
+        // 终止条件可组合：给了多个就 AND 起来（都满足才停）；只给一个就用它。
+        const conditions: import("./groupChat.ts").TerminationCondition[] = [];
+        if (maxMessages !== undefined && Number.isInteger(maxMessages)) conditions.push({ kind: "max-messages", max: maxMessages });
+        if (mentionText) conditions.push({ kind: "mention-text", text: mentionText });
+        if (timeoutMs !== undefined && Number.isInteger(timeoutMs)) conditions.push({ kind: "timeout", timeoutMs });
+        const termination = conditions.length === 0
+          ? undefined
+          : conditions.length === 1
+            ? conditions[0]
+            : { kind: "and" as const, conditions };
+        const result = await runGroupChat(store, roomId, {
+          mode,
+          kickoff: task,
+          ...(termination ? { termination } : {}),
+        });
+        for (const t of result.turns) {
+          process.stdout.write(`[${t.speaker}] ${t.message.content}\n`);
+        }
+        process.stdout.write(`—— ${result.turns.length} 轮，终止原因：${result.terminatedBy}（${result.reason}）\n`);
+        return 0;
+      }
+      if (sub === "send") {
+        const roomId = argv[2];
+        const message = argv.slice(3).join(" ").trim();
+        if (!roomId || !message) {
+          process.stderr.write("错误：用法：nyra group chat send <房间 id> <消息> [--rounds <轮数>]\n");
+          return 2;
+        }
+        const roundsRaw = get("--rounds");
+        const rounds = roundsRaw === undefined ? 1 : parseInt(roundsRaw, 10);
+        const res = await store.send(roomId, message, Number.isInteger(rounds) ? rounds : 1);
+        for (const m of res.messages) {
+          process.stdout.write(`[${m.sender}] ${m.content}\n`);
+        }
+        return 0;
+      }
+      process.stderr.write("错误：用法：nyra group chat <run|send> ...\n");
+      return 2;
+    }
+    if (action === "plan") {
+      const sub = argv[1];
+      const planMod = await import("./groupPlan.ts");
+      if (sub === "create") {
+        const roomId = argv[2];
+        const title = get("--title");
+        const stepTitle = get("--step-title");
+        const assignee = get("--assignee");
+        const acceptance = getAll("--accept");
+        if (!roomId || !title || !stepTitle || !assignee || !acceptance.length) {
+          process.stderr.write("错误：用法：nyra group plan create <房间 id> --title <标题> --step-title <第一步标题> --assignee <负责人> --accept <验收项> [--accept <验收项> ...] [--workdir <目录>]（计划至少要有一条步骤，每步都要有负责人与验收项；更多步骤用 add-step 加）\n");
+          return 2;
+        }
+        const plan = planMod.createGroupPlan(home, {
+          roomId,
+          title,
+          workdir: get("--workdir") ?? resolve(args.workdir),
+          steps: [{ title: stepTitle, assignee, acceptance }],
+        });
+        process.stdout.write(`群组计划已建：${plan.id}（${plan.title}，1 步）——更多步骤用 nyra group plan add-step 加。\n`);
+        return 0;
+      }
+      if (sub === "add-step") {
+        const planId = argv[2];
+        const title = get("--title");
+        const assignee = get("--assignee");
+        const acceptance = getAll("--accept");
+        if (!planId || !title || !assignee || !acceptance.length) {
+          process.stderr.write("错误：用法：nyra group plan add-step <计划 id> --title <标题> --assignee <负责人> --accept <验收项> [--accept <验收项> ...]\n");
+          return 2;
+        }
+        const step = planMod.addPlanStep(home, planId, { title, assignee, acceptance });
+        process.stdout.write(`步骤已加：${step.id}（${step.title}，负责人 ${step.assignee}，验收 ${step.acceptance.length} 项）\n`);
+        return 0;
+      }
+      if (sub === "list" || !sub) {
+        const roomId = argv[2] ?? undefined;
+        const plans = planMod.listGroupPlans(home, roomId);
+        if (!plans.length) {
+          process.stdout.write("还没有群组计划：nyra group plan create 建一个。\n");
+          return 0;
+        }
+        for (const p of plans) {
+          process.stdout.write(`${p.id}\t${p.status}\t${p.title}\t${p.steps.length} 步\t房间 ${p.room_id}\n`);
+        }
+        return 0;
+      }
+      if (sub === "show") {
+        const planId = argv[2];
+        if (!planId) { process.stderr.write("错误：用法：nyra group plan show <计划 id>\n"); return 2; }
+        const plan = planMod.getGroupPlan(home, planId);
+        if (!plan) { process.stderr.write(`错误：没有这个计划：${planId}\n`); return 1; }
+        process.stdout.write(`${plan.id} ${plan.status} — ${plan.title}（房间 ${plan.room_id}，工作目录 ${plan.workdir}）\n`);
+        for (const s of plan.steps) {
+          process.stdout.write(` ${s.id} [${s.status}] ${s.title}（负责人 ${s.assignee}）\n`);
+          for (const a of s.acceptance) process.stdout.write(`   验收：${a}\n`);
+          if (s.worktree) process.stdout.write(`   隔离：${s.worktree_kind === "git" ? `worktree ${s.worktree_branch}` : "空目录"} ${s.worktree}\n`);
+          if (s.note) process.stdout.write(`   备注：${s.note}\n`);
+        }
+        return 0;
+      }
+      if (sub === "start") {
+        const planId = argv[2];
+        if (!planId) { process.stderr.write("错误：用法：nyra group plan start <计划 id>\n"); return 2; }
+        const plan = planMod.getGroupPlan(home, planId);
+        if (!plan) { process.stderr.write(`错误：没有这个计划：${planId}\n`); return 1; }
+        const result = await planMod.runGroupPlan(home, planId, {
+          runStep: async (step, worktree) => {
+            const workdir = worktree ?? plan.workdir;
+            const built = await buildAgent({ ...args, workdir, task: "" }, {
+              interactive: false,
+              agentId: step.assignee,
+              soulAgent: step.assignee,
+            });
+            const acceptanceLines = step.acceptance.map((a, i) => `acc-${i + 1}：${a}`).join("\n");
+            const stepTask = `你是群组计划「${plan.title}」里「${step.title}」这一步的负责人（${step.assignee}）。\n在当前工作目录（隔离 worktree）里完成这一步，不要碰目录以外的文件。\n验收项：\n${acceptanceLines}\n收尾时逐项写验收结论，每行一格式：验收 acc-N：通过/未通过——证据（一行一项，没把握的写未通过，不要编证据）。`;
+            const summary = await built.agent.run(stepTask);
+            // 改动文件：git worktree 时读 porcelain，没 git 时数目录里的文件。
+            let changedFiles: string[] = [];
+            let diffStat: string | null = null;
+            try {
+              const { spawnSync } = await import("node:child_process");
+              const st = spawnSync("git", ["status", "--porcelain"], { cwd: workdir, encoding: "utf-8", windowsHide: true });
+              if (st.status === 0) {
+                changedFiles = (st.stdout ?? "").split("\n").map((l) => l.slice(3).trim()).filter(Boolean);
+                const ds = spawnSync("git", ["diff", "--stat", "HEAD"], { cwd: workdir, encoding: "utf-8", windowsHide: true });
+                diffStat = (ds.stdout ?? "").trim() || null;
+              } else {
+                const { readdirSync, statSync } = await import("node:fs");
+                const walk = (dir: string, base: string): string[] => {
+                  const out: string[] = [];
+                  for (const e of readdirSync(dir)) {
+                    if (e === ".git") continue;
+                    const p = join(dir, e);
+                    if (statSync(p).isDirectory()) out.push(...walk(p, `${base}${e}/`));
+                    else out.push(`${base}${e}`);
+                  }
+                  return out;
+                };
+                changedFiles = walk(workdir, "");
+              }
+            } catch { /* 改动清单读失败时按空交（确定性检查会拦下） */ }
+            const checks = step.acceptance.map((_, i) => {
+              const id = `acc-${i + 1}`;
+              const m = summary.match(new RegExp(`验收 ${id}：(通过|未通过)[——-]\\s*(.*)`, "m"));
+              if (!m) return { checkId: id, pass: false, evidence: "" };
+              return { checkId: id, pass: m[1] === "通过", evidence: (m[2] ?? "").trim().slice(0, 500) };
+            });
+            return { summary, changedFiles, diffStat, checks };
+          },
+        });
+        process.stdout.write(`计划 ${result.plan.id}：${result.plan.status}（跑了 ${result.stepsRun} 步）${result.failedStepId ? `——失败在 ${result.failedStepId}：${result.failedReason}` : "——全部步骤通过"}\n`);
+        return result.failedStepId ? 1 : 0;
+      }
+      process.stderr.write("错误：用法：nyra group plan <create|add-step|list|show|start> ...\n");
+      return 2;
+    }
+    process.stderr.write(`错误：未知子命令 group ${action}\n`);
     return 2;
   } catch (err: unknown) {
     process.stderr.write(`错误：${err instanceof Error ? err.message : String(err)}\n`);
@@ -4823,6 +5218,8 @@ async function handleTeamCommand(args: CliArgs, home: string): Promise<number> {
       soulAgent: plan.chief,
       teamId: plan.team.id,
       teamRole: "chief",
+      // 第 2 批 G-P1-3：本次分派的纪元（dispatch 处理里拿租约后写进计划的）。
+      teamEpoch: plan.epoch ?? null,
       onRetry: (r) => process.stderr.write(t("spinner.cooldown", { provider: r.provider, attempt: r.attempt, seconds: Math.max(1, Math.ceil(r.delayMs / 1000)) }) + "\n"),
     });
     const { agent } = built;
@@ -5961,6 +6358,8 @@ export async function main(argv: string[]): Promise<number> {
   }
   if (args.subcommand === "circle") return handleCircle(args.subArgs ?? [], home);
   if (args.subcommand === "session") return handleSession(args.subArgs ?? [], home);
+  if (args.subcommand === "sfu") return handleSfu(args.subArgs ?? [], home);
+  if (args.subcommand === "group") return handleGroupChat(args.subArgs ?? [], home, args);
   if (args.subcommand === "call") return callLedgerMain(args.subArgs ?? [], home);
   if (args.subcommand === "budget") return budgetMain(args.subArgs ?? [], home);
   if (args.subcommand === "agui") return aguiMain(args.subArgs ?? [], home);

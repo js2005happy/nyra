@@ -709,6 +709,9 @@ members: string[];
 task: string;
 /** 接单前月度硬顶检查（checkAutoAllowed）：触顶不接单。 */
 cap: { allowed: boolean; reason: string};
+/** 第 2 批 G-P1-3：本次分派的纪元（dispatch 处理里拿租约后填；没填时
+ * chief Agent 不校验纪元——老调用方与 dry-run 不受影响）。 */
+epoch?: number;
 }
 
 /**
@@ -753,6 +756,7 @@ return [
 `团队成员（只把子任务交给下面这些人，agent 参数只认这些名字，别的 agent 不许派）：`,
 memberLines,
 `任务：${plan.task}`,
+...(plan.epoch !== undefined ? [`分派纪元：${plan.epoch}——你这次分派的纪元号；lead 换人后旧纪元的分派会被直接拒绝（不用再问为什么）。`] : []),
 `做法：`,
 `1. 把任务拆成互不依赖的子任务，每件交给最合适的成员（delegate 工具，agent 填成员名，output_schema 能给就给）；`,
 `2. 要让成员写某个文件，分派时把文件列进 delegate 的 write_files（写者名额就从你这里移交给成员，子任务结束时自动还回来）；不给 write_files，成员第一次写该文件会被单写者门拦下；`,
@@ -781,6 +785,10 @@ const TEAM_USAGE = "用法：\n"
 + " nyra team writer status <团队名或 id> 看谁拿着写者名额（单写者门）\n"
 + " nyra team writer transfer <团队名或 id> <文件> <成员> 参谋长把某文件的写者名额移交给成员\n"
 + " nyra team writer release <团队名或 id> <文件> [--by <agent>] 把某文件的写者名额还回去（默认参谋长收回；--by 填持有者本人）\n"
++ " nyra team lead status <团队名或 id> 看谁是当前 lead、纪元几、租约到什么时候过期\n"
++ " nyra team lead acquire <团队名或 id> [--as <agent>] 拿 lead 租约（10 分钟；已有 lead 在任时拒绝，不抢）\n"
++ " nyra team lead release <团队名或 id> [--as <agent>] 还 lead 租约（默认参谋长还；--as 填持有者本人）\n"
++ " nyra team lead transfer <团队名或 id> <新 lead> 把 lead 交给别人（纪元 +1，旧 lead 的分派立刻失效）\n"
 + " nyra team handover send --from <agent> --to <agent> --task \"一句话\" [--note \"备注\"] [--file <相对路径>...] [--contract <契约 id>] 文件交接（落对方电脑 workspace 的 inbox；挂契约时对方 ack 先程序验收）\n"
 + " nyra team handover list <agent> [--box inbox|outbox] 列出某 agent 的收件/发件箱\n"
 + " nyra team handover show <agent> <id> 看一个交接包\n"
@@ -985,7 +993,6 @@ process.stderr.write("用法：nyra team dispatch <团队名或 id> \"<任务>\"
 return 2;
 }
 const plan = planTeamDispatch(home, idOrName, task);
-const chiefTask = buildChiefTask(plan);
 if (dryRun) {
 process.stdout.write(
 `分派计划（只出计划，没跑模型）：\n`
@@ -1001,6 +1008,18 @@ if (!input?.runChief) {
 process.stderr.write("分派需要跑 chief 模型（本命令须在 agent 运行时里调，见 docs/team.md）。\n");
 return 1;
 }
+// 第 2 批 G-P1-3：真跑之前参谋长拿 lead 租约（10 分钟；拿不到 = 已有
+// 别的 lead 在任，直接拒绝，不抢）。纪元写进计划：chief 任务文本里写
+// 一行，chief Agent 构造时 teamEpoch 也传进去（delegateDetailed 校验它）。
+// 动态 import（teamLease → team，静态 import 会循环）。dry-run 不拿租约。
+const { acquireTeamLease } = await import("./teamLease.ts");
+const leaseRes = acquireTeamLease(home, plan.team.id, plan.chief);
+if (!leaseRes.granted) {
+process.stderr.write(`分派被拒：${leaseRes.reason}\n`);
+return 1;
+}
+plan.epoch = leaseRes.lease.epoch;
+const chiefTask = buildChiefTask(plan);
 emitTeamEvent(input, "team_dispatched", { team_id: plan.team.id, chief: plan.chief, members: plan.members.length});
 appendTeamAudit(home, { kind: "dispatched", team_id: plan.team.id, chief: plan.chief, members: plan.members.length});
 const output = await input.runChief(plan, chiefTask);
@@ -1042,6 +1061,48 @@ const released = releaseWriteLease(home, team.id, key, by);
 if (!released) { process.stderr.write(`${key} 现在没有租约（或 ${by} 不是持有者也不是参谋长）。\n`); return 1; }
 emitTeamEvent(input, "write_gate_released", { team_id: team.id, file: key, by });
 process.stdout.write(`已把 ${key} 的写者名额还回去。\n`);
+return 0;
+}
+if (cmd === "lead") {
+const sub = argv[1];
+const idOrName = argv[2];
+if (sub !== "status" && sub !== "acquire" && sub !== "release" && sub !== "transfer") {
+process.stderr.write("用法：nyra team lead <status|acquire|release|transfer> <团队名或 id> [<新 lead>] [--as <agent>]\n");
+return 2;
+}
+if (!idOrName) { process.stderr.write("用法：nyra team lead " + sub + " <团队名或 id> ...\n"); return 2; }
+const team = getTeam(home, idOrName);
+if (!team) { process.stderr.write(`找不到团队 ${idOrName}\n`); return 1; }
+const { acquireTeamLease, releaseTeamLease, transferTeamLead, getTeamLease } = await import("./teamLease.ts");
+if (sub === "status") {
+const lease = getTeamLease(home, team.id);
+if (!lease) { process.stdout.write(`团队 ${team.name}：现在没有 lead（没有活租约）。\n`); return 0; }
+process.stdout.write(`团队 ${team.name}：lead 是 ${lease.lead}，纪元 ${lease.epoch}，租约到 ${lease.expiresAt} 过期。\n`);
+return 0;
+}
+const as = flagValue(argv, "--as") ?? team.chief;
+if (sub === "acquire") {
+const res = acquireTeamLease(home, team.id, as);
+if (!res.granted) { process.stderr.write(res.reason + "\n"); return 1; }
+emitTeamEvent(input, "team_lease_acquired", { team_id: team.id, lead: as, epoch: res.lease.epoch });
+process.stdout.write(`已拿 lead 租约：${as}，纪元 ${res.lease.epoch}，到 ${res.lease.expiresAt} 过期（10 分钟）。\n`);
+return 0;
+}
+if (sub === "release") {
+const before = getTeamLease(home, team.id);
+const released = releaseTeamLease(home, team.id, as);
+if (!released) { process.stderr.write(`${as} 现在不是团队 ${team.name} 的 lead（或没有活租约）。\n`); return 1; }
+emitTeamEvent(input, "team_lease_released", { team_id: team.id, lead: as, epoch: before?.epoch ?? 0 });
+process.stdout.write(`已还 lead 租约：${as}（纪元 ${before?.epoch ?? "?"}）。\n`);
+return 0;
+}
+const to = argv[3];
+if (!to) { process.stderr.write("用法：nyra team lead transfer <团队名或 id> <新 lead>\n"); return 2; }
+if (!team.members.includes(to) && to !== team.chief) { process.stderr.write(`${to} 不是团队 ${team.name} 的成员（参谋长 ${team.chief}，成员 ${team.members.join("、")}）。\n`); return 1; }
+const transferred = transferTeamLead(home, team.id, as, to);
+if (!transferred.granted) { process.stderr.write(transferred.reason + "\n"); return 1; }
+emitTeamEvent(input, "team_lease_transferred", { team_id: team.id, from: as, to, epoch: transferred.lease.epoch });
+process.stdout.write(`已把 lead 从 ${as} 交给 ${to}，纪元 ${transferred.lease.epoch}（旧 lead 的分派立刻失效）。\n`);
 return 0;
 }
 if (cmd === "handover") {

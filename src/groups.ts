@@ -1071,6 +1071,36 @@ export class GroupStore {
     }
   }
 
+  /**
+   * 第 2 批 G-P1-2：往群记录里追加消息（swarm/handoff 引擎用：先把用户
+   * 的开场白记进去，再逐轮记每个说话者的发言）。调用方负责内容合法。
+   */
+  async appendTranscript(roomId: string, entries: RoomMessage[]): Promise<number> {
+    return this.runSerialized(roomId, async () => {
+      const room = this.readRoom(roomId);
+      for (const e of entries) room.messages.push(e);
+      this.writeRoom(room);
+      return room.messages.length;
+    });
+  }
+
+  /**
+   * 第 2 批 G-P1-2：让指定机器人单独说一轮（swarm 的顺序发言用，与
+   * send 的并行轮不同：一次只跑一个 bot，看到的是当前最新记录）。
+   * 返回它刚发的那条消息。
+   */
+  async runOneBot(roomId: string, botId: string): Promise<RoomMessage> {
+    return this.runSerialized(roomId, async () => {
+      const room = this.readRoom(roomId);
+      const bot = room.bots.map((raw) => parseBot(raw)).find((b) => b.id === botId);
+      if (!bot) throw new GroupError(`机器人不存在：${botId}`);
+      const entry = await this.runBot(room, bot, [...room.messages]);
+      room.messages.push(entry);
+      this.writeRoom(room);
+      return entry;
+    });
+  }
+
   async send(roomId: string, message: string, rounds = 1): Promise<SendResult> {
     const text = validateText(message, "群消息", MAX_INPUT_CHARS);
     if (
