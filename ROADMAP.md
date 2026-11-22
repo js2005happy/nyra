@@ -1,3 +1,10 @@
+## 2026-11-22 — Count one idle observation per completed tool call (static-only)
+
+- **External facts (reviewed 2026-11-22):** [Codex #35259](https://github.com/openai/codex/issues/35259) (opened 2026-07-24) documents repeated model-mediated status polling and locally measured token volume; [Codex #60104](https://github.com/openai/codex/issues/60104) (opened 2026-11-07) reports repeated work and loss of no-rework constraints. These are individual external reports, not Angel reproductions or population prevalence.
+- **Angel source fact:** the opt-in observer counted a tool-requesting model message and its tool return separately. A single tool cycle could therefore hit idle_limit=2, before two distinct tool results existed.
+- **Engineering inference / ranked queue (value / difficulty / safety risk / dependency):** P1 one-observation-per-tool high / low / low / existing advisory observer (**implemented, untested**); P1 independent trusted progress source high / medium / medium-high / independent authority (**open**); P1 private durable task contract high / medium / medium-high / cross-platform secure storage (**blocked**); P0 claim real dispatch high / high / high / isolation and approvals (**blocked**).
+- Count only tool returns as untrusted idle observations; do not infer progress from model prose, tool success or polling. A tool exception may stop before a return observation; no automatic pause, retry, resume or trust elevation. Static review only; tests and CI not run.
+
 ## 2026-11-22 — Terminal-reply idle false positive (static-only)
 
 - **Source facts (reviewed 2026-11-22):** Existing Angel main-loop source observed every model reply as idle before checking whether the reply contained tool calls; a terminal reply could therefore trigger an idle warning even when the task was ending. External [Codex #41007](https://github.com/openai/codex/issues/41007) (2026-08-27) and [#47802](https://github.com/openai/codex/issues/47802) (2026-09-24) report polling-related wasted activity; these individual reports do not establish Angel prevalence.
