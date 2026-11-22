@@ -1,3 +1,10 @@
+## 2026-11-23 — Web search exception privacy (static inspection only)
+
+- Reviewed development README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, core Agent/Tools and structured status classifier, latest commits, open Issues/PR and available CI status before editing. Source finding: `web_search` interpolated ToolError and arbitrary network exception strings into model-visible error summaries; these may include user queries, URLs or credentials. This is a source-derived risk, not a reproduced incident.
+- Replaced only those two exception branches with fixed provider-specific text; added three unexecuted regression definitions for explicit exceptions, unexpected exceptions and fallback success. No network searches were performed by the project code.
+- External user feedback: [Codex #31015](https://github.com/openai/codex/issues/31015) opened 2026-07-03 (pre-transcript redaction), [Codex #34233](https://github.com/openai/codex/issues/34233) opened 2026-07-19 (tool-output credential disclosure). External reports do not prove an Angel incident or frequency.
+- NOT RUN: tests, builds, compilation, CI or cross-platform checks. Other tools, normal search snippets and evidence files remain outside scope; no claim of comprehensive DLP.
+
 ## 2026-11-23 — Legacy local read_file missing-path privacy (static inspection only)
 
 - Reviewed README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, core Agent/Tools and classifier, recent commits, open Issues/PR and CI metadata before editing. Confirmed legacy local `_tool_read_file` exposed missing-path text while trusted local structured adapter did not.
