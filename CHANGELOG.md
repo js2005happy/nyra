@@ -1,3 +1,8 @@
+## 2026-11-22 — Typed in-process tool outcome boundary (unreleased, static-only)
+
+- Added immutable StructuredToolReport with a strict three-value reported outcome and conservative classifier support. Legacy string reports remain unchanged. Untrusted dicts/JSON do not acquire authority; exceptions override reported success. Verification and auto-resume remain false.
+- Added four unexecuted regression definitions. No Agent loop wiring, trusted adapters, tests/CI execution, dependencies, merge or release.
+
 ## 2026-11-22 — Unified conservative tool report status (unreleased, untested)
 
 - Added a pure standard-library legacy report classifier and used it for both ToolJournal success reports and advisory tool-failure observation. Previously `执行失败：` was recognized only by the observer. Explicit exceptions remain failures; non-error-looking text is not verified execution.
