@@ -1,3 +1,9 @@
+## 2026-11-22 — Per-run advisory detector isolation (static inspection only)
+
+- Inspected development README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/Tools, observer and regression source; checked recent commits, open Issues/PR and prior CI metadata. Source-derived risk: a reused caller-owned detector retained idle counts between separate Agent.run invocations.
+- Added a bounded reset_run() operation and invoke it at the start of Agent.run; added an unexecuted regression definition checking that one prior idle observation plus one new tool return does not hit idle_limit=2. Existing observer remains opt-in and advisory only.
+- External Codex #35259 (2026-07-24) and #60104 (2026-11-07) are individual reports of wasted activity, not Angel reproductions. **Not run:** tests, scripts, compilation, CI or cross-platform checks. No installs, user account access, main merge or production release. Independent progress attestation remains unavailable.
+
 ## 2026-11-22 — Idle observation granularity (static inspection only)
 
 - Read README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/Tools, observer and regression source; queried canonical repository branches, latest commits, open Issues/PR, prior commit statuses and PR-triggered workflow runs. The prior queried commit returned no status/workflow records, which is not evidence of CI success.
