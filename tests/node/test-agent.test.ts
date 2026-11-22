@@ -120,6 +120,67 @@ test("AgentTest.test_run_local_task_end_to_end", async () => {
   expect(agent.turn).toBe(2);
 });
 
+test("AgentTest.test_reasoning_content_preserved_across_turns", async () => {
+  // DeepSeek 思考模式：模型返回的 reasoning_content 下轮必须原样带回，
+  // 否则 API 报 400。第一轮带 reasoning_content + 工具调用，第二轮的
+  // 请求里同一条 assistant 消息必须仍带该字段。
+  const { home, workdir } = setup();
+  const provider = new FakeProvider([
+    {
+      choices: [{
+        message: {
+          content: "",
+          reasoning_content: "先写文件再汇报",
+          tool_calls: [{ id: "c1", type: "function", function: { name: "write_file", arguments: JSON.stringify({ path: "a.txt", content: "hi\n" }) } }],
+        },
+      }],
+    },
+    textReply("写好了"),
+  ]);
+  const agent = new Agent(provider as never, {
+    workdir, home, mode: "full", maxTurns: 5, skillsDirs: [],
+    sessionId: "20261118-000000-agent-reasoning",
+  });
+  const out = await agent.run("写 a.txt");
+  expect(out).toBe("写好了");
+  expect(provider.calls.length).toBe(2);
+  const second = provider.calls[1] as Record<string, unknown>[];
+  const assistant = second.find((m) => (m as Record<string, unknown>).role === "assistant") as Record<string, unknown>;
+  expect(assistant).toBeDefined();
+  expect(assistant.reasoning_content).toBe("先写文件再汇报");
+  expect((assistant.tool_calls as unknown[]).length).toBe(1);
+});
+
+test("AgentTest.test_empty_reasoning_content_preserved_across_turns", async () => {
+  // DeepSeek 有时返回 reasoning_content: ""（空字符串）；缺字段和空字段
+  // 在服务端是两种待遇，缺了下轮就报 400，所以空字符串也要原样带回。
+  const { home, workdir } = setup();
+  const provider = new FakeProvider([
+    {
+      choices: [{
+        message: {
+          content: "",
+          reasoning_content: "",
+          tool_calls: [{ id: "c1", type: "function", function: { name: "write_file", arguments: JSON.stringify({ path: "a.txt", content: "hi\n" }) } }],
+        },
+      }],
+    },
+    textReply("写好了"),
+  ]);
+  const agent = new Agent(provider as never, {
+    workdir, home, mode: "full", maxTurns: 5, skillsDirs: [],
+    sessionId: "20261118-000000-agent-reasoning-empty",
+  });
+  const out = await agent.run("写 a.txt");
+  expect(out).toBe("写好了");
+  expect(provider.calls.length).toBe(2);
+  const second = provider.calls[1] as Record<string, unknown>[];
+  const assistant = second.find((m) => (m as Record<string, unknown>).role === "assistant") as Record<string, unknown>;
+  expect(assistant).toBeDefined();
+  expect("reasoning_content" in assistant).toBe(true);
+  expect(assistant.reasoning_content).toBe("");
+});
+
 test("AgentTest.test_run_records_usage_events", async () => {
   const { home, workdir } = setup();
   const provider = new FakeProvider([{

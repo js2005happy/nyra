@@ -328,6 +328,27 @@ test('Eval local environment does not inherit keys permission overrides or confi
     else process.env.NYRA_ALLOW_PROTECTED_WRITES = old;
   }
 });
+test('Eval local environment passes egress proxy vars through (DeepSeek helper needs them)', () => {
+  const oldHttps = process.env.https_proxy;
+  const oldHttpsUpper = process.env.HTTPS_PROXY;
+  const oldKey = process.env.DEEPSEEK_API_KEY;
+  process.env.https_proxy = 'http://proxy.invalid:8080';
+  process.env.HTTPS_PROXY = 'http://proxy.invalid:8080';
+  process.env.DEEPSEEK_API_KEY = 'sk-should-not-leak';
+  try {
+    const env = cleanEvalEnv('isolated');
+    expect(env.https_proxy).toBe('http://proxy.invalid:8080');
+    expect(env.HTTPS_PROXY).toBe('http://proxy.invalid:8080');
+    expect(env.DEEPSEEK_API_KEY).toBeUndefined();
+  } finally {
+    if (oldHttps === undefined) delete process.env.https_proxy;
+    else process.env.https_proxy = oldHttps;
+    if (oldHttpsUpper === undefined) delete process.env.HTTPS_PROXY;
+    else process.env.HTTPS_PROXY = oldHttpsUpper;
+    if (oldKey === undefined) delete process.env.DEEPSEEK_API_KEY;
+    else process.env.DEEPSEEK_API_KEY = oldKey;
+  }
+});
 class ScriptProvider {
   name = 'fake';
   model = 'test-only';
