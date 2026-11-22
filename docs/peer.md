@@ -158,6 +158,11 @@ nyra peer handoff --to b --run 20261120-120000-abcdef
   是它后面加 `/mcp`。不配时 `url` 与 `endpoints.mcp` 都是 null。
 - 开关也可以用命令改：`nyra peer card publish on|off`（改 `config.json`，
   不重启也生效——网关每次请求都读当前配置）。
+- 第 3 批 G-P1-7 名片 JWS 签名：`nyra peer card keygen` 生成 P-256 钥匙
+  （私钥只存密码箱），`nyra peer card sign on|off` 开关签名，
+  `nyra peer card trust <好友名>` 钉住对方公钥（TOFU），
+  `nyra peer card verify <好友名>` 验钉住的钥匙还对不对得上。
+  详见 `docs/peer-discovery.md`。
 
 ### 好友码
 
@@ -244,6 +249,17 @@ nyra video call start --friend pilot --yes
   `friend_code_regenerated`），每次好友操作单独建一条只记 friend_* 事件的
   证据运行（peer.ts 同款做法）；审计进 `~/.nyra/peer-audit.jsonl`
   （只记对端名、名片指纹与码指纹）。
+- 第 3 批新事件：`peer_discovered`（发现，记地址、名字、签名结论）、
+  `peer_token_set` / `peer_token_revoked`（per-peer token，只记给谁，
+  不记原文）。
+
+### 公开发现与 per-peer token（第 3 批 G-P1-4）
+
+不靠线下传码发现并加上一台别人的机器人：`nyra peer discover <地址>`
+拉对方 well-known 名片、验签名、记进发现账本；`--as <好友名>` 时
+同时发好友请求，仍须对方批准。名片 JWS 签名（G-P1-7）与 per-peer
+token（出站，每好友一条，吊销一家不影响别家）详见
+`docs/peer-discovery.md`。
 
 ### 已知局限
 

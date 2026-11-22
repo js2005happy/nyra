@@ -56,6 +56,12 @@ nyra sfu record stop <房间 id>
 录制开着后新进来、还没 consent 的人，其帧不进录制文件
 （`sfu-recordings-<房间>.jsonl`）。
 
+## 群组视频（第 3 批）
+
+`nyra sfu video ...`：在语音房上加视频 Producer/Consumer、按需看帧、
+带宽自适应、10 分钟模拟。视频挂在语音房上，开视频须是房里说话者，
+听众只能看；帧只记指纹，不存视频字节。详见 `docs/group-video.md`。
+
 ## 诚实边界
 
 - 本地实现，不走网络：没有真 mediasoup 服务、没有真 TURN 中继、
