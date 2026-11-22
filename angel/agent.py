@@ -25,6 +25,7 @@ from .console import configure_stream
 from .usage import UsageTracker
 from .checkpoints import CheckpointStore
 from .tool_journal import ToolJournal, JournalError
+from .no_progress import NoProgressDetector
 
 
 class AgentError(Exception):
@@ -99,10 +100,13 @@ class Agent:
         checkpoint_store: CheckpointStore | None = None,
         poppy_enabled: bool = False,
         tool_journal: ToolJournal | None = None,
+        no_progress_detector: NoProgressDetector | None = None,
     ) -> None:
         self.provider = provider
         # Explicit opt-in only. No journal is created for existing callers.
         self.tool_journal = tool_journal
+        # Explicit opt-in; model/tool output never counts as trusted progress.
+        self.no_progress_detector = no_progress_detector
         self.poppy_enabled = bool(poppy_enabled)
         self.usage = UsageTracker(configured_window=context_window_tokens)
         self.auto_compact_enabled = bool(auto_compact_enabled)
@@ -299,6 +303,7 @@ class Agent:
         )
 
         attempted_auto_compact = False
+        progress_alerted = False
         for _ in range(self.max_turns):
             if self.auto_compact_enabled and not attempted_auto_compact and should_auto_compact(
                 self.usage.snapshot(), len(messages) - 1, self.auto_compact_threshold
@@ -320,6 +325,15 @@ class Agent:
                 "content": msg.get("content") or "",
             }
             tool_calls = msg.get("tool_calls") or []
+            if self.no_progress_detector is not None:
+                state = self.no_progress_detector.observe_event("model_message")
+                if state.needs_attention and not progress_alerted:
+                    self._emit("no_progress_attention", {
+                        "consecutive_idle": state.consecutive_idle,
+                        "execution_verified": False,
+                        "safe_to_auto_resume": False,
+                    })
+                    progress_alerted = True
             if tool_calls:
                 assistant_msg["tool_calls"] = tool_calls
             messages.append(assistant_msg)
@@ -414,6 +428,15 @@ class Agent:
                         "工具调用发生异常；日志仅记录报告错误，"
                         "外部副作用状态未知，禁止自动重试，请人工核查"
                     ) from None
+                if self.no_progress_detector is not None:
+                    state = self.no_progress_detector.observe_event("tool_returned")
+                    if state.needs_attention and not progress_alerted:
+                        self._emit("no_progress_attention", {
+                            "consecutive_idle": state.consecutive_idle,
+                            "execution_verified": False,
+                            "safe_to_auto_resume": False,
+                        })
+                        progress_alerted = True
                 self._emit(
                     "tool_result",
                     {"id": tc.get("id", ""), "name": fn_name, "result": result},
