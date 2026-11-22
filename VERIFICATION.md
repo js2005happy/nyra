@@ -1,3 +1,9 @@
+## 2026-11-22 — Advisory source newline repair (static inspection only)
+
+- Reviewed README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/Tools, observer, tests, recent commits, open Issues/PR and prior combined CI status/workflow metadata (no status or PR-triggered runs returned). Open PR #113 is about evaluations, not this fix.
+- Found six literal backslash-n sequences within the Agent observation comment, swallowing assignments needed before `state.needs_attention`. Replaced only these sequences and added an unexecuted assertion for one failed-tool idle observation. No runtime reproduction claimed.
+- External reports checked 2026-11-22: [Codex #47802](https://github.com/openai/codex/issues/47802) (2026-09-24), [#60104](https://github.com/openai/codex/issues/60104) (2026-11-07). These are unrelated external failure reports, not proof of this Angel defect. **Not run:** tests, scripts, builds, compilation, CI or cross-platform runtime checks. No installs, main merge or production release.
+
 ## 2026-11-22 — Per-run advisory detector isolation (static inspection only)
 
 - Inspected development README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/Tools, observer and regression source; checked recent commits, open Issues/PR and prior CI metadata. Source-derived risk: a reused caller-owned detector retained idle counts between separate Agent.run invocations.
