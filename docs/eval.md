@@ -61,7 +61,7 @@ bun run scripts/eval.ts rerun --from eval-results/baseline.json --out eval-resul
 
 可选 `--model <已安装本地模型名>`（另立一组基线）、`--retries 0|1|2`、`--provider deepseek`（API 基线，模型默认 deepseek-flash，见上节）。入口拒绝覆盖旧报告。退出码：0 为全部首次通过，3 为有失败/阻塞，2 为参数或版本不符。没有已执行失败的报告不可 rerun；补齐阻塞条件后应当新建基线。
 
-跑 live 前自行确认本地 Ollama 的模型与服务、`node`、可用的 bwrap（不仅是可执行文件存在）、Chromium 和它的运行条件。默认服务地址固定为本机 `127.0.0.1:11434`，浏览器只允许本轮临时测试页。不调用外部账号或外网业务接口。
+跑 live 前自行确认本地 Ollama 的模型与服务、`node`、可用的 bwrap（不仅是可执行文件存在——断网时须先建 user ns，否则无特权用户配不了 loopback，见 `docs/sandbox.md`）、Chromium 和它的运行条件（以 root 跑时架子自动加 `--no-sandbox`，否则 Chrome 拒绝启动）。默认服务地址固定为本机 `127.0.0.1:11434`，浏览器只允许本轮临时测试页。不调用外部账号或外网业务接口。
 
 ### 自动重跑和历史
 

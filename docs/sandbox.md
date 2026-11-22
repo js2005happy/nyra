@@ -80,7 +80,7 @@ E2B 云沙箱原型已跑通（Muse 连接器 `custom.e2b`，项目
 
 ## 默认断网与怎么放开网络
 
-bwrap 沙箱默认断网（`--unshare-net`）：沙箱内的命令连不上外网。
+bwrap 沙箱默认断网（`--unshare-net`）：沙箱内的命令连不上外网。断网时先加 `--unshare-user-try`：无特权用户在 init user ns 拥有的 net ns 里配不了 loopback（bwrap 报 `loopback: Failed RTM_NEWADDR`），先建 user ns 才能拿到 CAP_NET_ADMIN；`-try` 在禁了无特权 userns 的机器上退回原行为，不硬失败。放开网络时（`allowNet`）不加这两项。
 
 放开网络（二选一）：
 
