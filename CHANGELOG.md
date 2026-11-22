@@ -1,3 +1,8 @@
+## 2026-11-22 — Terminal-reply no-progress false-positive fix (unreleased, untested)
+
+- Avoid counting a final assistant response without tool calls as an idle step. Preserve idle observation for tool-requesting model responses and tool returns; no change to default-disabled advisory behavior or tool execution.
+- Updated regression definition for a final-only response. Static review only; tests and CI not run.
+
 ## 2026-11-22 — Opt-in advisory idle Agent events (unreleased, untested)
 
 - Optional no_progress_detector constructor parameter; model responses and tool returns are untrusted observations. At threshold, emit one no_progress_attention metadata event per run. Default disabled.
