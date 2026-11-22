@@ -86,6 +86,7 @@
 
 0.5.4 是一次“对外连接 + Bot 方向起步”的更新，常用功能照常用（详细技术记录见 [CHANGELOG.md](CHANGELOG.md)）：
 
+- **别的 agent 也能当 Nyra 的 Bot 接进来了**：`nyra agui register <名字> <地址>` 登记一个外部 AG-UI endpoint，绑上名片好友、过了信任圈准入、握手成功就能连上（只读接入，能看任务产物、不能写）；`nyra agui send` 发消息走 AG-UI 事件流，对方回的工具调用只当提议记下来、不执行；想请对方动手干活（`nyra agui exec`）须机主先显式接受（`accept-write --yes`），没接受就直接拒绝；对方发来的任何内容先过注入扫描，可疑的就地拦截进证据链。A2A 对端用 `nyra agui a2a <好友名> <消息>`（复用名片 + 交接，照样先过信任圈与审查门）。详见 `docs/agui.md`。但这批只在假 endpoint 上验过，真 AG-UI 服务还没接通过；Nyra 的 Bot 对外暴露成 AG-UI endpoint 是下一批。
 - **每通电话都有三本账可查了**：`nyra call ledger` 列全部通话账，`nyra call show <通话 id>` 看一通的完整账，`nyra call summary` 看合计——传输用了多少带宽、看了几帧、STT 几分钟、理解与干活各花多少 token，本地模型（whisper.cpp、本地小视觉模型）与云端分开记，本地不花钱但账里分得清；录制默认关，只有全体同意才开始计录制账，谁撤销同意就停录，新加入的人须另行同意；每通电话结束出一份纪要进证据链（谁参加、何时、时长、三本账汇总、委派了什么任务），不含通话内容原文。账本只记用量数字。但传输账是本地模型数（语音回环记 0，视频记信令面实测字节数），没有真 TURN/STUN 带宽计量；按人拆分的成本分摊是后续批次。详见 `docs/call-ledger.md`。
 - **Nyra 能当 MCP 服务器了**：别的 agent 可以经网关调 Nyra 的记忆读写、任务派发与证据查询；写操作默认关闭，开了也要过独立审查。
 - **并行委派默认后台跑，跑完合成为一份交付物**：`delegate_parallel` 现在默认后台跑（立即回 handle，聊天继续），跑完单条 consolidated 消息回填，扇出直接落任务板（重启不丢），跑完了没回填由 Heartbeat 提醒；`merge: true` 时批跑完多一次合并步，把各线程的结构化摘要合成一份交付物，过 verifier 确定性检查再进审阅队列人批。`nyra fanout <list|show|recover>` 查与回收跑一半的扇出。
