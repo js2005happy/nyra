@@ -123,6 +123,7 @@
 | `nyra peer <status\|enable\|disable\|list\|auth\|ask\|handoff\|card\|code\|add\|request\|accept\|friends\|block\|circle\|share>` | 对端协作：问别的 Nyra 实例、交接运行上下文、名片加好友（默认关闭；对外发送须开独立审查，详见 `docs/peer.md`） |
 | `nyra circle <create\|list\|show\|invite\|revoke\|delete\|bind\|unbind\|owner\|check\|bindings>` | 信任圈与跨实例准入：谁能给 agent 发任务（默认全封闭，圈外消息网关直接丢弃；详见 `docs/circles.md`） |
 | `nyra session <create\|list\|show\|join\|leave\|delegate\|accept\|complete\|share\|frame\|record\|end>` | 跨 agent 联合会话：多人多 agent 视频会（本地扇出模型），会内委派 + 共享任务产物（allowlist），画面默认不留存、录制须全体同意（详见 `docs/sessions.md`） |
+| `nyra call <ledger\|show <通话 id>\|summary>` | 通话成本与隐私仪表：每通电话的三本账（传输/媒体/token，本地与云端分开记）+ 录制仪表 + 通话纪要进证据链（详见 `docs/call-ledger.md`） |
 | `nyra voice <status\|speak <文字>\|enable-tts\|disable-tts>` | 语音指挥：看配置与可用性、读一段文字、开关自动回读（默认关；详见 `docs/voice.md`） |
 | `nyra voice call <start\|answer\|decline\|end\|status\|list\|segment\|confirm>` | 实时语音通话：建通话、喂音频段落转写、可选回读（本地 whisper 优先，云端默认关；详见 `docs/voice.md`） |
 | `nyra video <call\|signal\|ice>` | 视频通话 + 按需视觉采样：信令 + TURN + ICE 直连传输，帧按需看（本地优先，云端默认关；详见 `docs/video-call.md`） |
