@@ -173,3 +173,20 @@ test("@ 判定：没拿到用户名时看文本里的 @，text_mention 只认本
   expect(msgs[0].isMentioned).toBe(true);
   expect(msgs[1].isMentioned).toBe(false);
 });
+
+test("审批按钮回调：新版四种回调转成带档位的 /approve 指令，旧版兼容为批准一次", async () => {
+  const adapter = new TelegramAdapter({ token: "t" });
+  const query = (data: string) => ({
+    id: "q1", data, from: { id: 7 },
+    message: { message_id: 5, chat: { id: 7, type: "private" } },
+  }) as never;
+  expect(adapter.toCallback(query("bot:approve-once:deadbeef"))?.text).toBe("/approve deadbeef");
+  expect(adapter.toCallback(query("bot:approve-session:deadbeef"))?.text).toBe("/approve deadbeef session");
+  expect(adapter.toCallback(query("bot:approve-always:deadbeef"))?.text).toBe("/approve deadbeef always");
+  expect(adapter.toCallback(query("bot:reject:deadbeef"))?.text).toBe("/reject deadbeef");
+  // 旧版 bot:approve:<id>（升级前已发出的提示）兼容为批准一次。
+  expect(adapter.toCallback(query("bot:approve:deadbeef"))?.text).toBe("/approve deadbeef");
+  // 别的回调一律忽略。
+  expect(adapter.toCallback(query("bot:approve-session:xyz"))).toBeNull();
+  expect(adapter.toCallback(query("other:thing"))).toBeNull();
+});

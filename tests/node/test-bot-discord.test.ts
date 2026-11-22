@@ -215,3 +215,23 @@ test("Discord：answerCallback 走交互响应端点", async () => {
   expect(body.type).toBe(6);
   adapter.close();
 });
+
+test("审批按钮回调：新版四种回调转成带档位的 /approve 指令，旧版兼容为批准一次", async () => {
+  const ws = fakeWebSocket();
+  const factory: WebSocketFactory = () => ws;
+  const { fetchImpl } = fakeFetch(() => ({ id: "bot-id", username: "NyraBot" }));
+  const adapter = new DiscordAdapter({ token: "discord-token", fetchImpl, webSocketFactory: factory, autoReconnect: false });
+  const payload = (customId: string) => ({
+    type: 2, id: "inter-1", token: "itok-1",
+    data: { custom_id: customId, component_type: 2 },
+    member: { user: { id: "u1", username: "admin" } },
+    channel_id: "ch-1", guild_id: "g-1",
+  }) as never;
+  expect(adapter.toCallback(payload("bot:approve-once:deadbeef"))?.text).toBe("/approve deadbeef");
+  expect(adapter.toCallback(payload("bot:approve-session:deadbeef"))?.text).toBe("/approve deadbeef session");
+  expect(adapter.toCallback(payload("bot:approve-always:deadbeef"))?.text).toBe("/approve deadbeef always");
+  expect(adapter.toCallback(payload("bot:reject:deadbeef"))?.text).toBe("/reject deadbeef");
+  expect(adapter.toCallback(payload("bot:approve:deadbeef"))?.text).toBe("/approve deadbeef");
+  expect(adapter.toCallback(payload("other:thing"))).toBeNull();
+  adapter.close();
+});

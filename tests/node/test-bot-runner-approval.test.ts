@@ -1,7 +1,7 @@
 // tests/node/test-bot-runner-approval.test.ts — Bot 方向 Phase 2：聊天内审批接线 + 预算预检。
 // 假适配器 + 假模型执行，不联网、不调真模型。
 import { test, expect } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BotRunner, type AgentRunResult } from "../../src/bot/index.ts";
@@ -215,6 +215,47 @@ test("当天预算：超了也不进模型（审批放行绕不过配额的前�
     await runner.handleMessage(makeMsg({ messageId: "2", text: "第二条" }));
     expect(calls).toBe(1);
     expect(adapter.sent[adapter.sent.length - 1].text).toContain("预算已用完");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("/approve session：记一条会话授权，/grants 能看到，/revoke-grant 能撤销", async () => {
+  const home = tempHome("nyra-bot-rapp7-");
+  try {
+    const { runner, adapter } = makeRunner(home, { bot: { owner: "1", admins: ["2"] } });
+    const item = await seedApproval(runner);
+    await runner.handleMessage(makeMsg({ messageId: "30", senderId: "2", text: `/approve ${item.id} session` }));
+    expect(adapter.sent[adapter.sent.length - 1].text).toContain(`已批准 ${item.id}`);
+    expect(adapter.sent[adapter.sent.length - 1].text).toContain("不再问");
+    const grant = runner.bridge.findGrant("write_file", "abcdef123456", "telegram:7");
+    expect(grant).not.toBeNull();
+    expect(grant?.scope).toBe("session");
+    await runner.handleMessage(makeMsg({ messageId: "31", senderId: "2", text: "/grants" }));
+    expect(adapter.sent[adapter.sent.length - 1].text).toContain(grant!.id);
+    await runner.handleMessage(makeMsg({ messageId: "32", senderId: "2", text: `/revoke-grant ${grant!.id}` }));
+    expect(adapter.sent[adapter.sent.length - 1].text).toContain("已撤销");
+    expect(runner.bridge.findGrant("write_file", "abcdef123456", "telegram:7")).toBeNull();
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("/approve always：记持久授权落盘；/approve 档位写错回用法；非管理员看不到授权", async () => {
+  const home = tempHome("nyra-bot-rapp8-");
+  try {
+    const { runner, adapter } = makeRunner(home, { bot: { owner: "1", admins: ["2"] } });
+    const item = await seedApproval(runner);
+    await runner.handleMessage(makeMsg({ messageId: "40", senderId: "1", text: `/approve ${item.id} always` }));
+    expect(adapter.sent[adapter.sent.length - 1].text).toContain("以后都不再问");
+    expect(existsSync(join(home, "bot-approval-grants.json"))).toBe(true);
+    expect(runner.bridge.findGrant("write_file", "abcdef123456", "telegram:99")).not.toBeNull();
+    const item2 = await seedApproval(runner);
+    await runner.handleMessage(makeMsg({ messageId: "41", senderId: "1", text: `/approve ${item2.id} bogus` }));
+    expect(adapter.sent[adapter.sent.length - 1].text).toContain("用法");
+    expect(runner.bridge.pending(item2.id)?.status).toBe("pending");
+    await runner.handleMessage(makeMsg({ messageId: "42", senderId: "99", text: "/grants" }));
+    expect(adapter.sent[adapter.sent.length - 1].text).toContain("只有管理员");
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

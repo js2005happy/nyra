@@ -304,3 +304,21 @@ test("Slack：downloadFile 走 files.info 拿 url_private 再带 token 下载", 
   expect(dlReq.url).not.toContain("xoxb-secret");
   adapter.close();
 });
+
+test("审批按钮回调：新版四种回调转成带档位的 /approve 指令，旧版兼容为批准一次", async () => {
+  const ws = fakeWebSocket();
+  const factory: SlackWebSocketFactory = () => ws;
+  const { fetchImpl } = fakeFetch(() => ({ ok: true }));
+  const adapter = new SlackAdapter({ appToken: "xapp-secret", botToken: "xoxb-secret", fetchImpl, webSocketFactory: factory, autoReconnect: false });
+  const payload = (value: string) => ({
+    actions: [{ action_id: "nyra_approve", value }],
+    channel: { id: "C1" }, user: { id: "U1" }, trigger_id: "trig-1",
+  }) as never;
+  expect(adapter.toCallback(payload("bot:approve-once:deadbeef"))?.text).toBe("/approve deadbeef");
+  expect(adapter.toCallback(payload("bot:approve-session:deadbeef"))?.text).toBe("/approve deadbeef session");
+  expect(adapter.toCallback(payload("bot:approve-always:deadbeef"))?.text).toBe("/approve deadbeef always");
+  expect(adapter.toCallback(payload("bot:reject:deadbeef"))?.text).toBe("/reject deadbeef");
+  expect(adapter.toCallback(payload("bot:approve:deadbeef"))?.text).toBe("/approve deadbeef");
+  expect(adapter.toCallback(payload("other:thing"))).toBeNull();
+  adapter.close();
+});

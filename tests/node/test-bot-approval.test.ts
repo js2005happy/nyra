@@ -116,7 +116,8 @@ test("发起审批：提示带 id、工具、说明与批准/拒绝按钮；重�
     expect(sender.sent.length).toBe(1);
     expect(sender.sent[0].text).toContain(first.id);
     expect(sender.sent[0].text).toContain("write_file");
-    expect(sender.sent[0].buttons?.[0]?.map((b) => b.callbackData)).toEqual([`bot:approve:${first.id}`, `bot:reject:${first.id}`]);
+    expect(sender.sent[0].buttons?.[0]?.map((b) => b.callbackData)).toEqual([`bot:approve-once:${first.id}`, `bot:reject:${first.id}`]);
+    expect(sender.sent[0].buttons?.[1]?.map((b) => b.callbackData)).toEqual([`bot:approve-session:${first.id}`, `bot:approve-always:${first.id}`]);
     const second = await requestOne(bridge);
     expect(second.id).toBe(first.id);
     expect(sender.sent.length).toBe(1);
@@ -331,5 +332,88 @@ test("全链路：白名单外的工具不建审批，直接拒绝", async () =>
   } finally {
     rmSync(home, { recursive: true, force: true });
     rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("授权：批准带 session 档记一条会话授权，同会话同指纹命中、换会话不命中；重启后失效", async () => {
+  const home = tempHome("nyra-bot-appr10-");
+  try {
+    const sender = makeSender();
+    const { bridge, audit } = makeBridge(home, sender);
+    const item = await requestOne(bridge);
+    const hash = approvalArgsHash({ tool: "write_file", fileTarget: "a.txt" });
+    const res = await bridge.decide(item.id, true, "2", "command", "session");
+    expect(res.ok).toBe(true);
+    expect(res.decision?.scope).toBe("session");
+    const grant = bridge.findGrant("write_file", hash, "telegram:7");
+    expect(grant).not.toBeNull();
+    expect(grant?.scope).toBe("session");
+    expect(grant?.sessionKey).toBe("telegram:7");
+    // 换会话不命中；工具或指纹不同也不命中。
+    expect(bridge.findGrant("write_file", hash, "telegram:8")).toBeNull();
+    expect(bridge.findGrant("shell", hash, "telegram:7")).toBeNull();
+    expect(bridge.findGrant("write_file", "000000000000", "telegram:7")).toBeNull();
+    // 授权覆盖放行：不建挂起审批，但记审计。
+    expect(bridge.tryGrant("write_file", hash, "telegram:7")).toBe(true);
+    expect(audit.map((a) => a.outcome)).toContain("approval:grant-used");
+    expect(bridge.tryGrant("write_file", hash, "telegram:8")).toBe(false);
+    // session 档只在内存里：新桥（同 home）找不到它。
+    const sender2 = makeSender();
+    const { bridge: bridge2 } = makeBridge(home, sender2);
+    expect(bridge2.findGrant("write_file", hash, "telegram:7")).toBeNull();
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("授权：批准带 always 档持久化落盘，重启后仍命中；撤销后不再命中", async () => {
+  const home = tempHome("nyra-bot-appr11-");
+  try {
+    const sender = makeSender();
+    const { bridge } = makeBridge(home, sender);
+    const item = await requestOne(bridge);
+    const hash = approvalArgsHash({ tool: "write_file", fileTarget: "a.txt" });
+    const res = await bridge.decide(item.id, true, "1", "button", "always");
+    expect(res.ok).toBe(true);
+    expect(res.decision?.scope).toBe("always");
+    const grantsFile = join(home, "bot-approval-grants.json");
+    expect(existsSync(grantsFile)).toBe(true);
+    const saved = JSON.parse(readFileSync(grantsFile, "utf-8")) as { grants: Record<string, { scope: string }> };
+    const savedIds = Object.keys(saved.grants);
+    expect(savedIds.length).toBe(1);
+    expect(saved.grants[savedIds[0]].scope).toBe("always");
+    // 新桥（同 home）读盘后仍命中，且全会话通用。
+    const sender2 = makeSender();
+    const { bridge: bridge2 } = makeBridge(home, sender2);
+    expect(bridge2.findGrant("write_file", hash, "telegram:7")).not.toBeNull();
+    expect(bridge2.findGrant("write_file", hash, "telegram:99")).not.toBeNull();
+    expect(bridge2.tryGrant("write_file", hash, "telegram:99")).toBe(true);
+    // 撤销后不再命中，落盘文件里也没了；再撤销返回 false。
+    expect(bridge2.revokeGrant(savedIds[0])).toBe(true);
+    expect(bridge2.findGrant("write_file", hash, "telegram:7")).toBeNull();
+    const savedAfter = JSON.parse(readFileSync(grantsFile, "utf-8")) as { grants: Record<string, unknown> };
+    expect(Object.keys(savedAfter.grants).length).toBe(0);
+    expect(bridge2.revokeGrant(savedIds[0])).toBe(false);
+    expect(bridge2.listGrants().length).toBe(0);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("授权：拒绝不记授权；非白名单的人批了不记授权", async () => {
+  const home = tempHome("nyra-bot-appr12-");
+  try {
+    const sender = makeSender();
+    const { bridge } = makeBridge(home, sender);
+    const item = await requestOne(bridge);
+    const res = await bridge.decide(item.id, false, "1", "command", "always");
+    expect(res.ok).toBe(true);
+    expect(bridge.listGrants().length).toBe(0);
+    const item2 = await requestOne(bridge, { tool: "shell", argsHash: approvalArgsHash({ tool: "shell", command: "ls" }) });
+    const bad = await bridge.decide(item2.id, true, "99", "button", "always");
+    expect(bad.ok).toBe(false);
+    expect(bridge.listGrants().length).toBe(0);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
   }
 });

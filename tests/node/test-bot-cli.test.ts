@@ -5,6 +5,8 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { handleBot, resolveTelegramToken } from "../../src/bot/index.ts";
+import { ApprovalBridge, approvalArgsHash } from "../../src/bot/approvalBridge.ts";
+import { botPolicyFromConfig } from "../../src/bot/types.ts";
 
 const CLI = join(import.meta.dir, "..", "..", "src", "cli.ts");
 
@@ -314,6 +316,43 @@ test("handleBot：whatsapp status 未运行时正常退出 0", async () => {
       if (prevPhone === undefined) delete process.env.WHATSAPP_PHONE_NUMBER_ID;
       else process.env.WHATSAPP_PHONE_NUMBER_ID = prevPhone;
     }
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("handleBot approvals：list 列出一直批准的授权，revoke 撤销，用法错误退出 2", async () => {
+  const home = tempHome("nyra-bot-cli-appr-");
+  try {
+    // 先用桥记一条 always 授权。
+    const policy = botPolicyFromConfig({ bot: { owner: "1", admins: ["2"], approval_timeout_ms: 60000 } });
+    const bridge = new ApprovalBridge({ home, policy, send: async () => "1", audit: () => {} });
+    const item = await bridge.requestApproval({
+      sessionKey: "telegram:7", chatId: "7", threadId: null, tool: "write_file", summary: "写文件 a.txt",
+      argsHash: approvalArgsHash({ tool: "write_file", fileTarget: "a.txt" }),
+      requestedBy: "1", requestedByRole: "owner",
+    });
+    await bridge.decide(item.id, true, "1", "command", "always");
+    const grantId = bridge.listGrants()[0].id;
+    const out: string[] = [];
+    const origWrite = process.stdout.write.bind(process.stdout);
+    (process.stdout as unknown as { write: (s: string) => boolean }).write = (s: string) => { out.push(s); return true; };
+    try {
+      expect(await handleBot(["approvals", "list"], home)).toBe(0);
+      expect(out.join("")).toContain(grantId);
+      out.length = 0;
+      expect(await handleBot(["approvals", "revoke", grantId], home)).toBe(0);
+      expect(out.join("")).toContain("已撤销");
+      out.length = 0;
+      expect(await handleBot(["approvals", "revoke", grantId], home)).toBe(1);
+      expect(await handleBot(["approvals"], home)).toBe(2);
+      expect(await handleBot(["approvals", "bogus"], home)).toBe(2);
+    } finally {
+      (process.stdout as unknown as { write: unknown }).write = origWrite;
+    }
+    // 撤销已落盘：新桥读盘后找不到它。
+    const bridge2 = new ApprovalBridge({ home, policy, send: async () => "1", audit: () => {} });
+    expect(bridge2.listGrants().length).toBe(0);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
