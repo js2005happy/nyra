@@ -5,6 +5,7 @@
 //
 // 输出原则：给区间 + 明写假设。不打印"精确预估"这种骗人的数字。
 import { estimateRunCost, resolvePricing, formatCost, estimateCost, adjustEstimateForRecall, resolveMonthlyLimit, type Pricing } from "./cost.ts";
+import { BudgetLedger, resolveStrictUnknownAmount } from "./budget.ts";
 import { UsageLedger, monthKeyString, nextMonthlyResetDate } from "./usageLedger.ts";
 import { McpCostTracker } from "./mcpCost.ts";
 import { modelSwitchSummaryLine, summarizeModelSwitches } from "./modelSwitch.ts";
@@ -64,6 +65,11 @@ function printPricingTable(config: Record<string, unknown>, home?: string): void
     // 备用模型切换通知：本月切过模型时，定价汇总里同样加一行切换统计。
     const switchLine = modelSwitchSummaryLine(home);
     if (switchLine) process.stdout.write(switchLine + "\n");
+    // 并发预算预留（可靠性打磨第 2 项第一批）：在途预留 + 严格模式。
+    const budgetLedger = new BudgetLedger(home);
+    budgetLedger.pruneExpired();
+    const strict = resolveStrictUnknownAmount(config);
+    process.stdout.write(`在途预留：$${budgetLedger.activeReservedUsd().toFixed(4)}；金额未知严格模式：${strict ? "开" : "关"}\n`);
   }
 }
 
@@ -81,7 +87,18 @@ export function handleCost(argv: string[], config: Record<string, unknown>, mode
           return { limitUsd: limit, spentUsd: llm.spentUsd + mcp, mcpUsd: mcp, month, resetAt: nextMonthlyResetDate(), modelSwitches: summarizeModelSwitches(opts.home!, month) };
         })()
         : null;
-      process.stdout.write(JSON.stringify(buildCostJson({ model: flags.model ?? model, config, monthly })) + "\n");
+      process.stdout.write(JSON.stringify(buildCostJson({
+        model: flags.model ?? model, config,
+        // 并发预算预留（可靠性打磨第 2 项第一批）：在途预留 + 严格模式。
+        budget: opts?.home
+          ? (() => {
+            const ledger = new BudgetLedger(opts.home!);
+            ledger.pruneExpired();
+            return { activeReservedUsd: ledger.activeReservedUsd(), strictUnknownAmount: resolveStrictUnknownAmount(config) };
+          })()
+          : null,
+        monthly,
+      })) + "\n");
       if (!flags.estimate) return 0;
     } else {
       printPricingTable(config, opts?.home);
@@ -167,12 +184,20 @@ export interface CostJson {
       last: { from: string; to: string; trigger: string; at: string } | null;
     };
   } | null;
+  /** 并发预算预留（可靠性打磨第 2 项第一批）：在途预留 + 金额未知严格模式。 */
+  budget: {
+    active_reserved_usd: number;
+    strict_unknown_amount: boolean;
+  } | null;
 }
 
 /** 把 `--show` 要显示的东西整理成结构。纯函数之外的部分（账本）由调用方算好传入。 */
 export function buildCostJson(input: {
   model: string | null;
   config: Record<string, unknown>;
+  budget?: {
+    activeReservedUsd: number; strictUnknownAmount: boolean;
+  } | null;
   monthly: {
     limitUsd: number | null; spentUsd: number; mcpUsd: number; month: string; resetAt: string | null;
     modelSwitches?: { count: number; byTrigger: Record<string, number>; last: { from: string; to: string; trigger: string; at: string } | null };
@@ -208,6 +233,9 @@ export function buildCostJson(input: {
             : null,
         },
       }
+      : null,
+    budget: input.budget
+      ? { active_reserved_usd: input.budget.activeReservedUsd, strict_unknown_amount: input.budget.strictUnknownAmount }
       : null,
   };
 }

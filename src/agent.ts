@@ -36,7 +36,7 @@ import {
 import { EvidenceStore } from "./evidence.ts";
 import { UsageTracker } from "./usage.ts";
 import type { WindowSource } from "./modelCatalog.ts";
-import { estimateCost, checkMonthlyCap, type CostEstimate, type Pricing } from "./cost.ts";
+import { estimateCost, checkMonthlyCap, estimateRunCost, type CostEstimate, type Pricing } from "./cost.ts";
 import { nextMonthlyResetDate } from "./usageLedger.ts";
 import { t } from "./i18n.ts";
 import type { AuxTask } from "./modelRouting.ts";
@@ -74,6 +74,18 @@ import {
   CancelController, cancelErrorFromSignal, combineSignals, isCancelError,
   type CancelError, type CancelReason,
 } from "./cancel.ts";
+/**
+ * 并发预算预留（可靠性打磨第 2 项第一批）。budget.ts 是叶子（只 import
+ * cost.ts 与 config.ts）；costCaps.ts 已在 agent 的传递导入图里
+ * （agent → team → governance → costCaps），这里直接静态 import 不新增
+ * 循环（costCaps → kanban → tasks → agent 这条环早已存在，Bun 下靠
+ * 运行时才用的 live binding 走通，与 agent 早已静态 import kanban/tasks 同理）。
+ */
+import {
+  BudgetLedger, estimateCallUsd, resolveStrictUnknownAmount,
+  type BudgetReservation, type ReserveLimit,
+} from "./budget.ts";
+import { pauseForUnknownAmount } from "./costCaps.ts";
 import { checkOutputSchema, validateOutputSchema } from "./outputSchema.ts";
 import {
   runParallelDelegate, formatParallelResults, parallelConvergenceNote,
@@ -81,6 +93,7 @@ import {
   type ParallelTaskSpec, type ParallelDelegateResult, type ParallelThreadOutcome,
   type ParallelThreadEvidence,
   type ParallelThreadResult,
+  type ThreadReserveVerdict,
 } from "./parallelDelegate.ts";
 import {
   buildMergeTask, extractMergedText, verifyMergedDeliverable,
@@ -279,6 +292,16 @@ export interface AgentOptions {
    * 出错返回 null（不挡运行），暂停记录写不上也不拦中止。
    */
   tieredCapCheck?: ((runSpentUsd: number | null, runTokens: number) => { exceeded: boolean; message: string } | null) | null;
+  /**
+   * 可靠性打磨第 2 项第一批：并发预算预留。
+   * budgetLedger：共享预留账本实例（不传时按 home 懒建；子任务传父级
+   * 同一份实例，跨会话共享靠账本文件本身）。null = 不用预留账本
+   * （只在测试里关；生产默认启用）。
+   * strictUnknownAmount：金额未知严格模式（null/不传 = 按 home 配置
+   * budget.strict_unknown_amount 懒解析，默认 true）。
+   */
+  budgetLedger?: BudgetLedger | null;
+  strictUnknownAmount?: boolean | null;
   /**
    * 取消信号（可靠性打磨第 1 项第一批）：父级本次运行的信号，传给子
    * Agent 时子任务的在途调用能被掐断（模型请求 abort、子进程 kill）。
@@ -499,6 +522,12 @@ export class Agent {
   private monthlySpentBeforeUsd: AgentOptions["monthlySpentBeforeUsd"];
   /** 缺口 43 第三批：分层成本上限回调（见 AgentOptions）；子任务继承同一份。 */
   private tieredCapCheck: AgentOptions["tieredCapCheck"];
+  /** 可靠性打磨第 2 项第一批：共享预留账本（opts 注入或按 home 懒建）。 */
+  private budgetLedgerOpt: BudgetLedger | null | undefined;
+  private budgetLedgerInstance: BudgetLedger | null = null;
+  /** 严格模式解析缓存（undefined = 还没解析过）。 */
+  private strictUnknownAmountOpt: boolean | null | undefined;
+  private strictUnknownAmountCached: boolean | undefined = undefined;
   /** 辅助任务模型（压缩 / 子任务）；缺省则沿用主模型。 */
   private auxModels: { compact?: string; delegate?: string };
   /** 缺口 24：Plan/Act 分模型（规划 / 执行）；缺省则沿用主模型。 */
@@ -622,6 +651,8 @@ export class Agent {
     this.monthlyCostLimitUsd = typeof opts.monthlyCostLimitUsd === "number" ? opts.monthlyCostLimitUsd : null;
     this.monthlySpentBeforeUsd = opts.monthlySpentBeforeUsd ?? null;
     this.tieredCapCheck = opts.tieredCapCheck ?? null;
+    this.budgetLedgerOpt = opts.budgetLedger;
+    this.strictUnknownAmountOpt = opts.strictUnknownAmount;
     this.auxModels = opts.auxModels ?? {};
     this.planActModels = opts.planActModels ?? {};
     this.repoMap = {
@@ -1483,11 +1514,226 @@ export class Agent {
   }
 
   /**
+   * 共享预留账本（可靠性打磨第 2 项第一批）：opts 注入优先（子任务传父级
+   * 同一份实例；测试注入临时 home 的实例）；否则按 home 懒建；显式传
+   * null = 不用账本（测试用）。实例本身不缓存任何预留——每次读写都重新
+   * 读文件，跨会话/跨进程共享靠文件。
+   */
+  private budgetLedger(): BudgetLedger | null {
+    if (this.budgetLedgerOpt === null) return null;
+    if (this.budgetLedgerOpt) return this.budgetLedgerOpt;
+    if (!this.budgetLedgerInstance) this.budgetLedgerInstance = new BudgetLedger(this.home);
+    return this.budgetLedgerInstance;
+  }
+
+  /**
+   * 严格模式（可靠性打磨第 2 项第一批）：opts 显式值优先，否则按 home
+   * 配置懒解析一次并缓存（默认 true，见 budget.ts）。
+   */
+  private strictUnknownAmount(): boolean {
+    if (typeof this.strictUnknownAmountOpt === "boolean") return this.strictUnknownAmountOpt;
+    if (this.strictUnknownAmountCached === undefined) {
+      try {
+        this.strictUnknownAmountCached = resolveStrictUnknownAmount(loadConfig(this.home));
+      } catch {
+        this.strictUnknownAmountCached = true;
+      }
+    }
+    return this.strictUnknownAmountCached;
+  }
+
+  /** 有任一美元上限（单次/月度）才需要预留：一个都没配时，预留没有
+   * 意义（也没“算不出金额”的问题——没上限可超）。分层回调不算在内：
+   * 它的 token 层不需要单价，USD 层在金额未知时传 null 跳过，由回调
+   * 自己判（见 reserveNextCall 的 checkTieredPreCall）。 */
+  private usdCapsActive(): boolean {
+    return this.maxCostUsd !== null || this.monthlyCostLimitUsd !== null;
+  }
+
+  /** 本次运行已计价的美元花费合计（主 agent + 已完成子任务 + 语音）；
+   * 算不出时返回 null（未配单价 / 有调用未报用量），不编数字。还没调
+   * 过用（calls 为 0）时就是 0 + 已完成子任务 + 语音。 */
+  private currentRunSpentUsd(): number | null {
+    const snap = this.usage.snapshot();
+    if (snap.calls === 0) return this.delegateSpentUsd + this.voiceSpentUsd;
+    const e = estimateCost(snap, this.pricing, this.maxCostUsd);
+    if (e.status !== "priced" || e.spentUsd === null) return null;
+    return e.spentUsd + this.delegateSpentUsd + this.voiceSpentUsd;
+  }
+
+  /** 本次运行的 token 总数（主 agent 快照；子任务 token 不在父快照里，
+   * 与 checkCost 的分层回调同口径）。 */
+  private currentRunTokens(): number {
+    return this.usage.snapshot().total_tokens ?? 0;
+  }
+
+  /** 预留 owner：子 agent 用注册表行 id，主 agent 用会话 id（都没有时用 "cli"）。 */
+  private reservationOwner(): string {
+    return this.subagentRunId ?? this.sessionId ?? "cli";
+  }
+
+  /**
+   * 金额未知暂停（可靠性打磨第 2 项第一批）：建暂停记录（同 agent +
+   * 同 scope + 同月去重）+ 发 budget_paused 事件，返回给用户看的文案。
+   * 暂停记录是“等人工处理”的凭据：恢复走 nyra governance caps resume，
+   * 恢复条件见 costCaps.ts 的 resumePause。写记录/发事件失败不改变
+   * 暂停结论（只吞错，不谎报没停）。
+   */
+  private pauseUnknownAmount(detail: string): string {
+    const spent = this.currentRunSpentUsd();
+    let pauseId: string | null = null;
+    try {
+      const pause = pauseForUnknownAmount(this.home, {
+        agent: this.soulAgent,
+        detail,
+        spentUsd: spent ?? 0,
+        spentTokens: this.currentRunTokens(),
+        runId: this.subagentRunId,
+      });
+      pauseId = pause.id;
+      try {
+        this.emit("budget_paused", { pause_id: pause.id, agent: this.soulAgent, reason: detail });
+      } catch { /* ignore */ }
+    } catch { /* 暂停记录写不上也不拦停下，文案里写清原因即可 */ }
+    const reasonText = detail.startsWith("no-pricing:")
+      ? `模型 ${detail.slice("no-pricing:".length) || "（未知）"} 未配单价`
+      : `${detail}，用量追不回来`;
+    return `金额未知，已暂停：${reasonText}，无法判定是否超限，继续跑可能悄悄超支，运行已停下。恢复办法：配好单价（config.pricing）后跑 nyra governance caps resume ${pauseId ?? "<暂停 id>"} --yes；或跑 nyra budget strict --off 关掉严格模式再恢复（恢复后未计价的用量仍按未知记，不补编）。暂停记录：${pauseId ?? "未写入（见上文）"}。`;
+  }
+
+  /**
+   * 请求前预留（可靠性打磨第 2 项第一批）：在模型调用发出前，按单价与
+   * 预估量预留额度。返回 reservation（调用方负责结算/释放）；没有美元
+   * 上限可守时返回 null；预留失败或金额未知（严格模式）时抛 AgentError，
+   * 调用不发出。注意：这里不 abort、不发取消信号——预留拒绝与金额未知
+   * 暂停是“停下等处理”，不是取消（见 docs/budget.md）。
+   *
+   * 分层回调（tieredCapCheck）不走预留：它的 token 层不需要单价，USD
+   * 层在金额未知时传 null 跳过——所以单价未知时仍先判一次分层（token
+   * 层可能已经超了），判不过直接抛它的文案；只有美元上限（单次/月度）
+   * 才触发“金额未知则暂停”。
+   */
+  private reserveNextCall(messages: Record<string, unknown>[]): BudgetReservation | null {
+    if (!this.usdCapsActive() && !this.tieredCapCheck) return null;
+    const ledger = this.budgetLedger();
+    if (!ledger) return null;
+    const model = typeof (this.provider as { model?: unknown }).model === "string"
+      ? (this.provider as { model: string }).model
+      : null;
+    const snap = this.usage.snapshot();
+    // 未配单价：算不出任何金额。有美元上限要守时，严格模式下第一次调用
+    // 前就暂停（还没花钱）；非严格模式沿用旧行为（继续跑、不假装封顶）。
+    // 只有分层回调时：USD 传 null 判 token 层，判不过直接抛它的文案。
+    if (!this.pricing) {
+      if (this.usdCapsActive() && this.strictUnknownAmount()) throw new AgentError(this.pauseUnknownAmount(`no-pricing:${model ?? ""}`));
+      if (this.tieredCapCheck) this.checkTieredPreCall(null);
+      return null;
+    }
+    // 已有调用未报用量：之前的花费算不出来。同上：有美元上限且严格模式
+    // 下不再发下一轮调用；只有分层回调时仍可判 token 层。
+    if (snap.missing_calls > 0) {
+      if (this.usdCapsActive() && this.strictUnknownAmount()) throw new AgentError(this.pauseUnknownAmount(`missing-usage:${snap.missing_calls}次调用未报用量`));
+      if (this.tieredCapCheck) this.checkTieredPreCall(null);
+      return null;
+    }
+    const promptChars = messages.reduce((n, m) => n + (typeof (m as { content?: unknown }).content === "string" ? ((m as { content: string }).content.length) : 0), 0);
+    const requested = estimateCallUsd(promptChars, this.pricing);
+    if (requested === null) {
+      if (this.usdCapsActive() && this.strictUnknownAmount()) throw new AgentError(this.pauseUnknownAmount(`no-pricing:${model ?? ""}`));
+      if (this.tieredCapCheck) this.checkTieredPreCall(null);
+      return null;
+    }
+    const spent = this.currentRunSpentUsd() ?? 0;
+    const reserved = ledger.activeReservedUsd();
+    // 分层上限：把“本次运行 + 在途预留 + 本次预留”当在途花费传给回调；
+    // 超了回调里已按现有口径建暂停记录，这里直接抛它的文案。
+    if (this.tieredCapCheck) this.checkTieredPreCall(spent + reserved + requested);
+    // 只有分层回调、没有美元上限时：不预留（没上限可守），分层已在上面判过。
+    if (!this.usdCapsActive()) return null;
+    const limits: ReserveLimit[] = [];
+    if (this.maxCostUsd !== null) limits.push({ scope: "run", limitUsd: this.maxCostUsd, spentUsd: spent });
+    if (this.monthlyCostLimitUsd !== null) {
+      // 本月已花算不出（账本读失败）时不能当 0 用——那是“假装封顶”。
+      // 严格模式下暂停（missing-monthly），非严格模式跳过月度层（旧行为）。
+      const before = this.monthlySpentBeforeUsd?.() ?? null;
+      if (before === null) {
+        if (this.strictUnknownAmount()) throw new AgentError(this.pauseUnknownAmount("missing-monthly:本月已花算不出"));
+      } else {
+        const monthSpent = before.spentUsd + spent;
+        limits.push({ scope: "monthly", limitUsd: this.monthlyCostLimitUsd, spentUsd: monthSpent });
+      }
+    }
+    const res = ledger.reserve(this.reservationOwner(), requested, { limits, reason: "next-call" });
+    if (!res.ok) {
+      try {
+        this.emit("budget_rejected", { owner: this.reservationOwner(), amount_usd: requested, reason: res.reason });
+      } catch { /* ignore */ }
+      // 月度层不够时多给一句：上限精确值、重置日、怎么放宽——与 checkCost
+      // 的月度超限文案同款信息，调用没发出也能说清。
+      const monthlyNote = res.bindingScope === "monthly" && this.monthlyCostLimitUsd !== null
+        ? `\n月度支出上限 $${this.monthlyCostLimitUsd.toFixed(4)}，${nextMonthlyResetDate()} 重置；放宽改 config.monthly_cost_limit_usd。`
+        : "";
+      throw new AgentError(`预算预留不足：${res.reason}。本次调用未发出，运行已停下。${monthlyNote}`);
+    }
+    try {
+      this.emit("budget_reserved", { reservation_id: res.reservation.id, owner: res.reservation.owner, amount_usd: requested });
+    } catch { /* ignore */ }
+    return res.reservation;
+  }
+
+  /**
+   * 请求前分层预判（可靠性打磨第 2 项第一批）：把在途花费传给分层回调；
+   * 超了直接抛它的文案（回调里已按现有口径建暂停记录）。回调本身绝不
+   * 抛错（出错返回 null，不挡运行）。
+   */
+  private checkTieredPreCall(runSpentUsd: number | null): void {
+    if (!this.tieredCapCheck) return;
+    let verdict: { exceeded: boolean; message: string } | null = null;
+    try {
+      verdict = this.tieredCapCheck(runSpentUsd, this.currentRunTokens());
+    } catch {
+      verdict = null;
+    }
+    if (verdict?.exceeded) throw new AgentError(verdict.message);
+  }
+
+  /** 结算一次调用的预留：按实际增量结算；算不出实际花费时释放（不编数）。 */
+  private settleReservation(reservation: BudgetReservation | null, spentBefore: number | null): void {
+    if (!reservation) return;
+    const ledger = this.budgetLedger();
+    if (!ledger) return;
+    const spentNow = this.currentRunSpentUsd();
+    if (spentNow === null || spentBefore === null) {
+      // 算不出实际花费：释放预留，不编结算数；严格模式的暂停由 checkCost 接手。
+      try { ledger.release(reservation.id); } catch { /* ignore */ }
+      try { this.emit("budget_released", { reservation_id: reservation.id, amount_usd: reservation.amountUsd, reason: "unknown-actual" }); } catch { /* ignore */ }
+      return;
+    }
+    const actual = Math.max(0, spentNow - spentBefore);
+    try {
+      ledger.settle(reservation.id, actual);
+    } catch { /* 结算写不上不拦运行，预留过期后由 TTL 清掉 */ return; }
+    try {
+      this.emit("budget_settled", { reservation_id: reservation.id, reserved_usd: reservation.amountUsd, actual_usd: actual });
+    } catch { /* ignore */ }
+  }
+
+  /** 释放一次调用的预留（调用没发出、抛错、或被取消时）。 */
+  private releaseReservation(reservation: BudgetReservation | null, reason: string): void {
+    if (!reservation) return;
+    const ledger = this.budgetLedger();
+    if (!ledger) return;
+    try { ledger.release(reservation.id); } catch { /* ignore */ }
+    try { this.emit("budget_released", { reservation_id: reservation.id, amount_usd: reservation.amountUsd, reason }); } catch { /* ignore */ }
+  }
+
+  /**
    * 成本上限是否已触顶（可靠性打磨第 1 项第一批）：与 checkCost 同口径
    * 的“只读判定”——单次上限（--max-cost）与月度上限都算，不抛错、
    * 不记事件，只回答超没超。金额算不出（未配单价 / provider 未报用量）
-   * 时返回 false，不假装封顶（与 checkCost 同一条诚实边界；严格的
-   * “金额未知则暂停”是第 2 项并发预算预留的事，本批不做）。
+   * 时返回 false，不假装封顶——金额未知由请求前预留门（reserveNextCall）
+   * 与 checkCost 的严格分支暂停（可靠性打磨第 2 项第一批），不进这个
+   * 500ms 监视器：监视器只看已计价的数，暂停不是取消，不走 abort。
    * 分层上限（tieredCapCheck 回调）不进这里：回调只在用量上报后跑，
    * 在途调用还没上报，判不了——仍由 checkCost 在调用返回后硬停。
    */
@@ -1630,12 +1876,18 @@ export class Agent {
         } catch { /* span 记账失败绝不破坏主循环 */ }
       };
       let resp: Record<string, unknown>;
+      // 可靠性打磨第 2 项第一批：请求前预留——预留失败或金额未知（严格
+      // 模式）时抛 AgentError，调用不发出；预留成功后调用抛错/被取消时
+      // 释放预留，返回后按实际花费结算。
+      const spentBeforeCall = this.currentRunSpentUsd();
+      const reservation = this.reserveNextCall(current);
       try {
         // 可靠性打磨第 1 项第一批：当轮取消信号传给模型请求——abort 时
         // 在途请求断开并抛 CancelError（不是 ProviderError，原样上抛，
         // 外壳 runLoop 收敛成“已取消”的部分成果文本）。
         resp = await actModel.chat(current as never, schemas as never, undefined, { signal: this.runSignal ?? undefined });
       } catch (err: unknown) {
+        this.releaseReservation(reservation, isCancelError(err) ? "cancelled" : "call-failed");
         emitLlmSpan(false);
         if (err instanceof ProviderError) throw new AgentError(String(err));
         throw err;
@@ -1643,6 +1895,7 @@ export class Agent {
       this.turn = turnOffset + i + 1;
       this.usage.record(resp as never);
       emitLlmSpan(true);
+      this.settleReservation(reservation, spentBeforeCall);
       this.checkCost();
       if (resp && typeof resp === "object" && typeof (resp as Record<string, unknown>).usage === "object") {
         this.emit("usage", this.usage.snapshot() as unknown as Record<string, unknown>);
@@ -2022,8 +2275,9 @@ export class Agent {
   }
   /**
    * P2-2：每次上报 usage 后检查成本上限。超限直接抛错中止运行——这是"硬顶"，
-   * 不是警告。金额算不出来时（未配单价 / provider 未报 usage）不抛错、不假装封顶，
-   * 只把状态留在 lastCost 里供 CLI 说明。
+   * 不是警告。金额算不出来时（未配单价 / provider 未报 usage），严格模式
+   * （默认开，可靠性打磨第 2 项第一批）下暂停运行并建暂停记录等人工处理，
+   * 非严格模式下不抛错、不假装封顶，只把状态留在 lastCost 里供 CLI 说明。
    *
    * 缺口 29：同一位置再查月度上限（与单次硬顶同一口径、同一诚实边界）。
    * 月度已花 = 账本里本月已落盘的 LLM 花费 + 本月 MCP 花费（调用方在
@@ -2036,6 +2290,24 @@ export class Agent {
     this.lastCost = e;
     if (e.status === "priced") {
       this.emit("cost", { spent_usd: e.spentUsd, limit_usd: e.limitUsd, remaining_usd: e.remainingUsd });
+    }
+    // 可靠性打磨第 2 项第一批：金额未知则暂停（严格模式，默认开）。只有
+    // 配了美元上限时才拦——没上限可超，算不出也无所谓；还没调用过（calls
+    // 为 0）时也没花钱，不拦。暂停 = 建暂停记录 + 抛错中止（与分层上限
+    // 同级硬停）；非严格模式沿用旧行为（继续跑、不假装封顶）。
+    if (this.strictUnknownAmount() && this.usdCapsActive()) {
+      const snap = this.usage.snapshot();
+      if (snap.calls > 0) {
+        if (this.pricing === null) {
+          const model = typeof (this.provider as { model?: unknown }).model === "string"
+            ? (this.provider as { model: string }).model
+            : null;
+          throw new AgentError(this.pauseUnknownAmount(`no-pricing:${model ?? ""}`));
+        }
+        if (snap.missing_calls > 0) {
+          throw new AgentError(this.pauseUnknownAmount(`missing-usage:${snap.missing_calls}次调用未报用量`));
+        }
+      }
     }
     // 缺口 15：语音花费（STT 按分钟、TTS 按字数，不走 token 账）同样进硬顶：
     // 单次上限按“token 花费 + 子任务 + 语音”合计判定；token 未计价时只要语音
@@ -2373,6 +2645,11 @@ export class Agent {
         const parentTokens = this.usage.snapshot().total_tokens ?? 0;
         return this.tieredCapCheck!(combinedUsd, parentTokens + childTokens);
       } : null,
+      // 可靠性打磨第 2 项第一批：子任务继承同一份预留账本实例（跨会话
+      // 共享靠账本文件）与严格模式值——子任务花的钱同样先预留、同样受
+      // 金额未知暂停约束，否则委派就是旁路。
+      budgetLedger: this.budgetLedgerOpt ?? this.budgetLedger(),
+      strictUnknownAmount: this.strictUnknownAmount(),
       monthlySpentBeforeUsd: this.monthlyCostLimitUsd === null ? null : (() => {
         const before = this.monthlySpentBeforeUsd?.() ?? null;
         const own = this.lastCost?.status === "priced" && this.lastCost.spentUsd !== null
@@ -2720,6 +2997,57 @@ export class Agent {
     // 两者一致（主 agent 在等工具结果，期间没有别的调用能插队消耗预算），
     // 被拒的线程不占预算。
     const startable = Math.min(tasks.length, this.delegateBudget.remaining(this.delegateDepth));
+    // 可靠性打磨第 2 项第一批：并行线程级预留——每个线程启动前先按预估
+    // （悲观档）预留整线程的预算，预留失败的线程直接标 rejected、不启动。
+    // 预留用的 ledger 与逐调用预留是同一本账（保守双计，见 docs/budget.md）。
+    const threadReservations = new Map<number, BudgetReservation>();
+    const reserveThread = (spec: ParallelTaskSpec, index: number): ThreadReserveVerdict => {
+      if (!this.usdCapsActive()) return { ok: true, reservationId: "" };
+      if (!this.pricing) {
+        return { ok: false, reason: "未配单价，算不出线程预算：先在 config.pricing 里配好该模型单价" };
+      }
+      const ledger = this.budgetLedger();
+      if (!ledger) return { ok: true, reservationId: "" };
+      const est = estimateRunCost({
+        taskChars: [...spec.task].length,
+        systemChars: 2000,
+        turns: spec.maxTurns ?? 6,
+        pricing: this.pricing,
+      }).pessimisticUsd;
+      const spent = this.currentRunSpentUsd() ?? 0;
+      const reserved = ledger.activeReservedUsd();
+      const limits: ReserveLimit[] = [];
+      if (this.maxCostUsd !== null) limits.push({ scope: "run", limitUsd: this.maxCostUsd, spentUsd: spent });
+      if (this.monthlyCostLimitUsd !== null) {
+        const before = this.monthlySpentBeforeUsd?.() ?? null;
+        if (before === null) {
+          // 本月已花算不出：严格模式下线程不启动（父级自己的下一轮调用
+          // 同样会因此暂停），非严格模式跳过月度层。
+          if (this.strictUnknownAmount()) return { ok: false, reason: "金额未知：本月已花算不出，无法判定月度上限，线程未启动。" };
+        } else {
+          limits.push({ scope: "monthly", limitUsd: this.monthlyCostLimitUsd, spentUsd: before.spentUsd + spent });
+        }
+      }
+      // 分层上限：把“本次运行 + 在途预留 + 本次线程预估”当在途花费传给
+      // 回调；超了回调里已按现有口径建暂停记录，这里直接拿它的文案当拒因。
+      if (this.tieredCapCheck) {
+        let verdict: { exceeded: boolean; message: string } | null = null;
+        try {
+          verdict = this.tieredCapCheck(spent + reserved + est, this.currentRunTokens());
+        } catch {
+          verdict = null;
+        }
+        if (verdict?.exceeded) return { ok: false, reason: verdict.message };
+      }
+      const res = ledger.reserve(`parallel:${this.reservationOwner()}:${index}`, est, {
+        limits,
+        reason: "parallel-thread",
+        ttlMs: resolved.timeoutMs + 60_000,
+      });
+      if (!res.ok) return { ok: false, reason: `预算预留不足：${res.reason}。线程未启动。` };
+      threadReservations.set(index, res.reservation);
+      return { ok: true, reservationId: res.reservation.id };
+    };
     const ran = await runParallelDelegate(
       async (spec, index, signal): Promise<ParallelThreadOutcome> => {
         const d = await this.delegateDetailed(spec.task, spec.maxTurns ?? 6, {
@@ -2753,8 +3081,24 @@ export class Agent {
       tasks.slice(0, startable),
       // 可靠性打磨第 1 项第一批：整批取消信号传进去——abort 时在跑线程
       // 收信号、排队线程直接标 cancelled 不再启动。
-      { maxConcurrency: opts.maxConcurrency, timeoutMs: opts.timeoutMs, onThreadDone: opts.onThreadDone, signal: opts.signal },
+      // 可靠性打磨第 2 项第一批：线程级预算预留钩子（预留失败的线程直接
+      // 标 rejected、不启动）。
+      { maxConcurrency: opts.maxConcurrency, timeoutMs: opts.timeoutMs, onThreadDone: opts.onThreadDone, signal: opts.signal, reserveThread },
     );
+    // 线程预留结算：跑完的线程按实际花费结算（有数才结算），超时/被取消
+    // 的线程释放（事后多花的钱仍按第 1 项口径进父级 delegateSpentUsd）。
+    const threadLedger = this.budgetLedger();
+    if (threadLedger) {
+      for (const [index, reservation] of threadReservations) {
+        const r = ran.results[index];
+        if (!r) { try { threadLedger.release(reservation.id); } catch { /* ignore */ } continue; }
+        if ((r.status === "ok" || r.status === "failed") && typeof r.evidence.spentUsd === "number") {
+          try { threadLedger.settle(reservation.id, Math.max(0, r.evidence.spentUsd)); } catch { /* ignore */ }
+        } else {
+          try { threadLedger.release(reservation.id); } catch { /* ignore */ }
+        }
+      }
+    }
     const results: ParallelThreadResult[] = [...ran.results];
     for (let i = startable; i < tasks.length; i++) {
       results.push({

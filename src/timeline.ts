@@ -1058,6 +1058,24 @@ export function buildTimeline(store: RunStore, runId: string): Timeline {
         push(at, "event", `运行已取消（${reasonText}，来源：${sourceText}）`, null, false, null);
         break;
       }
+      case "budget_reserved":
+        push(at, "event", `预算预留：${str(ev.owner) ?? "?"} 预留 $${num(ev.amount_usd)?.toFixed(4) ?? "?"}（预留 ${str(ev.reservation_id) ?? "?" }）`, null, null, null);
+        break;
+      case "budget_settled":
+        push(at, "event", `预算结算：预留 ${str(ev.reservation_id) ?? "?"} 押 $${num(ev.reserved_usd)?.toFixed(4) ?? "?"}，实际 $${num(ev.actual_usd)?.toFixed(4) ?? "?"}`, null, null, null);
+        break;
+      case "budget_released":
+        push(at, "event", `预算释放：预留 ${str(ev.reservation_id) ?? "?"} 释放 $${num(ev.amount_usd)?.toFixed(4) ?? "?"}（${str(ev.reason) ?? ""}）`, null, null, null);
+        break;
+      case "budget_rejected":
+        push(at, "event", `预算预留被拒：${str(ev.owner) ?? "?"} 要 $${num(ev.amount_usd)?.toFixed(4) ?? "?"}（${str(ev.reason) ?? ""}），本次调用未发出`, null, false, null);
+        break;
+      case "budget_paused":
+        push(at, "event", `金额未知已暂停：${str(ev.agent) ?? "?"}（${str(ev.reason) ?? ""}），暂停记录 ${str(ev.pause_id) ?? "?"}，等人工处理`, null, false, null);
+        break;
+      case "budget_resumed":
+        push(at, "event", `金额未知暂停已恢复：暂停记录 ${str(ev.pause_id) ?? "?"}（agent ${str(ev.agent) ?? "?"}）`, null, true, null);
+        break;
       case "final":
         push(at, "run", "运行结束（模型给出最终回答）", null, null, null);
         break;

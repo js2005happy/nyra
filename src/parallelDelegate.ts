@@ -138,9 +138,18 @@ onThreadDone?: (result: ParallelThreadResult) => void;
  * 不再启动。不传时只有单线程超时能触发取消。
  */
 signal?: AbortSignal;
+/**
+ * 线程级预算预留钩子（可靠性打磨第 2 项第一批）：每个线程启动前调一次；
+ * 返回 ok:false 时该线程直接标 rejected、不启动、不调 runner。
+ * 不传时不预留（旧行为）。
+ */
+reserveThread?: (spec: ParallelTaskSpec, index: number) => ThreadReserveVerdict;
 /** 取消确认宽限毫秒数（默认 1 秒）；非法值回默认。 */
 cancelGraceMs?: number;
 }
+
+/** 线程级预算预留钩子的返回值（可靠性打磨第 2 项第一批）。 */
+export type ThreadReserveVerdict = { ok: true; reservationId: string } | { ok: false; reason: string };
 
 export interface ResolvedParallelOptions {
 maxConcurrency: number;
@@ -296,6 +305,21 @@ try { opts.onThreadDone(results[index]); } catch { /* ignore */ }
 if (opts.signal?.aborted) {
 finish("cancelled", null, "整批已取消：取消信号已发出，线程未启动", true);
 return;
+}
+// 可靠性打磨第 2 项第一批：线程级预算预留——预留失败的线程直接标
+// rejected，不启动（不调 runner，不占槽位外的任何资源）。
+if (opts.reserveThread) {
+let verdict: ThreadReserveVerdict;
+try {
+verdict = opts.reserveThread(spec, index);
+} catch (err: unknown) {
+finish("rejected", null, `预算预留检查失败：${err instanceof Error ? err.message : String(err)}`, true);
+return;
+}
+if (!verdict.ok) {
+finish("rejected", null, verdict.reason, true);
+return;
+}
 }
 try {
 const runner = runOne(spec, index, threadSignal);

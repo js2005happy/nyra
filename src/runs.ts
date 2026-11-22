@@ -251,6 +251,16 @@ cost_cap_relaxed: ["scope", "field", "old_value", "new_value"],
 cost_cap_paused: ["pause_id", "agent", "scope"],
 cost_cap_resumed: ["pause_id", "agent"],
 cost_cap_discarded: ["pause_id", "agent"],
+// 可靠性打磨第 2 项第一批（并发预算预留）：预留（哪笔预留、谁的、多少）、
+// 结算（哪笔、押了多少、实际多少）、释放（哪笔、多少、为什么）、拒绝
+// （谁的、多少、为什么没给）、金额未知暂停/恢复（哪个暂停记录、哪个 agent、
+// 为什么）。只记 id 与数字，不记任务文本、不记绝对路径。
+budget_reserved: ["reservation_id", "owner", "amount_usd"],
+budget_settled: ["reservation_id", "reserved_usd", "actual_usd"],
+budget_released: ["reservation_id", "amount_usd", "reason"],
+budget_rejected: ["owner", "amount_usd", "reason"],
+budget_paused: ["pause_id", "agent", "reason"],
+budget_resumed: ["pause_id", "agent"],
 // GROK-6（信任阶梯，缺口 43 治理深化）：登记（哪类主体、哪个 id、哪一级）、
 // 证据（哪类主体、哪个 id、哪条证据、成功还是违规）、抽查挂起/复核（哪条证据、
 // 通过还是驳回）、升级/降级（哪类主体、哪个 id、升到/降到哪一级）、门拦截

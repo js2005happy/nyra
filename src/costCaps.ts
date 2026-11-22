@@ -47,7 +47,8 @@ import { resolveHome, loadConfig } from "./config.ts";
 import { RunStore } from "./runs.ts";
 import { UsageLedger, monthKeyString } from "./usageLedger.ts";
 import { McpCostTracker } from "./mcpCost.ts";
-import { resolveMonthlyLimit } from "./cost.ts";
+import { resolveMonthlyLimit, resolvePricing } from "./cost.ts";
+import { resolveStrictUnknownAmount } from "./budget.ts";
 import { soulExists, SOUL_AGENT_ID_RE } from "./soul.ts";
 import { ACCOUNTS_FILE } from "./accounts.ts";
 import { pauseKanbanTask, resumeKanbanTask, getKanbanTask } from "./kanban.ts";
@@ -99,7 +100,8 @@ export interface CostPause {
   id: string;
   at: string;
   agent: string;
-  /** 触顶的那一层（org/team:/role:/agent:/persona:），手动暂停是 "manual"。 */
+  /** 触顶的那一层（org/team:/role:/agent:/persona:），手动暂停是 "manual"，
+   *  金额未知暂停是 "unknown-amount"（可靠性打磨第 2 项第一批）。 */
   scope: string;
   capUsd: number | null;
   spentUsd: number;
@@ -113,6 +115,10 @@ export interface CostPause {
   decidedBy: string | null;
   decidedAt: string | null;
   note: string | null;
+  /** 金额未知暂停的原因（只记短码，不记原文）：
+   *  `no-pricing:<模型>`（未配单价）或 `missing-usage:<n>次调用未报用量`。
+   *  老行没有这个字段，读作 undefined；分层暂停也不填。 */
+  detail?: string;
 }
 
 export interface PauseStore {
@@ -643,6 +649,64 @@ export function pauseForCap(
 }
 
 /**
+ * 金额未知暂停（可靠性打磨第 2 项第一批）：配了上限却算不出金额时停下
+ * 等人工处理，而不是继续跑。与 pauseForCap 共用同一份暂停账本
+ * （cost-pauses.json）与恢复入口（caps resume），scope 固定
+ * "unknown-amount"，上限字段恒为 null（不是“上限为 0”，是“没法判定”）。
+ * detail 只记短码：`no-pricing:<模型>`（未配单价）或
+ * `missing-usage:<n>次调用未报用量`。同 agent + 同 scope + 同月已有
+ * 未决暂停时直接返回那条，不重复建。
+ */
+export function pauseForUnknownAmount(
+  home: string,
+  opts: { agent: string; detail: string; spentUsd?: number; spentTokens?: number; taskId?: string | null; runId?: string | null },
+): CostPause {
+  const agent = (opts.agent ?? "").trim();
+  if (!SOUL_AGENT_ID_RE.test(agent)) throw new CostCapsError("金额未知暂停须给合法的 agent id");
+  const detail = (opts.detail ?? "").trim().slice(0, 200);
+  if (!detail) throw new CostCapsError("金额未知暂停须给原因（detail）");
+  const store = loadPauseStore(home);
+  const month = monthKeyString();
+  const open = store.pauses.find((p) => p.status === "paused" && p.agent === agent && p.scope === "unknown-amount" && p.at.slice(0, 7) === month);
+  if (open) return open;
+  const pause: CostPause = {
+    id: newPauseId(),
+    at: nowIso(),
+    agent,
+    scope: "unknown-amount",
+    capUsd: null,
+    spentUsd: typeof opts.spentUsd === "number" && Number.isFinite(opts.spentUsd) ? Math.max(0, opts.spentUsd) : 0,
+    capTokens: null,
+    spentTokens: typeof opts.spentTokens === "number" && Number.isFinite(opts.spentTokens) ? Math.max(0, Math.floor(opts.spentTokens)) : 0,
+    taskId: opts.taskId ?? null,
+    runId: opts.runId ?? null,
+    checkpointRef: opts.runId ?? opts.taskId ?? null,
+    status: "paused",
+    decidedBy: null,
+    decidedAt: null,
+    note: null,
+    detail,
+  };
+  store.pauses.unshift(pause);
+  if (store.pauses.length > MAX_HISTORY) store.pauses.length = MAX_HISTORY;
+  saveJsonAtomic(home, PAUSES_FILE, store);
+  if (pause.taskId) {
+    try {
+      const task = getKanbanTask(home, pause.taskId);
+      if (task.status === "working" || task.status === "queued") {
+        pauseKanbanTask(home, pause.taskId, `金额未知（${detail}），暂停等处理`);
+      }
+    } catch { /* 任务板动不了不拦暂停创建 */ }
+  }
+  appendCostCapsAudit(home, {
+    action: "cost_cap_paused", pause_id: pause.id, agent: pause.agent, scope: pause.scope,
+    task_id: pause.taskId, run_id: pause.runId,
+  });
+  mirrorEvent(home, pause.runId, "budget_paused", { pause_id: pause.id, agent: pause.agent, reason: detail });
+  return pause;
+}
+
+/**
  * 恢复暂停：先重判分层上限，还超就拒绝（fail-closed）；放行后把暂停标
  * resumed，任务板任务在 paused 时回队列（attempts 不动，不算一次失败）。
  */
@@ -651,14 +715,36 @@ export function resumePause(home: string, id: string, by: string, opts?: { runId
   const pause = store.pauses.find((p) => p.id === id);
   if (!pause) throw new CostCapsError(`找不到暂停记录 ${id}`);
   if (pause.status !== "paused") throw new CostCapsError(`暂停记录 ${id} 已是 ${pause.status}，不能再恢复`);
-  const ev = evaluateTieredCaps(home, { agent: pause.agent });
-  if (!ev.allowed) {
-    throw new CostCapsError(`还不能恢复：${ev.bindingReason}。先抬上限或等下月 1 日重置。`);
+  // 金额未知暂停（可靠性打磨第 2 项第一批）：不走分层重判——分层上限没超
+  // 也不代表金额能算出来。放行条件：严格模式已关，或 no-pricing 的那个
+  // 模型现在配好了单价；missing-usage 的用量追不回来，只能先关严格模式
+  // 再恢复（恢复后那几笔用量仍按未计价记，不补编）。
+  let eventType = "cost_cap_resumed";
+  let note = "上限已处理，恢复";
+  if (pause.scope === "unknown-amount") {
+    const config = loadConfig(home);
+    if (!resolveStrictUnknownAmount(config)) {
+      // 严格模式已关，放行。
+    } else if (typeof pause.detail === "string" && pause.detail.startsWith("no-pricing:")) {
+      const model = pause.detail.slice("no-pricing:".length).trim();
+      if (!model || !resolvePricing(config.pricing, model)) {
+        throw new CostCapsError(`还不能恢复：模型 ${model || "（未知）"} 仍未配单价。先在 config.pricing 里配好该模型单价，或跑 nyra budget strict --off 关掉严格模式。`);
+      }
+    } else {
+      throw new CostCapsError(`还不能恢复：${pause.detail ?? "金额未知"}，用量追不回来。先跑 nyra budget strict --off 关掉严格模式再恢复（恢复后那几笔用量仍按未计价记，不补编）。`);
+    }
+    eventType = "budget_resumed";
+    note = "金额未知原因已处理，恢复";
+  } else {
+    const ev = evaluateTieredCaps(home, { agent: pause.agent });
+    if (!ev.allowed) {
+      throw new CostCapsError(`还不能恢复：${ev.bindingReason}。先抬上限或等下月 1 日重置。`);
+    }
   }
   pause.status = "resumed";
   pause.decidedBy = (by ?? "cli").trim() || "cli";
   pause.decidedAt = nowIso();
-  pause.note = "上限已处理，恢复";
+  pause.note = note;
   saveJsonAtomic(home, PAUSES_FILE, store);
   if (pause.taskId) {
     try {
@@ -667,7 +753,7 @@ export function resumePause(home: string, id: string, by: string, opts?: { runId
     } catch { /* 任务板动不了不拦恢复 */ }
   }
   appendCostCapsAudit(home, { action: "cost_cap_resumed", pause_id: pause.id, agent: pause.agent, by: pause.decidedBy });
-  mirrorEvent(home, opts?.runId ?? pause.runId, "cost_cap_resumed", { pause_id: pause.id, agent: pause.agent });
+  mirrorEvent(home, opts?.runId ?? pause.runId, eventType, { pause_id: pause.id, agent: pause.agent });
   return pause;
 }
 

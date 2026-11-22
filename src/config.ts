@@ -107,6 +107,10 @@ export const DEFAULT_CONFIG: Record<string, unknown> = {
   // P2-2：成本硬顶。max_cost_usd 为单次运行上限（美元），pricing 按模型配单价
   // （input_per_1m / output_per_1m）；未配单价时金额未知，不做超支判定。
   max_cost_usd: null,
+  // 可靠性打磨第 2 项第一批：并发预算预留。strict_unknown_amount 默认
+  // true（fail-closed）：配了上限却算不出金额时暂停任务等人工处理，
+  // 而不是继续跑；显式设 false 回到旧行为（算不出就继续跑、不假装封顶）。
+  budget: { strict_unknown_amount: true },
   // 缺口 29：月度支出上限（美元）。默认 null = 不设上限（不挡老用户）；
   // 一旦配了就是硬停（与 --max-cost 同级，无豁免口子）；0 = 锁死一切计价花费。
   // 自然月累计 = 本月 LLM 花费（用量账本）+ 本月 MCP 花费；每月 1 日重置。

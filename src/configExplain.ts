@@ -12,6 +12,7 @@ import { featureOn, resolveFeatures, type FeatureResolution } from "./features.t
 import { resolveAuxRouting, resolvePlanActRouting } from "./modelRouting.ts";
 import { resolveReasoningOptions } from "./reasoning.ts";
 import { resolveExtraDirs } from "./extraDirs.ts";
+import { resolveStrictUnknownAmount } from "./budget.ts";
 import { resolveTrustLadderSettings } from "./trustLadder.ts";
 import { resolveReconcilerSettings } from "./reconciler.ts";
 import { resolveWatchSettings } from "./watch.ts";
@@ -253,6 +254,20 @@ export function explainAll(input: ExplainInput): CapabilityExplain[] {
       source: configured ? "config" : "default",
       keys: ["watch.enabled", "watch.default_interval_seconds"],
       note: "Watch 本身只读（抓页面、读文件），不调模型、不对外发；enqueue-task 动作入队后执行时照常走审批；download 动作须人显式批准才执行",
+    });
+  }
+
+  // 并发预算预留：金额未知严格模式（可靠性打磨第 2 项第一批，追加在末尾——
+  // 能力列表顺序固定，只加不改，见 test-config-explain.test.ts）
+  {
+    const strict = resolveStrictUnknownAmount(cfg);
+    const configured = pick(cfg, "budget.strict_unknown_amount") !== undefined;
+    out.push({
+      capability: "budget",
+      effective: strict ? "开（金额未知则暂停）" : "关（金额未知继续跑）",
+      source: configured ? "config" : "default",
+      keys: ["budget.strict_unknown_amount", "nyra budget strict --on/--off"],
+      note: strict ? "未配单价或调用缺用量时，运行暂停并建暂停记录等人工处理（恢复走 nyra governance caps resume）" : "关了之后金额未知时继续跑、不假装封顶（旧行为）；请求前预留仍在，超上限照样不发请求",
     });
   }
 

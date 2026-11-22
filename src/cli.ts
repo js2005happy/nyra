@@ -127,6 +127,7 @@ import { handlePeerFriends, PEER_FRIEND_COMMANDS } from "./peerCard.ts";
 import { handleCircle } from "./circles.ts";
 import { handleSession } from "./session.ts";
 import { callLedgerMain } from "./callLedger.ts";
+import { budgetMain } from "./budgetCli.ts";
 import { aguiMain } from "./agui.ts";
 import { handleScreen } from "./botScreen.ts";
 import { handleScreenTakeover } from "./botTakeover.ts";
@@ -223,6 +224,7 @@ nyra peer <status|enable|disable|list|auth|ask|handoff|card|code|add|request|acc
 nyra circle <create|list|show|invite|revoke|delete|bind|unbind|owner|check|bindings>   信任圈：谁能给 agent 发任务（默认全封闭，圈外消息网关直接丢弃，详见 docs/circles.md）
 nyra session <create|list|show|join|leave|delegate|accept|complete|share|frame|record|end>   跨 agent 联合会话：多人多 agent 视频会（本地扇出模型），会内委派 + 共享任务产物（allowlist），画面默认不留存、录制须全体同意（详见 docs/sessions.md）
 nyra call <ledger|show <通话 id>|summary>   通话成本与隐私仪表：每通电话三本账（传输 / 媒体 / token），录制默认关、须全体同意，纪要进证据链（详见 docs/call-ledger.md）
+nyra budget <list|show|reserve|settle|release|strict>   并发预算预留：模型调用前先预留额度、超上限不发请求；金额未知默认暂停等人工处理（详见 docs/budget.md）
 nyra agui <register|list|show|link|connect|disconnect|send|exec|accept-write|revoke-write|a2a>   协议中立接入：接任意 AG-UI endpoint 当 Bot（只读先行，写操作须机主显式接受），A2A 复用名片 + 交接（详见 docs/agui.md）
 nyra screen <watch|activity|status|takeover|handover> <电脑 id>   缺口 50：只读看屏（实时画面 + 活动列表，帧指纹不记帧内容）与接管（take the wheel，须确认；接管期间 Bot 暂停、交还后从挂起点继续，全程记审计）；画面里密码/验证码/卡号自动打码（详见 docs/bot-screen.md）
 nyra voice <status|speak <文字>|enable-tts|disable-tts>   语音指挥：看配置与可用性、读一段文字、开关自动回读（详见 docs/voice.md）
@@ -356,6 +358,7 @@ nyra peer <status|enable|disable|list|auth|ask|handoff|card|code|add|request|acc
 nyra circle <create|list|show|invite|revoke|delete|bind|unbind|owner|check|bindings>   trust circles: who may send tasks to the agent (closed by default, out-of-circle messages are dropped at the gateway, see docs/circles.md)
 nyra session <create|list|show|join|leave|delegate|accept|complete|share|frame|record|end>   cross-agent joint sessions: multi-person multi-agent video meetings (local fanout model), in-session delegation + shared task products (allowlist), frames not retained by default, recording needs everyone's consent (see docs/sessions.md)
 nyra call <ledger|show <call id>|summary>   call cost and privacy dashboard: three books per call (transport / media / tokens), recording off by default and needs everyone's consent, minutes go into the evidence chain (see docs/call-ledger.md)
+nyra budget <list|show|reserve|settle|release|strict>   concurrent budget reservation: reserve budget before a model call, over-limit calls are not sent; unknown amounts pause by default until a human handles them (see docs/budget.md)
 nyra agui <register|list|show|link|connect|disconnect|send|exec|accept-write|revoke-write|a2a>   protocol-neutral access: attach any AG-UI endpoint as a Bot (read-only first, writes need the owner's explicit acceptance), A2A reuses peer cards + handoff (see docs/agui.md)
 nyra screen <watch|activity|status|takeover|handover> <computer id>   gap 50: read-only screen watch (live frame + activity list, frame fingerprint without frame content) and takeover (take the wheel, needs confirmation; the Bot pauses during takeover and resumes from where it stopped, fully audited); passwords / verification codes / card numbers are masked automatically (see docs/bot-screen.md)
 nyra voice <status|speak <text>|enable-tts|disable-tts>   voice commands: show config and availability, speak a text, toggle auto readback (see docs/voice.md)
@@ -5814,6 +5817,7 @@ export async function main(argv: string[]): Promise<number> {
   if (args.subcommand === "circle") return handleCircle(args.subArgs ?? [], home);
   if (args.subcommand === "session") return handleSession(args.subArgs ?? [], home);
   if (args.subcommand === "call") return callLedgerMain(args.subArgs ?? [], home);
+  if (args.subcommand === "budget") return budgetMain(args.subArgs ?? [], home);
   if (args.subcommand === "agui") return aguiMain(args.subArgs ?? [], home);
   if (args.subcommand === "screen") {
     const sub = args.subArgs ?? [];
