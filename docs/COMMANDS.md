@@ -124,6 +124,7 @@
 | `nyra circle <create\|list\|show\|invite\|revoke\|delete\|bind\|unbind\|owner\|check\|bindings>` | 信任圈与跨实例准入：谁能给 agent 发任务（默认全封闭，圈外消息网关直接丢弃；详见 `docs/circles.md`） |
 | `nyra session <create\|list\|show\|join\|leave\|delegate\|accept\|complete\|share\|frame\|record\|end>` | 跨 agent 联合会话：多人多 agent 视频会（本地扇出模型），会内委派 + 共享任务产物（allowlist），画面默认不留存、录制须全体同意（详见 `docs/sessions.md`） |
 | `nyra call <ledger\|show <通话 id>\|summary>` | 通话成本与隐私仪表：每通电话的三本账（传输/媒体/token，本地与云端分开记）+ 录制仪表 + 通话纪要进证据链（详见 `docs/call-ledger.md`） |
+| `nyra budget <list\|show\|reserve\|settle\|release\|strict>` | 并发预算预留：模型调用前先预留额度、超上限不发请求；金额未知默认暂停等人工处理（详见 `docs/budget.md`） |
 | `nyra agui <register\|list\|show\|link\|connect\|disconnect\|send\|exec\|accept-write\|revoke-write\|a2a>` | 协议中立接入：接任意 AG-UI endpoint 当 Bot（只读先行，写操作须机主显式接受），A2A 复用名片 + 交接（详见 `docs/agui.md`） |
 | `nyra screen <watch\|activity\|status\|takeover\|handover> <电脑 id>` | 缺口 50：只读看屏（实时画面 + 活动列表，帧指纹不记帧内容）与接管（take the wheel，须确认；接管期间 Bot 暂停、交还后从挂起点继续，全程记审计）；画面里密码/验证码/卡号自动打码（详见 `docs/bot-screen.md`） |
 | `nyra voice <status\|speak <文字>\|enable-tts\|disable-tts>` | 语音指挥：看配置与可用性、读一段文字、开关自动回读（默认关；详见 `docs/voice.md`） |

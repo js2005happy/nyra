@@ -87,6 +87,16 @@ handle，跑完后单条 consolidated 消息回填；显式传 `background: fals
 已计价花费合计），再逐线程列状态、耗时、花费、模型、worktree 路径与改动文件、
 失败原因、成功者的摘要原文。
 
+## 线程级预算预留（可靠性打磨第 2 项）
+
+每个线程启动前，先按悲观档预估（任务字符 + 2000 系统字符 + 该线程 maxTurns 轮）
+预留整线程的预算（`runParallelDelegate` 的 `reserveThread` 钩子，Agent 侧拼）：
+
+- 预留失败的线程直接标 `rejected`、不启动（不调 runner），原因写清哪层上限不够。
+- 跑完后按线程结果结算：`ok` / `failed` 的线程按 `evidence.spentUsd` 结算（有数才结算，否则释放）；`timeout` / `cancelled` 的线程释放。
+- **保守双计**：子 agent 自身的逐调用预留与线程级预留用同一本账、同笔钱在两层都占着——只会早拒、不会超支。
+- 只有分层回调、没有美元上限的并行批：不做线程预留，分层由每个子 agent 自己的逐调用门判。详见 `docs/budget.md`。
+
 ## 权限边界（与串行 delegate 同款，不另开旁路）
 
 - 每线程照常走 `delegateDetailed`：工具白名单、worktree 隔离、沙箱、成本上限

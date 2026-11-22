@@ -221,6 +221,9 @@ nyra optimize revert <提议 id> --yes
   queued，attempts 不动、不进熔断计数）；`kanban sweep` 扫到
   因分层上限已超而失败的运行，走暂停路径不是 fail 路径。
   放行（`caps resume <暂停 id>`）先重判一次，还超就拒绝。
+- **金额未知暂停**：未配单价或调用缺用量时，严格模式（默认开）下建一条
+  scope 为 `unknown-amount` 的暂停记录（不是分层触顶，不走分层重判；
+  恢复条件见 `docs/budget.md`：严格模式已关、或该模型现在能解析出单价时放行）。
 - **接单门**：`checkAutoAllowed` 在月度硬顶之后再套分层判定
   （observe/auto 接单前都判，触顶不接单）。分层判定本身出问题
   （账本损坏等）不拦接单——月度硬顶已在前面判过，分层是叠加

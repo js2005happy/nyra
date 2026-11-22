@@ -40,8 +40,7 @@
 
 ### 诚实边界（与 `--max-cost` 同一条）
 
-- 未配单价 / provider 未报用量时算不出金额，**不抛错、不假装封顶**，
-  只把状态留在 `lastCost` 里。
+- 未配单价 / provider 未报用量时算不出金额：**有美元上限（单次/月度）且严格模式开（默认开）时暂停运行**等人工处理（可靠性打磨第 2 项，详见 `docs/budget.md`）；没配上限、或严格模式已关时才不抛错、不假装封顶，只把状态留在 `lastCost` 里。分层回调的 token 层不需要单价，单价未知时仍照常判 token 层。
 - 月度累计里有未计价的记录时，本月合计只是**下界**（实际花费只会更高），
   硬顶按下界判定——只会晚触发、绝不会误触发。
 - 与 #61 回忆感知的成本估算的关系：**月度累计只计实际花费**（上报用量
@@ -139,7 +138,10 @@ nyra stats heatmap [--weeks N]   # 默认 8 周；N 为 1–52
   `send()` 与定时任务两个入口都接；运行中的 `usage` / `cost_update` 事件
   由 `Gateway.flushUsageToLedger()` 增量写账本。
 - **已知边界**：多会话并发时每个 agent 拿的是创建时刻的本月已花快照，
-  并发会话之间不保证严格互斥（要严格需给账本写入加锁）。
+  并发会话之间不保证严格互斥（要严格需给账本写入加锁）。并发预算预留
+  （可靠性打磨第 2 项，详见 `docs/budget.md`）给在途花费上了一把锁：
+  同一本预留账本跨会话共享，调用前先预留、在途预留计入上限判定——
+  但网关 agent 的月度“已花”仍是创建时刻快照，预留只锁增量，不是全量串行化。
 
 ### 已补：看板成本段含委派花费
 
@@ -208,7 +210,8 @@ nyra savings --json
   "pricing": [{ "model": "…", "input_per_1m": 1, "output_per_1m": 2 }],
   "invalid_pricing": ["配置无效的模型名"],
   "max_cost_usd": 5,
-  "monthly": { "limit_usd": 50, "spent_usd": 1.2, "mcp_usd": 0.2, "month": "2026-11", "reset_at": "2026-12-01" }
+  "monthly": { "limit_usd": 50, "spent_usd": 1.2, "mcp_usd": 0.2, "month": "2026-11", "reset_at": "2026-12-01" },
+  "budget": { "active_reserved_usd": 0.05, "strict_unknown_amount": true }
 }
 ```
 
