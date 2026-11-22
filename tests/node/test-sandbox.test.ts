@@ -67,13 +67,16 @@ test("detectBwrap：PATH 里放假 bwrap 脚本就能找到", () => {
   expect(detectBwrap(dir)).toBe(true);
 });
 
-test("buildBwrapArgs：含 --bind 工作目录、--ro-bind 系统目录、默认 --unshare-net、--die-with-parent、--chdir", () => {
+test("buildBwrapArgs：含 --bind 工作目录、--ro-bind 系统目录、默认 --unshare-net、--unshare-user-try、--die-with-parent、--chdir", () => {
   const wd = tmpDir("nyra-sandbox-wd-");
   const args = buildBwrapArgs("echo hi", { workdir: wd, allowNet: false, mode: "workspace-write" });
   expect(args[0]).toBe("bwrap");
   expect(args).toContain("--bind");
   expect(args).toContain(wd);
   expect(args).toContain("--unshare-net");
+  // 断网时先建 user ns，否则无特权用户配不了 loopback；user ns 须在 net ns 之前。
+  expect(args).toContain("--unshare-user-try");
+  expect(args.indexOf("--unshare-user-try")).toBeLessThan(args.indexOf("--unshare-net"));
   expect(args).toContain("--die-with-parent");
   expect(args).toContain("--chdir");
   expect(args.slice(-3)).toEqual(["/bin/sh", "-c", "echo hi"]);
@@ -85,10 +88,11 @@ test("buildBwrapArgs：含 --bind 工作目录、--ro-bind 系统目录、默认
   }
 });
 
-test("buildBwrapArgs：allowNet 时无 --unshare-net；read-only 时工作目录只读", () => {
+test("buildBwrapArgs：allowNet 时无 --unshare-net、无 --unshare-user-try；read-only 时工作目录只读", () => {
   const wd = tmpDir("nyra-sandbox-wd-");
   const netArgs = buildBwrapArgs("echo hi", { workdir: wd, allowNet: true, mode: "workspace-write" });
   expect(netArgs).not.toContain("--unshare-net");
+  expect(netArgs).not.toContain("--unshare-user-try");
   const roArgs = buildBwrapArgs("echo hi", { workdir: wd, allowNet: false, mode: "read-only" });
   expect(roArgs).not.toContain("--bind");
   const roIdx = roArgs.indexOf("--ro-bind");

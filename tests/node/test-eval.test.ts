@@ -4,6 +4,7 @@ import {
   mkdirSync,
   readFileSync,
   writeFileSync,
+  chmodSync,
   rmSync,
   symlinkSync,
   readdirSync,
@@ -35,7 +36,7 @@ import {
   checkBrowserState,
 } from '../../src/eval/checks.ts';
 import { createEvalMailbox } from '../../src/eval/fixtures.ts';
-import { executeLiveEvalTask, cleanEvalEnv } from '../../src/eval/live.ts';
+import { executeLiveEvalTask, cleanEvalEnv, makeLiveEvalAdapter } from '../../src/eval/live.ts';
 import { expectPerms } from './fsPerms.ts';
 const dirs: string[] = [];
 function tmp() {
@@ -347,6 +348,46 @@ test('Eval local environment passes egress proxy vars through (DeepSeek helper n
     else process.env.HTTPS_PROXY = oldHttpsUpper;
     if (oldKey === undefined) delete process.env.DEEPSEEK_API_KEY;
     else process.env.DEEPSEEK_API_KEY = oldKey;
+  }
+});
+
+test('Eval live preflight probes bwrap with --unshare-user-try before --unshare-net', async () => {
+  if (process.platform !== 'linux') {
+    console.log('跳过：bwrap 只在 Linux');
+    return;
+  }
+  // 假 bwrap：只记参数、不真跑；假 DeepSeek 助手只回模型列表，让模型探针通过。
+  const dir = tmp();
+  const log = join(dir, 'bwrap-args.log');
+  writeFileSync(
+    join(dir, 'bwrap'),
+    `#!/bin/sh\necho "$@" >> "${log}"\nexit 0\n`,
+    'utf-8',
+  );
+  chmodSync(join(dir, 'bwrap'), 0o755);
+  const conditions = {
+    ...DEFAULT_EVAL_CONDITIONS,
+    provider: 'deepseek',
+    model: 'deepseek-flash',
+    inputPer1M: 0.3,
+    outputPer1M: 1.2,
+    maxCostUsd: 1,
+  };
+  const oldPath = process.env.PATH;
+  process.env.PATH = `${dir}:${oldPath ?? ''}`;
+  try {
+    const adapter = makeLiveEvalAdapter(conditions, stubDeepSeekHelper());
+    const task = EVAL_TASKS.find((t) => t.id === 'code-01');
+    expect(task?.category).toBe('code');
+    expect(await adapter.preflight(task!, conditions)).toBeNull();
+    const logged = readFileSync(log, 'utf-8');
+    expect(logged).toContain('--unshare-user-try');
+    expect(logged.indexOf('--unshare-user-try')).toBeLessThan(
+      logged.indexOf('--unshare-net'),
+    );
+  } finally {
+    if (oldPath === undefined) delete process.env.PATH;
+    else process.env.PATH = oldPath;
   }
 });
 class ScriptProvider {
