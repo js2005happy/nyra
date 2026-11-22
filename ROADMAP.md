@@ -1,3 +1,10 @@
+## 2026-11-23 — P1 explicit ToolError privacy in trusted local listing (static-only)
+
+- **Repository fact (reviewed 2026-11-23):** `execute_local_list_dir_report` interpolated the text of an explicit `ToolError` into model-visible output. A future caller or helper could include a private path or credential in that error; this is a source-derived exposure possibility, not an observed Angel incident.
+- **External user feedback (reviewed 2026-11-23):** [Codex #34233](https://github.com/openai/codex/issues/34233) (2026-07-19) reports secrets exposed by tool output; [Codex #31059](https://github.com/openai/codex/issues/31059) (2026-07-03) requests pre-model file-read sanitization. These are individual reports from another product, not frequency estimates or proof of this Angel issue.
+- **Ranked candidates (value / difficulty / safety risk / dependency):** P1 local explicit ToolError redaction **high / low / low / existing typed listing adapter (implemented, untested)**; P1 audit other explicit ToolError surfaces **high / medium / medium / tool-by-tool compatibility (open)**; P1 additional trusted read-only typed adapters **high / medium / medium / provenance-safe local source (open)**; P1 pre-model secret output policy **high / high / high / consent and compatibility (research)**; P1 independent side-effect receipts **high / high / high / independent authority (blocked)**.
+- **Scope:** the trusted local listing adapter now returns a fixed message for explicit ToolError; it preserves typed `reported_error`. No change to successful listings, generic dispatcher ToolError behavior, remote tools, automatic retries, or dependencies. Regression defined but not executed.
+
 ## 2026-11-23 — P1 local missing-directory path privacy (static-only)
 
 - **Source fact (reviewed 2026-11-23):** trusted local `list_dir` returned the caller-provided path verbatim for a missing directory; a private absolute path could enter model-visible output. This is a source-derived risk, not an observed leak. The earlier missing-file redaction did not cover directory listings.
