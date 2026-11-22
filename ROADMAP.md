@@ -1,3 +1,9 @@
+## 2026-11-22 — P1 blank legacy tool outcome fail-closed (static-only)
+
+- **Repository fact:** blank and whitespace-only string tool returns were classified as neither failure nor unknown; the optional ToolJournal could therefore record them as reported success. Source analysis only, not runtime reproduction.
+- **External feedback reviewed 2026-11-22:** [Codex #60104](https://github.com/openai/codex/issues/60104) (opened 2026-11-07) reports repeated long-task work and progress confusion. One external report, not prevalence data or proof of this bug.
+- **Inference and ranked queue (value / difficulty / safety / dependency):** P1 blank result unknown high / low / low / existing classifier (**implemented, untested**); P1 trusted read-only structured adapter high / medium / medium / provenance-safe bridge (**open**); P1 independent side-effect receipt high / high / high / trusted authority (**blocked**); P1 private task persistence high / medium / medium-high / secure storage (**blocked**). Legacy nonblank text behavior unchanged; no automatic retry/resume or execution verification.
+
 ## 2026-11-22 — P1 untyped non-text tool outcomes fail closed (static-only)
 
 - **Repository fact (static source inspection):** `classify_tool_report` previously classified non-text values (e.g. `None`, dict, list) as neither failure nor unknown. The optional Agent journal records success when both flags are false; therefore an untyped non-text adapter return could be logged as reported success. This is a code-path finding, not a runtime reproduction.
