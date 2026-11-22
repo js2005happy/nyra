@@ -1,5 +1,9 @@
 # Nyra 变更记录
 
+## 未发布（0.5.6）
+
+- GitHub 设备流登录修补（2026-11-22，真机实测暴露）：`nyra account login github` 首轮报“GitHub 设备码端点返回了无法识别的内容”。根因是 `src/oauth.ts` 的 `postForm` 只发 `Content-Type`、没带 `Accept: application/json`，GitHub 设备码端点默认回表单格式（`device_code=...&user_code=...`），`JSON.parse` 解析不到、返回 null。现补上该头（Google 端点默认回 JSON、不受影响）。测试：`tests/node/test-accounts.test.ts` 加 2 项（postForm 发出的头含 `Accept: application/json`、GitHub JSON 设备码解析）。真机验证：新建的 GitHub OAuth App（Nyra，设备流已开）走完整设备流登录成功，账号 2857243938@qq.com、机主。诚实边界：只在真 GitHub 设备码端点与本地确定性检查上验过；Windows/macOS 真机未验证。
+
 ## 0.5.5（2026-11-22）
 
 - 应用图标换成紫色团子方块（v9 方向 C）：桌面（Tauri 各尺寸 PNG / ICO / ICNS）、手机（Capacitor 前景两只眼 + 纯紫背景、启动图标满版）、官网 favicon 与 apple-touch-icon 统一为团子紫方块 + 两只深色竖胶囊眼，几何来源 `src/appIcon.ts`，由 `bun scripts/make-icons.ts` 生成。
