@@ -1175,7 +1175,9 @@ def execute_tool(name: str, arguments: dict, ctx: ToolContext) -> str:
         return tool(ctx, **arguments)
     except ToolError as exc:
         return f"错误：{exc}"
-    except TypeError as exc:
-        return f"错误：工具参数不正确：{exc}"
-    except Exception as exc:
-        return f"执行失败：{type(exc).__name__}: {exc}"
+    except TypeError:
+        # Argument values may include private paths or credentials.
+        return "错误：工具参数不正确"
+    except Exception:
+        # Do not forward arbitrary exception strings to the model.
+        return "执行失败：工具执行失败"
