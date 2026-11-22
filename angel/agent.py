@@ -424,7 +424,7 @@ class Agent:
                         "外部副作用状态未知，禁止自动重试，请人工核查"
                     ) from None
                 if self.no_progress_detector is not None:
-                    state = self.no_progress_detector.observe_event("tool_returned")
+                    # A returned error is not a completed deliverable. Keep it\n                    # distinct for diagnostics without trusting tool text as progress.\n                    failed_report = isinstance(result, str) and result.startswith(\n                        ("错误：", "执行失败：")\n                    )\n                    progress_event = "tool_failed" if failed_report else "tool_returned"\n                    state = self.no_progress_detector.observe_event(progress_event)
                     if state.needs_attention and not progress_alerted:
                         self._emit("no_progress_attention", {
                             "consecutive_idle": state.consecutive_idle,
