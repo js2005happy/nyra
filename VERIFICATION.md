@@ -1,3 +1,10 @@
+## 2026-11-22 — Legacy tool result classifier alignment (static inspection only)
+
+- Read development README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/Tools, observer and regression source; checked current branch, recent commits, open Issues/PR (#113 is evaluation-related), and previous commit status (no statuses returned).
+- Source inspection found disagreement between ToolJournal (`错误：` only) and the advisory observer (`错误：` or `执行失败：`). Added one conservative classifier, wired both paths, and defined unexecuted regression cases for known prefixes, exceptions, non-text returns and invalid flags.
+- External reports reviewed 2026-11-22: [Codex #40646](https://github.com/openai/codex/issues/40646) (2026-08-25) and [#45395](https://github.com/openai/codex/issues/45395) (October 2026 discussion). These are individual reports, not evidence of this Angel source mismatch.
+- **Not run:** tests, scripts, builds, compilation, CI, or cross-platform runtime verification. No install, external account modification, main merge or production release. Classification is legacy compatibility, not a trustworthy structured tool outcome or proof of external side effects.
+
 ## 2026-11-22 — Advisory source newline repair (static inspection only)
 
 - Reviewed README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/Tools, observer, tests, recent commits, open Issues/PR and prior combined CI status/workflow metadata (no status or PR-triggered runs returned). Open PR #113 is about evaluations, not this fix.
