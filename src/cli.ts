@@ -126,6 +126,7 @@ import { handlePeer } from "./peer.ts";
 import { handlePeerFriends, PEER_FRIEND_COMMANDS } from "./peerCard.ts";
 import { handleCircle } from "./circles.ts";
 import { handleSession } from "./session.ts";
+import { callLedgerMain } from "./callLedger.ts";
 import { handleInit, handleTemplates, handleWake } from "./onboarding.ts";
 import { reviewBusinessAction, appendBusinessRedlineAudit } from "./businessRedlines.ts";
 import { handleVoice, loadAudioFile, resolveVoiceConfig } from "./voice.ts";
@@ -218,6 +219,7 @@ nyra mcp server <status|enable|disable|allow-writes-on|allow-writes-off>   对�
 nyra peer <status|enable|disable|list|auth|ask|handoff|card|code|add|request|accept|friends|block|circle|share>   对端协作：问别的 Nyra 实例、交接运行上下文、名片加好友（默认关闭，详见 docs/peer.md）
 nyra circle <create|list|show|invite|revoke|delete|bind|unbind|owner|check|bindings>   信任圈：谁能给 agent 发任务（默认全封闭，圈外消息网关直接丢弃，详见 docs/circles.md）
 nyra session <create|list|show|join|leave|delegate|accept|complete|share|frame|record|end>   跨 agent 联合会话：多人多 agent 视频会（本地扇出模型），会内委派 + 共享任务产物（allowlist），画面默认不留存、录制须全体同意（详见 docs/sessions.md）
+nyra call <ledger|show <通话 id>|summary>   通话成本与隐私仪表：每通电话三本账（传输 / 媒体 / token），录制默认关、须全体同意，纪要进证据链（详见 docs/call-ledger.md）
 nyra voice <status|speak <文字>|enable-tts|disable-tts>   语音指挥：看配置与可用性、读一段文字、开关自动回读（详见 docs/voice.md）
 nyra voice call <start|answer|decline|end|status|list|segment|confirm>   实时语音通话：建通话、喂音频段落转写、可选回读（本地 whisper 优先，云端默认关；详见 docs/voice.md）
 nyra video <call|signal|ice>   视频通话 + 按需视觉采样：信令 + TURN + ICE 直连传输，帧按需看（本地优先，云端默认关；详见 docs/video-call.md）
@@ -348,6 +350,7 @@ nyra mcp server <status|enable|disable|allow-writes-on|allow-writes-off>   exter
 nyra peer <status|enable|disable|list|auth|ask|handoff|card|code|add|request|accept|friends|block|circle|share>   peer collaboration: ask another Nyra instance, hand off run context, agent card and friends (off by default, see docs/peer.md)
 nyra circle <create|list|show|invite|revoke|delete|bind|unbind|owner|check|bindings>   trust circles: who may send tasks to the agent (closed by default, out-of-circle messages are dropped at the gateway, see docs/circles.md)
 nyra session <create|list|show|join|leave|delegate|accept|complete|share|frame|record|end>   cross-agent joint sessions: multi-person multi-agent video meetings (local fanout model), in-session delegation + shared task products (allowlist), frames not retained by default, recording needs everyone's consent (see docs/sessions.md)
+nyra call <ledger|show <call id>|summary>   call cost and privacy dashboard: three books per call (transport / media / tokens), recording off by default and needs everyone's consent, minutes go into the evidence chain (see docs/call-ledger.md)
 nyra voice <status|speak <text>|enable-tts|disable-tts>   voice commands: show config and availability, speak a text, toggle auto readback (see docs/voice.md)
 nyra voice call <start|answer|decline|end|status|list|segment|confirm>   live voice call: start a call, feed audio segments to transcribe, optional readback (local whisper.cpp first, cloud off by default; see docs/voice.md)
 nyra video <call|signal|ice>   video call + on-demand frame sampling: signaling + TURN + ICE direct transport, frames seen on demand (local first, cloud off by default; see docs/video-call.md)
@@ -5803,6 +5806,7 @@ export async function main(argv: string[]): Promise<number> {
   }
   if (args.subcommand === "circle") return handleCircle(args.subArgs ?? [], home);
   if (args.subcommand === "session") return handleSession(args.subArgs ?? [], home);
+  if (args.subcommand === "call") return callLedgerMain(args.subArgs ?? [], home);
   if (args.subcommand === "init") return handleInit(args.subArgs ?? [], home);
   if (args.subcommand === "templates") return handleTemplates(args.subArgs ?? [], home);
   if (args.subcommand === "wake") return handleWake(args.subArgs ?? [], home);

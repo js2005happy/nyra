@@ -520,6 +520,18 @@ export function buildTimeline(store: RunStore, runId: string): Timeline {
         push(at, "event", `${str(ev.by) ?? "?"} ${ev.consented === true ? "同意" : "撤回同意"}录制（会话 ${str(ev.session) ?? "?"}）`, null, null, null);
         break;
       }
+      case "call_summary": {
+        push(at, "event", `通话纪要：${str(ev.call) ?? "?"}（${str(ev.kind) ?? "?"}）· ${str(ev.duration_seconds) ?? "?"} 秒 · 理解 ${str(ev.understanding_tokens) ?? "?"} token · 录制 ${str(ev.recording_seconds) ?? "?"} 秒`, null, null, null);
+        break;
+      }
+      case "call_recording_started": {
+        push(at, "event", `通话 ${str(ev.call) ?? "?"} 开始录制（${str(ev.started_at) ?? "?"}）`, null, null, null);
+        break;
+      }
+      case "call_recording_stopped": {
+        push(at, "event", `通话 ${str(ev.call) ?? "?"} 停止录制（${str(ev.stopped_at) ?? "?"}，共 ${str(ev.seconds) ?? "?"} 秒）`, null, null, null);
+        break;
+      }
       case "subagent_stop_requested": {
         const by = str(ev.by) ?? "未记发起人";
         const step = str(ev.step) ?? "";

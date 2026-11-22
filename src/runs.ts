@@ -341,6 +341,11 @@ session_delegation_accepted: ["session", "delegation", "by"],
 session_delegation_completed: ["session", "delegation", "by"],
 session_shared: ["session", "from", "kind", "items"],
 session_recording_consented: ["session", "by", "consented"],
+// 缺口 40：通话账本进证据链——通话纪要只含数字与 id（时长、字节、帧数、
+// STT 秒、理解 token 与花费、录制秒），不含通话内容原文、不含帧内容。
+call_summary: ["call", "kind", "duration_seconds", "bytes_in", "bytes_out", "frames_sampled", "stt_seconds", "understanding_tokens", "understanding_cost_usd", "recording_seconds"],
+call_recording_started: ["call", "started_at"],
+call_recording_stopped: ["call", "stopped_at", "seconds"],
 // 缺口 51：业务动作硬红线进证据链——改表（哪个连接器、哪个动作、从哪档到
 // 哪档、原因指纹）与拦截（哪个连接器、哪个动作、哪档、哪个工具）。只记
 // 元数据与 SHA-256 前 12 位指纹，不记原因原文、不记业务内容。
