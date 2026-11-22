@@ -1,3 +1,10 @@
+## 2026-11-23 — Trusted local listing explicit ToolError privacy (static inspection only)
+
+- Reviewed README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/Tools, existing regressions, recent main commits, open Issues/PR #113, and prior commit status (no statuses returned).
+- Source finding: the trusted local `list_dir` adapter interpolated explicit ToolError text into model-visible output; replaced with fixed text and defined an unexecuted mocked regression. Potential disclosure is inferred from code, not a reproduced incident.
+- External reports reviewed 2026-11-23: [Codex #34233](https://github.com/openai/codex/issues/34233) (2026-07-19), [#31059](https://github.com/openai/codex/issues/31059) (2026-07-03). Individual external feedback; no Angel incident or prevalence claim.
+- **NOT RUN:** tests, scripts, builds, compilation, CI or cross-platform execution. No installs, account changes, main merge or production release. Generic dispatcher ToolError, normal file contents and remote tools remain outside this change.
+
 ## 2026-11-23 — Missing local list_dir path privacy (static inspection only)
 
 - Reviewed development README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, core Agent/Tools/classifier, list_dir regression definitions, recent commits, open Issues/PR #113, and available CI metadata.
