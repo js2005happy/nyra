@@ -437,6 +437,9 @@ export class BotRunner {
         fileTarget: (details as Record<string, unknown> | undefined)?.fileTarget,
         cwd: (details as Record<string, unknown> | undefined)?.cwd,
       });
+      // 授权覆盖：同一工具 + 同一参数指纹已有 session/always 授权时直接放行，
+      // 不建挂起审批；红线与角色白名单已在上面查过——授权绕不过那两道门。
+      if (this.bridge.tryGrant(tool, argsHash, sessionKey)) return true;
       const approval = await this.bridge.requestApproval({
         sessionKey,
         chatId: ctx.chatId,
@@ -708,7 +711,8 @@ export class BotRunner {
       "/new — 开新会话（清除当前会话历史）",
       "/stop — 停止当前正在处理的任务",
       "/model — 当前用的模型",
-      "/approve <id>、/reject <id> — 批准/拒绝一条挂起的审批（只有 owner/admin 能批；也可以点审批提示下的按钮）",
+      "/approve <id> [once|session|always]、/reject <id> — 批准/拒绝一条挂起的审批（只有 owner/admin 能批；也可以点审批提示下的按钮；session 本次会话不再问，always 以后都不再问）",
+      "/grants — 列出已记的授权；/revoke-grant <授权 id> — 撤销一条授权（只有 owner/admin）",
       "/computer-shell <电脑 id|own> <命令...> [--cred <账号> ...] — 在一台电脑上跑 shell（只机主/管理员；own 是 Bot 自己那台电脑；跨电脑写操作须审批；--cred 把 Vault 里的凭证代填进环境变量）",
       "群聊里只有 @ 我时才回复；私聊直接发消息就行。",
       "附件：图片只记元信息（本批暂不支持看图），纯文本文档（.txt/.md 等）会提取内容一起处理。",
@@ -765,13 +769,22 @@ export class BotRunner {
         break;
       }
       case "approve":
-      case "reject": {        const id = args.split(/\s+/)[0] ?? "";
+      case "reject": {
+        const parts = args.split(/\s+/).filter(Boolean);
+        const id = parts[0] ?? "";
         if (!id) {
-          await reply("用法：/approve <审批 id> 或 /reject <审批 id>（审批提示里有 id）。");
+          await reply("用法：/approve <审批 id> [once|session|always] 或 /reject <审批 id>（审批提示里有 id）。");
           outcome = "approval:missing-id";
           break;
         }
-        const res = await this.bridge.decide(id, command === "approve", msg.senderId, msg.viaCallback ? "button" : "command");
+        const scopeArg = parts[1] ?? "once";
+        if (command === "approve" && scopeArg !== "once" && scopeArg !== "session" && scopeArg !== "always") {
+          await reply("用法：/approve <审批 id> [once|session|always]（once 只放行这一次，session 本次会话不再问，always 以后都不再问）。");
+          outcome = "approval:bad-scope";
+          break;
+        }
+        const scope = command === "approve" ? (scopeArg as "once" | "session" | "always") : "once";
+        const res = await this.bridge.decide(id, command === "approve", msg.senderId, msg.viaCallback ? "button" : "command", scope);
         if (!res.ok) {
           if (res.reason === "not-approver") {
             await reply("只有管理员（owner/admin）能审批这条请求。");
@@ -784,13 +797,58 @@ export class BotRunner {
             outcome = "approval:not-pending";
           }
         } else {
-          await reply(res.decision?.approved ? `已批准 ${id}。` : `已拒绝 ${id}。`);
+          const scopeNote = res.decision?.approved && res.decision?.scope === "session"
+            ? "（本次会话里同样的操作不再问）"
+            : res.decision?.approved && res.decision?.scope === "always"
+              ? "（以后都不再问，可用 /grants 撤销）"
+              : "";
+          await reply(res.decision?.approved ? `已批准 ${id}。${scopeNote}` : `已拒绝 ${id}。`);
           outcome = res.decision?.approved ? "approval:approved" : "approval:rejected";
         }
         if (msg.viaCallback && msg.callbackId) {
           try {
             await this.adapter.answerCallback?.(msg.callbackId, res.ok ? (res.decision?.approved ? "已批准" : "已拒绝") : "处理失败");
           } catch { /* 回 ack 失败不改变审批结论 */ }
+        }
+        break;
+      }
+      case "grants": {
+        if (!this.bridge.canApprove(msg.senderId)) {
+          await reply("只有管理员（owner/admin）能查看授权。");
+          outcome = "approval:denied-not-approver";
+          break;
+        }
+        const grants = this.bridge.listGrants();
+        if (!grants.length) {
+          await reply("暂无授权（批准时选“本次会话都批准”或“一直批准”会记一条授权；session 档只在内存里，重启即失效）。");
+        } else {
+          const lines = grants.map((g) => {
+            const scope = g.scope === "session" ? `本次会话（${g.sessionKey}）` : "一直";
+            return `- ${g.id}｜${scope}｜${g.tool}｜${g.argsHash}｜${g.grantedBy}｜${new Date(g.grantedAt).toLocaleString()}`;
+          });
+          await reply(`授权共 ${grants.length} 条（只认工具 + 参数指纹精确匹配）：\n${lines.join("\n")}\n撤销：/revoke-grant <授权 id>`);
+        }
+        outcome = "approval:grants-listed";
+        break;
+      }
+      case "revoke-grant": {
+        if (!this.bridge.canApprove(msg.senderId)) {
+          await reply("只有管理员（owner/admin）能撤销授权。");
+          outcome = "approval:denied-not-approver";
+          break;
+        }
+        const grantId = args.split(/\s+/).filter(Boolean)[0] ?? "";
+        if (!grantId) {
+          await reply("用法：/revoke-grant <授权 id>（先发 /grants 看 id）。");
+          outcome = "approval:missing-id";
+          break;
+        }
+        if (this.bridge.revokeGrant(grantId)) {
+          await reply(`已撤销授权 ${grantId}，之后同样的操作会重新问。`);
+          outcome = "approval:grant-revoked";
+        } else {
+          await reply(`没找到授权 ${grantId}。`);
+          outcome = "approval:grant-not-found";
         }
         break;
       }
@@ -1382,6 +1440,49 @@ export function handleBotStatus(home: string): number {
   return 0;
 }
 
+/**
+ * Hermes HQ 借鉴第 1 批：`nyra bot approvals <list|revoke <授权 id>>`。
+ * CLI 跑在本机上，等同机主身份（与 `nyra bot redlines` 同款信任模型）。
+ * session 档授权只在 Bot 进程内存里，CLI 新进程看不到——list 只列 always
+ * 档，并明说这一点；revoke 只删 always 档（session 档随进程重启消失）。
+ */
+export function handleApprovals(argv: string[], home: string): number {
+  const resolvedHome = home || resolveHome();
+  const config = loadConfig(resolvedHome);
+  const bridge = new ApprovalBridge({
+    home: resolvedHome,
+    policy: botPolicyFromConfig(config),
+    send: async () => { throw new Error("CLI 不发审批提示"); },
+  });
+  const action = argv[0];
+  if (action === "list") {
+    const grants = bridge.listGrants().filter((g) => g.scope === "always");
+    if (!grants.length) {
+      process.stdout.write("暂无“一直批准”的授权（本次会话的授权只在 Bot 进程内存里，重启即失效，CLI 看不到）。\n");
+      return 0;
+    }
+    for (const g of grants) {
+      process.stdout.write(`- ${g.id}｜${g.tool}｜${g.argsHash}｜${g.grantedBy}｜${new Date(g.grantedAt).toLocaleString()}\n`);
+    }
+    return 0;
+  }
+  if (action === "revoke") {
+    const id = argv[1] ?? "";
+    if (!id) {
+      process.stdout.write("用法：nyra bot approvals revoke <授权 id>\n");
+      return 2;
+    }
+    if (bridge.revokeGrant(id)) {
+      process.stdout.write(`已撤销授权 ${id}，之后同样的操作会重新问。\n`);
+      return 0;
+    }
+    process.stdout.write(`没找到授权 ${id}。\n`);
+    return 1;
+  }
+  process.stdout.write("用法：nyra bot approvals <list|revoke <授权 id>>\n");
+  return 2;
+}
+
 export async function handleBot(argv: string[], home: string): Promise<number> {
   const resolvedHome = home || resolveHome();
   const channel = argv[0];
@@ -1398,9 +1499,13 @@ export async function handleBot(argv: string[], home: string): Promise<number> {
   if (channel === "status") {
     return handleBotStatus(resolvedHome);
   }
+  // Hermes HQ 借鉴第 1 批：审批授权管理（`nyra bot approvals ...`）。
+  if (channel === "approvals") {
+    return handleApprovals(argv.slice(1), resolvedHome);
+  }
   const action = argv[1];
   if (channel !== "telegram" && channel !== "discord" && channel !== "slack" && channel !== "whatsapp") {
-    process.stdout.write("用法：nyra bot telegram <start|stop|status>\n       nyra bot discord <start|stop|status>\n       nyra bot slack <start|stop|status>\n       nyra bot whatsapp <start|stop|status>\n       nyra bot computer <create|list|status|sleep|wake|remove|credential|shell|sleep-due>\n       nyra bot status\n       nyra bot redlines <status|list|show|tighten|loosen|set>\n");
+    process.stdout.write("用法：nyra bot telegram <start|stop|status>\n       nyra bot discord <start|stop|status>\n       nyra bot slack <start|stop|status>\n       nyra bot whatsapp <start|stop|status>\n       nyra bot computer <create|list|status|sleep|wake|remove|credential|shell|sleep-due>\n       nyra bot status\n       nyra bot approvals <list|revoke <授权 id>>\n       nyra bot redlines <status|list|show|tighten|loosen|set>\n");
     return 2;
   }
   if (!action) {

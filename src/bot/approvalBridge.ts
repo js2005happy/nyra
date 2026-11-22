@@ -2,8 +2,13 @@
 //
 // Agent 想做写操作时，checkApproval 调 BotRunner 挂进来的 approveFn，
 // approveFn 到这里建一条挂起审批、向会话发提示（附 approvalId、风险说明、
-// 参数摘要，带批准/拒绝两个按钮），然后等人的决定：
+// 参数摘要，带四个按钮），然后等人的决定：
 //   - 审批人回 /approve <id> 或 /reject <id>，或点按钮 → decide() 解决；
+//   - 批准可带档位：一次（默认）、本次会话（session）、一直（always）。
+//     session 档只在内存里、进程重启即失效；always 档持久化进
+//     bot-approval-grants.json，可用 /grants 查看、/revoke-grant 撤销；
+//     授权只认“工具 + 参数指纹”精确匹配，不泛化；红线 never 档与角色
+//     白名单仍在授权之前查——授权永远绕不过红线。
 //   - 没人批、TTL 到了 → 自动拒绝（fail-closed）；
 //   - /stop 或队列超时把在跑的任务掐了 → cancelSession() 把同会话的挂起项
 //     一并取消，免得人晚一步点的“批准”复活一个已经没了的任务。
@@ -36,6 +41,30 @@ export const APPROVAL_CALLBACK_PREFIX = "bot:";
 
 export type ApprovalStatus = "pending" | "approved" | "rejected" | "expired" | "cancelled";
 
+/**
+ * 审批决定档位（借鉴 Hermes HQ 的 Run once / session / always）：
+ *   - once：只放行这一次调用（默认；与以前行为一致）；
+ *   - session：本次会话里同一工具 + 同一参数指纹不再问（只在内存里，
+ *     进程重启即失效）；
+ *   - always：以后都不再问（持久化进 bot-approval-grants.json，可撤销）。
+ * 授权只认“工具 + 参数指纹”精确匹配（比前缀规则更窄，不泛化）；红线
+ * never 档与角色白名单仍在授权之前查——授权永远绕不过红线。
+ */
+export type ApprovalScope = "once" | "session" | "always";
+export const BOT_APPROVAL_GRANTS_FILE = "bot-approval-grants.json";
+
+export interface ApprovalGrant {
+  /** 授权 id（grant_<12hex>，与 8 位 hex 的审批 id 区分开）。 */
+  id: string;
+  tool: string;
+  argsHash: string;
+  scope: "session" | "always";
+  /** session 档绑定的会话；always 档为 null（全会话通用）。 */
+  sessionKey: string | null;
+  grantedBy: string;
+  grantedAt: number;
+}
+
 export interface PendingApproval {
   id: string;
   sessionKey: string;
@@ -56,6 +85,8 @@ export interface PendingApproval {
   decidedBy?: string;
   decidedAt?: number;
   via?: "command" | "button" | "timeout" | "cancelled";
+  /** 批准时带的档位（once 不记，session/always 记下来备查）。 */
+  scope?: ApprovalScope;
   reason?: string;
 }
 
@@ -64,6 +95,8 @@ export interface BridgeDecision {
   decidedBy: string | null;
   via: "command" | "button" | "timeout" | "cancelled";
   reason: string;
+  /** 批准时带的档位（授权覆盖放行时由 recordGrantUse 另记事件，这里不填）。 */
+  scope?: ApprovalScope;
 }
 
 export interface DecideResult {
@@ -133,6 +166,11 @@ interface ApprovalsFile {
   approvals: Record<string, PendingApproval>;
 }
 
+interface GrantsFile {
+  version: number;
+  grants: Record<string, ApprovalGrant>;
+}
+
 export class ApprovalBridge {
   readonly home: string;
   readonly policy: BotPolicy;
@@ -144,6 +182,10 @@ export class ApprovalBridge {
   private readonly nowFn: () => number;
   private items = new Map<string, PendingApproval>();
   private waiters = new Map<string, { resolve: (d: BridgeDecision) => void; timer: ReturnType<typeof setTimeout> }>();
+  /** session 档授权：只在内存里，进程重启即失效。 */
+  private sessionGrants = new Map<string, ApprovalGrant>();
+  /** always 档授权：持久化进 bot-approval-grants.json。 */
+  private alwaysGrants = new Map<string, ApprovalGrant>();
 
   constructor(opts: ApprovalBridgeOptions) {
     this.home = opts.home;
@@ -155,6 +197,7 @@ export class ApprovalBridge {
     this.runId = opts.runId ?? null;
     this.nowFn = opts.now ?? Date.now;
     this.load();
+    this.loadGrants();
   }
 
   private load(): void {
@@ -176,6 +219,94 @@ export class ApprovalBridge {
     try {
       atomicWriteJson(this.home, BOT_APPROVALS_FILE, { version: 1, approvals: Object.fromEntries(this.items) });
     } catch { /* 账本写盘失败不破坏审批流程：最坏是重启后挂起项丢失，超时自动拒绝兜底 */ }
+  }
+
+  /** 读 always 档授权（损坏或缺失都当空账本；session 档本来就不落盘）。 */
+  private loadGrants(): void {
+    let data: GrantsFile | null = null;
+    try {
+      data = JSON.parse(readFileSync(join(resolveNyraHome(this.home), BOT_APPROVAL_GRANTS_FILE), "utf-8")) as GrantsFile;
+    } catch { /* 没有账本或损坏都当空账本 */ }
+    if (!data || typeof data !== "object" || !data.grants || typeof data.grants !== "object") return;
+    for (const g of Object.values(data.grants)) {
+      if (!g || typeof g !== "object" || typeof g.id !== "string" || g.scope !== "always") continue;
+      if (typeof g.tool !== "string" || typeof g.argsHash !== "string") continue;
+      this.alwaysGrants.set(g.id, g);
+    }
+  }
+
+  private saveGrants(): void {
+    try {
+      atomicWriteJson(this.home, BOT_APPROVAL_GRANTS_FILE, { version: 1, grants: Object.fromEntries(this.alwaysGrants) });
+    } catch { /* 授权写盘失败不破坏审批流程：最坏是重启后 always 授权丢失，下次再问 */ }
+  }
+
+  private newGrantId(): string {
+    let id = `grant_${randomBytes(6).toString("hex")}`;
+    while (this.sessionGrants.has(id) || this.alwaysGrants.has(id)) id = `grant_${randomBytes(6).toString("hex")}`;
+    return id;
+  }
+
+  /**
+   * 查有没有覆盖这次调用的授权：先查本次会话的 session 档，再查 always 档。
+   * 只做精确匹配（工具 + 参数指纹全等），不泛化。调用方须先查红线与角色
+   * 白名单——授权查到也不绕过那两道门（见 BotRunner.approveViaBridge）。
+   */
+  findGrant(tool: string, argsHash: string, sessionKey: string): ApprovalGrant | null {
+    for (const g of this.sessionGrants.values()) {
+      if (g.tool === tool && g.argsHash === argsHash && g.sessionKey === sessionKey) return g;
+    }
+    for (const g of this.alwaysGrants.values()) {
+      if (g.tool === tool && g.argsHash === argsHash) return g;
+    }
+    return null;
+  }
+
+  /**
+   * 记一笔“授权覆盖放行”：不建挂起审批，但结论一样进审计与运行事件
+   *（bot_approval_decided，decision approved，via grant-session /
+   * grant-always，approval_id 记授权 id），证据链里看得出这次调用是
+   * 靠授权放行的、不是新批的。
+   */
+  recordGrantUse(grant: ApprovalGrant, sessionKey: string): void {
+    const via = grant.scope === "session" ? "grant-session" : "grant-always";
+    const channel = this.record("bot_approval_decided", {
+      approval_id: grant.id, decision: "approved", decided_by: grant.grantedBy, via,
+      scope: grant.scope, reason: grant.scope === "session" ? "本次会话授权覆盖" : "一直批准授权覆盖",
+    });
+    this.audit("approval:grant-used", {
+      approval_id: grant.id, session_key: sessionKey, tool: grant.tool,
+      scope: grant.scope, granted_by: grant.grantedBy, event_channel: channel,
+    });
+  }
+
+  /**
+   * 授权覆盖放行（供 BotRunner.approveViaBridge 调）：同一工具 + 同一参数
+   * 指纹已有 session/always 授权时记一笔授权使用（审计 + 事件）并返回
+   * true；没有授权返回 false，调用方继续走正常审批链。红线与角色白名单
+   * 由调用方在调这里之前查——授权绕不过那两道门。
+   */
+  tryGrant(tool: string, argsHash: string, sessionKey: string): boolean {
+    const grant = this.findGrant(tool, argsHash, sessionKey);
+    if (!grant) return false;
+    this.recordGrantUse(grant, sessionKey);
+    return true;
+  }
+
+  /** 列出全部授权（session 档在前、always 档在后，各按授权时间排）。 */
+  listGrants(): ApprovalGrant[] {
+    const all = [...this.sessionGrants.values(), ...this.alwaysGrants.values()];
+    return all.sort((a, b) => a.grantedAt - b.grantedAt);
+  }
+
+  /** 撤销一条授权（session 档只清内存，always 档同时落盘）。不存在返回 false。 */
+  revokeGrant(id: string): boolean {
+    if (this.sessionGrants.delete(id)) return true;
+    if (this.alwaysGrants.delete(id)) {
+      this.saveGrants();
+      return true;
+    }
+    return false;
   }
 
   private audit(outcome: string, extra: Record<string, unknown>): void {
@@ -230,14 +361,20 @@ export class ApprovalBridge {
       `说明：${item.summary.slice(0, 500)}`,
       `发起：${item.requestedBy}（${item.requestedByRole}）`,
       `${seconds} 秒内有效；管理员回复 /approve ${item.id} 或 /reject ${item.id}，或点下面的按钮。`,
+      `“本次会话都批准”：这次会话里同样的操作不再问；“一直批准”：以后都不再问（只认这一次的工具与参数，可用 /grants 查看与撤销）。`,
       `超时没人批会自动拒绝。`,
     ].join("\n");
   }
 
   private outcomeText(item: PendingApproval): string {
     const mark = item.status === "approved" ? "✅ 已批准" : item.status === "rejected" ? "❌ 已拒绝" : item.status === "expired" ? "⌛ 已超时自动拒绝" : "🚫 已取消";
+    const scopeNote = item.status === "approved" && item.scope === "session"
+      ? "（本次会话里同样的操作不再问）"
+      : item.status === "approved" && item.scope === "always"
+        ? "（以后都不再问，可用 /grants 撤销）"
+        : "";
     return [
-      `${mark}（id：${item.id}）`,
+      `${mark}${scopeNote}（id：${item.id}）`,
       `工具：${item.tool}`,
       item.decidedBy ? `决定人：${item.decidedBy}${item.via ? `（${item.via === "button" ? "按钮" : item.via === "command" ? "指令" : item.via}）` : ""}` : "",
       item.reason ? `原因：${item.reason}` : "",
@@ -285,10 +422,16 @@ export class ApprovalBridge {
     };
     this.items.set(item.id, item);
     this.save();
-    const buttons = [[
-      { text: "✅ 批准", callbackData: `${APPROVAL_CALLBACK_PREFIX}approve:${item.id}` },
-      { text: "❌ 拒绝", callbackData: `${APPROVAL_CALLBACK_PREFIX}reject:${item.id}` },
-    ]];
+    const buttons = [
+      [
+        { text: "✅ 批准一次", callbackData: `${APPROVAL_CALLBACK_PREFIX}approve-once:${item.id}` },
+        { text: "❌ 拒绝", callbackData: `${APPROVAL_CALLBACK_PREFIX}reject:${item.id}` },
+      ],
+      [
+        { text: "✅ 本次会话都批准", callbackData: `${APPROVAL_CALLBACK_PREFIX}approve-session:${item.id}` },
+        { text: "✅ 一直批准", callbackData: `${APPROVAL_CALLBACK_PREFIX}approve-always:${item.id}` },
+      ],
+    ];
     try {
       item.promptMessageId = await this.sendFn(item.chatId, item.threadId, this.promptText(item), buttons);
     } catch { /* 提示发不出去不影响挂起项本身：/approve 指令照常能批 */ }
@@ -316,6 +459,7 @@ export class ApprovalBridge {
         decidedBy: item.decidedBy ?? null,
         via: item.via ?? "cancelled",
         reason: item.reason ?? "",
+        scope: item.scope ?? "once",
       });
     }
     return new Promise<BridgeDecision>((resolve) => {
@@ -366,9 +510,10 @@ export class ApprovalBridge {
   /**
    * 解决一条挂起审批（/approve、/reject、按钮回调共用这个入口）。
    * 非白名单的人一律返回 not-approver（不改状态、不解决等待者，并记审计）；
-   * 已处理过的返回 not-pending。
+   * 已处理过的返回 not-pending。批准时 scope 带 session/always 会顺手
+   * 记一条授权（精确匹配工具 + 参数指纹；拒绝不记授权）。
    */
-  async decide(id: string, approved: boolean, decidedBy: string, via: "command" | "button"): Promise<DecideResult> {
+  async decide(id: string, approved: boolean, decidedBy: string, via: "command" | "button", scope: ApprovalScope = "once"): Promise<DecideResult> {
     const item = this.items.get(id);
     if (!item) return { ok: false, reason: "not-found" };
     if (item.status !== "pending") return { ok: false, reason: "not-pending" };
@@ -376,23 +521,45 @@ export class ApprovalBridge {
       this.audit("approval:denied-not-approver", { approval_id: id, session_key: item.sessionKey, tool: item.tool, decided_by: decidedBy });
       return { ok: false, reason: "not-approver" };
     }
+    const scopeNorm: ApprovalScope = scope === "session" || scope === "always" ? scope : "once";
     item.status = approved ? "approved" : "rejected";
     item.decidedBy = decidedBy;
     item.decidedAt = this.nowFn();
     item.via = via;
+    item.scope = scopeNorm;
     item.reason = approved ? "" : "审批人拒绝执行。";
+    let grant: ApprovalGrant | null = null;
+    if (approved && scopeNorm !== "once") {
+      grant = {
+        id: this.newGrantId(),
+        tool: item.tool,
+        argsHash: item.argsHash,
+        scope: scopeNorm,
+        sessionKey: scopeNorm === "session" ? item.sessionKey : null,
+        grantedBy: decidedBy,
+        grantedAt: this.nowFn(),
+      };
+      if (scopeNorm === "session") this.sessionGrants.set(grant.id, grant);
+      else {
+        this.alwaysGrants.set(grant.id, grant);
+        this.saveGrants();
+      }
+    }
     this.save();
     const decision: BridgeDecision = {
       approved,
       decidedBy,
       via,
       reason: item.reason ?? "",
+      scope: scopeNorm,
     };
     const channel = this.record("bot_approval_decided", {
-      approval_id: item.id, decision: approved ? "approved" : "rejected", decided_by: decidedBy, via, reason: item.reason ?? "",
+      approval_id: item.id, decision: approved ? "approved" : "rejected", decided_by: decidedBy, via,
+      scope: scopeNorm, grant_id: grant?.id ?? "", reason: item.reason ?? "",
     });
     this.audit(approved ? "approval:approved" : "approval:rejected", {
-      approval_id: item.id, session_key: item.sessionKey, tool: item.tool, decided_by: decidedBy, event_channel: channel,
+      approval_id: item.id, session_key: item.sessionKey, tool: item.tool, decided_by: decidedBy,
+      scope: scopeNorm, grant_id: grant?.id ?? "", event_channel: channel,
     });
     this.resolveWaiter(id, decision);
     await this.editPrompt(item);
