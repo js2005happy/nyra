@@ -1,3 +1,10 @@
+## 2026-11-22 — Opt-in advisory idle observation (static only)
+
+- External facts (reviewed 2026-11-22): Codex issue #41007 (2026-08-27, https://github.com/openai/codex/issues/41007) reports repeated unchanged-UI polling; #47802 (2026-09-24, https://github.com/openai/codex/issues/47802) reports failed subagent dispatch and polling. Individual reports, not prevalence or reproduced Angel defects.
+- Engineering inference: an optional metadata-only advisory signal in the main loop is safer than automatic cancellation. Count model responses and tool returns as untrusted idle events; emit once per run when threshold is reached. No execution authority or automatic retries.
+- Priority (value / difficulty / risk / dependencies): P1 advisory Agent wiring high / low-medium / low / existing observer (implemented, untested); P1 independent trusted progress events high / medium / medium / trusted controller (open); P1 private task storage high / medium / medium-high / platform storage (blocked); P0 claim dispatch high / high / high / sandbox and approval (blocked).
+- Limitations: productive runs may be flagged; detector is caller-owned and should be fresh per task; no verified progress, watchdog, or auto-resume. Tests and CI not run.
+
 ## 2026-11-22 — Explicit advisory progress-event vocabulary (static-only)
 
 - **Public facts, reviewed 2026-11-22:** [Codex #37800](https://github.com/openai/codex/issues/37800) (opened 2026-08-10) reports empty continuation turns; [Codex #41007](https://github.com/openai/codex/issues/41007) (opened 2026-08-27) reports repeated polling of unchanged UI instead of authoritative progress; [Codex #47802](https://github.com/openai/codex/issues/47802) (opened 2026-09-24) reports failed subagents and idle polling. These are external user reports, not Angel reproductions or measured prevalence.
