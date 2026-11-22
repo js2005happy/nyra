@@ -138,7 +138,7 @@ test("PeerCardTest.test_card_built_from_soul_and_mcp_tools", () => {
   expect(card.name).toBe("Kite");
   expect(card.description).toContain("说话直接");
   expect(card.description).toContain("重复工作自动化");
-  expect(card.version).toBe("0.5.4");
+  expect(card.version).toBe("0.5.5");
   expect(card.url).toBeNull();
   expect(card.endpoints.mcp).toBeNull();
   expect(card.authentication.schemes).toEqual(["bearer"]);

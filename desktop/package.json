@@ -1,7 +1,7 @@
 {
   "name": "nyra-desktop",
   "private": true,
-  "version": "0.5.4",
+  "version": "0.5.5",
   "description": "Nyra desktop app (Tauri shell around the Node `nyra ui` binary)",
   "license": "SEE LICENSE IN ../LICENSE",
   "scripts": {
