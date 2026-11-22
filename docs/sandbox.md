@@ -37,11 +37,11 @@
 
 | 后端 | 行为 | 怎么选 |
 |---|---|---|
-| `auto`（默认） | Linux 且本机装了 bwrap → 用 bwrap（OS 沙箱）；否则回落到工具级隔离（现有工作区 containment + shell 黑名单），并在 doctor 与首次 shell 执行时给一次提示，说明这是工具级隔离、不是 OS 沙箱。**auto 不会自动选 Seatbelt 或 Job Object**（见下）。 | 默认就用它。对普通用户无感。 |
+| `auto`（默认） | Linux 且本机装了 bwrap → 用 bwrap（OS 沙箱）；macOS 且本机有 sandbox-exec → 用 Seatbelt（OS 沙箱）；否则回落到工具级隔离（现有工作区 containment + shell 黑名单），并在 doctor 与首次 shell 执行时给一次提示，说明这是工具级隔离、不是 OS 沙箱。**Windows 上 auto 仍不自动选 Job Object**（见下）。 | 默认就用它。对普通用户无感。 |
 | `local` | 显式只要工具级，即使用户机器上有 bwrap 也不用。 | 想退出 OS 沙箱的开关（例如 bwrap 与某个工具不兼容时）。 |
 | `bwrap` | 强制要求 bwrap：找不到 bwrap、或非 Linux 平台、或启动失败 → 直接报错退出（fail-closed），绝不静默降级裸奔。 | 想确保“没有 OS 沙箱就宁可不跑”时用。 |
 | `seatbelt` | macOS `sandbox-exec`（SBPL profile）：强制要求 macOS 与 sandbox-exec，缺失即 fail-closed。 | macOS 上想用 OS 级沙箱时用（见“macOS：Seatbelt 后端”一节）。 |
-| `jobobject` | Windows Job Object（PowerShell + kernel32）：强制要求 Windows 与 PowerShell，缺失即 fail-closed。进程级沙箱：随作业死、进程数上限；**不管文件与网络**（见“Windows：Job Object 后端”一节）。 | Windows 上想用进程级沙箱时用。 |
+| `jobobject` | Windows Job Object（PowerShell + kernel32）：强制要求 Windows 与 PowerShell，缺失即 fail-closed。进程级沙箱：随作业死、进程数上限；**文件靠工具级规则，网络在断网时靠工具级拦截**（见“Windows：Job Object 后端”一节）。 | Windows 上想用进程级沙箱时用。 |
 | `e2b` | 暂不支持，会直接报错（评估见下节“e2b 接线评估”）。 | 现在别用。 |
 
 默认行为对普通用户无感：工作目录内读写、跑命令都不受影响。
@@ -96,10 +96,11 @@ bwrap 沙箱默认断网（`--unshare-net`）：沙箱内的命令连不上外�
 | Linux + 已装 bwrap | OS 级沙箱：bubblewrap（`--bind` 工作目录可写，`/usr`、`/lib`、`/lib64`、`/bin`、`/etc` 只读挂载，`--proc`、`/dev`、默认断网、`--die-with-parent`）。 |
 | Linux，未装 bwrap | 工具级隔离：工作区 containment + shell 黑名单 + 审批。不是 OS 沙箱，命令在宿主机上跑。 |
 | Windows | auto 下仍是工具级隔离（不是 OS 沙箱）。显式 `--sandbox jobobject` 可用进程级沙箱（Job Object，见下节）。 |
-| macOS | auto 下仍是工具级隔离（不是 OS 沙箱）。显式 `--sandbox seatbelt` 可用 OS 级沙箱（见下节）。 |
+| macOS | auto 下有 sandbox-exec 就进 Seatbelt（OS 级沙箱，SBPL 最小集 profile）；无 sandbox-exec 时回落工具级。显式 `--sandbox seatbelt` 可强制要求。 |
 
 用 `nyra doctor` 看当前生效的隔离级别（“隔离级别”一项恒为通过，
-bwrap 缺失是预期内的降级，不算故障）。
+bwrap 缺失是预期内的降级，不算故障；该行同时列出 bwrap / Seatbelt /
+Job Object 三个后端的可用性，auto 会选谁一眼可见）。
 
 ## 与 Hooks 的职责分工
 
@@ -118,8 +119,8 @@ bwrap 缺失是预期内的降级，不算故障）。
 `NYRA_SANDBOX_ALLOW_NET` 环境变量（CLI 的 `--sandbox` 旗标只对 CLI 有效，
 网关没有对应旗标）。行为与 CLI 一致：
 
-- `auto`（默认）：Linux 且装了 bwrap 就进 OS 沙箱，否则回落工具级，
-  在该会话首次执行 shell 时提示一次；
+- `auto`（默认）：Linux 且装了 bwrap 就进 OS 沙箱，macOS 且有 sandbox-exec
+  就进 Seatbelt，否则回落工具级，在该会话首次执行 shell 时提示一次；
 - 显式 `bwrap` 但本机无 bwrap、`e2b`、`danger-full-access` + `bwrap`：
   fail-closed，会话启动失败（`send` 返回 error 状态），命令不跑；
 - 默认断网（`sandbox_allow_net` 未开时沙箱内 `--unshare-net`）。
@@ -222,7 +223,7 @@ Linux 用 bwrap，macOS 用系统自带的 `sandbox-exec`（SBPL profile）。�
 
 ```bash
 nyra --sandbox seatbelt "<task>"     # 显式要求（非 macOS 会报错，不静默降级）
-nyra --sandbox auto "<task>"         # 注意：auto 不会自动选 Seatbelt（见下）
+nyra --sandbox auto "<task>"         # macOS 有 sandbox-exec 时 auto 直接选 Seatbelt
 ```
 
 ### profile 的形状
@@ -268,13 +269,20 @@ nyra --sandbox auto "<task>"         # 注意：auto 不会自动选 Job Object�
 
 ### 它到底管什么（不夸大）
 
-Job Object 只管**进程生命周期与资源**，不管文件与网络：
+Job Object 只管**进程生命周期与资源**，文件与网络靠工具级规则补：
 
 | 限制 | 怎么做 | 默认值 |
 |---|---|---|
 | 随作业死 | `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`（0x2000）：作业句柄一关，作业内全部进程一起死，孤儿进程不留 | 恒开 |
 | 进程数上限 | `JOB_OBJECT_LIMIT_ACTIVE_PROCESS`（0x8）+ `ActiveProcessLimit`：同时存活进程数 | 64 |
 | 作业总内存上限 | `JOB_OBJECT_LIMIT_JOB_MEMORY`（0x200）+ `JobMemoryLimit`，走扩展结构 `JOBOBJECT_EXTENDED_LIMIT_INFORMATION`（class 9） | 默认不设（只在需要时配） |
+| 文件写 | 工具级：工作区 containment + shell 黑名单 + 审批（与 auto 回落到工具级时同一套）；`toolShell` 在后端分发前先跑这两道检查，jobobject 分支同样经过 | 恒开 |
+| 网络（断网时） | 工具级拦截（`src/tools.ts` 的 `checkJobObjectNetworkDenied`）：allowNet=false 时拦掉已知联网工具（curl / wget / nc / ncat / bitsadmin / Invoke-WebRequest / Invoke-RestMethod / Start-BitsTransfer / certutil -urlcache），localhost / 127.0.0.1 回环豁免；allowNet=true 时不拦 | 恒开 |
+
+> 诚实边界：网络拦截是**命令名黑名单，不是内核级拦截**——改名、换工具、
+> 编码命令都能绕过；它补的是“随手联网”，不是“蓄意逃逸”。真正的 OS 级
+> 网络隔离要等 AppContainer 后端（见下表，本批不做）。**不要把 Job Object
+> 当成 bwrap/Seatbelt 那样的内核级文件网络拦截**——它不是。
 
 > 语义修复（0.5.2）：旧代码把内存上限写进了 `JOBOBJECT_BASIC_LIMIT_INFORMATION`
 > （class 2）的第二个字段——那个槽位真实含义是 `PerJobUserTimeLimit`
@@ -283,9 +291,9 @@ Job Object 只管**进程生命周期与资源**，不管文件与网络：
 > `BasicLimits` + 6 个 IO 计数器 + 4 个内存字段），`SetInformationJobObject`
 > 传 class 9；`BasicLimits` 里的第二个字段已正名为 `PerJobUserTimeLimit`。
 
-文件写与联网仍由工具级规则兜底（工作区 containment + shell 黑名单 + 审批），
-和 auto 回落到工具级时同一套。**不要把 Job Object 当成 bwrap/Seatbelt 那样的
-内核级文件网络拦截**——它不是。
+文件写仍由工具级规则兜底（工作区 containment + shell 黑名单 + 审批），和
+auto 回落到工具级时同一套；断网时的联网由工具级拦截补（见上表“网络”一行）。
+**不要把 Job Object 当成 bwrap/Seatbelt 那样的内核级文件网络拦截**——它不是。
 
 ### 实现形状
 
@@ -301,7 +309,7 @@ Job Object 只管**进程生命周期与资源**，不管文件与网络：
 
 ### 三个边界（别高估它）
 
-1. **拦不住文件与网络**：工作目录外的写与联网靠工具级规则拦，不靠 Job Object。
+1. **OS 层拦不住文件与网络**：工作目录外的写靠工具级规则拦；断网时的联网靠工具级拦截（命令名黑名单）拦，都不靠 Job Object 本身。
 2. PowerShell 启动失败、建作业失败时一律 fail-closed；**接不进作业分两种**：
    子进程已在父作业中（例如 CI runner 的作业，Windows 规定一个进程只能属于
    一个作业）或在接管前已退出时，降级为直接执行并在 stderr 告警（Job Object
