@@ -1,0 +1,42 @@
+{"at": "2026-11-22T03:59:14.316Z", "type": "run_started"}
+{"at": "2026-11-22T03:59:14.317Z", "type": "eval_attempt_started", "task_id": "code-01", "attempt": 1, "conditions_hash": "53d71f744214"}
+{"at": "2026-11-22T03:59:14.317Z", "type": "eval_attempt_finished", "task_id": "code-01", "attempt": 1, "status": "blocked", "spent_usd": 0, "duration_ms": 0.691, "interventions": 0, "child_run_id": null}
+{"at": "2026-11-22T03:59:14.320Z", "type": "eval_attempt_started", "task_id": "code-02", "attempt": 1, "conditions_hash": "53d71f744214"}
+{"at": "2026-11-22T03:59:14.320Z", "type": "eval_attempt_finished", "task_id": "code-02", "attempt": 1, "status": "blocked", "spent_usd": 0, "duration_ms": 0.224, "interventions": 0, "child_run_id": null}
+{"at": "2026-11-22T03:59:14.321Z", "type": "eval_attempt_started", "task_id": "code-03", "attempt": 1, "conditions_hash": "53d71f744214"}
+{"at": "2026-11-22T03:59:14.321Z", "type": "eval_attempt_finished", "task_id": "code-03", "attempt": 1, "status": "blocked", "spent_usd": 0, "duration_ms": 0.183, "interventions": 0, "child_run_id": null}
+{"at": "2026-11-22T03:59:14.321Z", "type": "eval_attempt_started", "task_id": "code-04", "attempt": 1, "conditions_hash": "53d71f744214"}
+{"at": "2026-11-22T03:59:14.321Z", "type": "eval_attempt_finished", "task_id": "code-04", "attempt": 1, "status": "blocked", "spent_usd": 0, "duration_ms": 0.332, "interventions": 0, "child_run_id": null}
+{"at": "2026-11-22T03:59:14.321Z", "type": "eval_attempt_started", "task_id": "code-05", "attempt": 1, "conditions_hash": "53d71f744214"}
+{"at": "2026-11-22T03:59:14.322Z", "type": "eval_attempt_finished", "task_id": "code-05", "attempt": 1, "status": "blocked", "spent_usd": 0, "duration_ms": 0.168, "interventions": 0, "child_run_id": null}
+{"at": "2026-11-22T03:59:14.322Z", "type": "eval_attempt_started", "task_id": "browser-01", "attempt": 1, "conditions_hash": "53d71f744214"}
+{"at": "2026-11-22T03:59:14.322Z", "type": "eval_attempt_finished", "task_id": "browser-01", "attempt": 1, "status": "blocked", "spent_usd": 0, "duration_ms": 0.162, "interventions": 0, "child_run_id": null}
+{"at": "2026-11-22T03:59:14.322Z", "type": "eval_attempt_started", "task_id": "browser-02", "attempt": 1, "conditions_hash": "53d71f744214"}
+{"at": "2026-11-22T03:59:14.322Z", "type": "eval_attempt_finished", "task_id": "browser-02", "attempt": 1, "status": "blocked", "spent_usd": 0, "duration_ms": 0.173, "interventions": 0, "child_run_id": null}
+{"at": "2026-11-22T03:59:14.322Z", "type": "eval_attempt_started", "task_id": "browser-03", "attempt": 1, "conditions_hash": "53d71f744214"}
+{"at": "2026-11-22T03:59:14.323Z", "type": "eval_attempt_finished", "task_id": "browser-03", "attempt": 1, "status": "blocked", "spent_usd": 0, "duration_ms": 0.101, "interventions": 0, "child_run_id": null}
+{"at": "2026-11-22T03:59:14.323Z", "type": "eval_attempt_started", "task_id": "browser-04", "attempt": 1, "conditions_hash": "53d71f744214"}
+{"at": "2026-11-22T03:59:14.323Z", "type": "eval_attempt_finished", "task_id": "browser-04", "attempt": 1, "status": "blocked", "spent_usd": 0, "duration_ms": 0.148, "interventions": 0, "child_run_id": null}
+{"at": "2026-11-22T03:59:14.323Z", "type": "eval_attempt_started", "task_id": "browser-05", "attempt": 1, "conditions_hash": "53d71f744214"}
+{"at": "2026-11-22T03:59:14.324Z", "type": "eval_attempt_finished", "task_id": "browser-05", "attempt": 1, "status": "blocked", "spent_usd": 0, "duration_ms": 0.146, "interventions": 0, "child_run_id": null}
+{"at": "2026-11-22T03:59:14.324Z", "type": "eval_attempt_started", "task_id": "research-01", "attempt": 1, "conditions_hash": "53d71f744214"}
+{"at": "2026-11-22T03:59:14.324Z", "type": "eval_attempt_finished", "task_id": "research-01", "attempt": 1, "status": "blocked", "spent_usd": 0, "duration_ms": 0.171, "interventions": 0, "child_run_id": null}
+{"at": "2026-11-22T03:59:14.324Z", "type": "eval_attempt_started", "task_id": "research-02", "attempt": 1, "conditions_hash": "53d71f744214"}
+{"at": "2026-11-22T03:59:14.324Z", "type": "eval_attempt_finished", "task_id": "research-02", "attempt": 1, "status": "blocked", "spent_usd": 0, "duration_ms": 0.251, "interventions": 0, "child_run_id": null}
+{"at": "2026-11-22T03:59:14.325Z", "type": "eval_attempt_started", "task_id": "research-03", "attempt": 1, "conditions_hash": "53d71f744214"}
+{"at": "2026-11-22T03:59:14.325Z", "type": "eval_attempt_finished", "task_id": "research-03", "attempt": 1, "status": "blocked", "spent_usd": 0, "duration_ms": 0.239, "interventions": 0, "child_run_id": null}
+{"at": "2026-11-22T03:59:14.325Z", "type": "eval_attempt_started", "task_id": "research-04", "attempt": 1, "conditions_hash": "53d71f744214"}
+{"at": "2026-11-22T03:59:14.325Z", "type": "eval_attempt_finished", "task_id": "research-04", "attempt": 1, "status": "blocked", "spent_usd": 0, "duration_ms": 0.119, "interventions": 0, "child_run_id": null}
+{"at": "2026-11-22T03:59:14.326Z", "type": "eval_attempt_started", "task_id": "research-05", "attempt": 1, "conditions_hash": "53d71f744214"}
+{"at": "2026-11-22T03:59:14.326Z", "type": "eval_attempt_finished", "task_id": "research-05", "attempt": 1, "status": "blocked", "spent_usd": 0, "duration_ms": 0.241, "interventions": 0, "child_run_id": null}
+{"at": "2026-11-22T03:59:14.326Z", "type": "eval_attempt_started", "task_id": "connector-01", "attempt": 1, "conditions_hash": "53d71f744214"}
+{"at": "2026-11-22T03:59:14.326Z", "type": "eval_attempt_finished", "task_id": "connector-01", "attempt": 1, "status": "blocked", "spent_usd": 0, "duration_ms": 0.14, "interventions": 0, "child_run_id": null}
+{"at": "2026-11-22T03:59:14.326Z", "type": "eval_attempt_started", "task_id": "connector-02", "attempt": 1, "conditions_hash": "53d71f744214"}
+{"at": "2026-11-22T03:59:14.327Z", "type": "eval_attempt_finished", "task_id": "connector-02", "attempt": 1, "status": "blocked", "spent_usd": 0, "duration_ms": 0.14, "interventions": 0, "child_run_id": null}
+{"at": "2026-11-22T03:59:14.327Z", "type": "eval_attempt_started", "task_id": "connector-03", "attempt": 1, "conditions_hash": "53d71f744214"}
+{"at": "2026-11-22T03:59:14.327Z", "type": "eval_attempt_finished", "task_id": "connector-03", "attempt": 1, "status": "blocked", "spent_usd": 0, "duration_ms": 0.077, "interventions": 0, "child_run_id": null}
+{"at": "2026-11-22T03:59:14.327Z", "type": "eval_attempt_started", "task_id": "connector-04", "attempt": 1, "conditions_hash": "53d71f744214"}
+{"at": "2026-11-22T03:59:14.327Z", "type": "eval_attempt_finished", "task_id": "connector-04", "attempt": 1, "status": "blocked", "spent_usd": 0, "duration_ms": 0.095, "interventions": 0, "child_run_id": null}
+{"at": "2026-11-22T03:59:14.328Z", "type": "eval_attempt_started", "task_id": "connector-05", "attempt": 1, "conditions_hash": "53d71f744214"}
+{"at": "2026-11-22T03:59:14.328Z", "type": "eval_attempt_finished", "task_id": "connector-05", "attempt": 1, "status": "blocked", "spent_usd": 0, "duration_ms": 0.076, "interventions": 0, "child_run_id": null}
+{"at": "2026-11-22T03:59:14.329Z", "type": "status", "from": "running", "to": "incomplete"}

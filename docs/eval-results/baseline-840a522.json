@@ -1,0 +1,414 @@
+{
+  "schemaVersion": 1,
+  "suite": "nyra-real-tasks-v1",
+  "id": "ev-856b429f7d05",
+  "createdAt": "2026-11-22T03:59:14.316Z",
+  "sourceRevision": "840a522e207a838eb6720283d5eeaaf4bfb571f7",
+  "sourceHash": "37e1f78b4ded324e45075a8bee734754fa62bbbc5445ddfa3fccf6971c708d4c",
+  "harnessHash": "8a14830dca4bf0881fe150c91d6ecb214c3906cb0ba360408612a838bf4a2180",
+  "catalogHash": "ebf813d9ea24389297f0f575fccef2b77ad25e647d002657b482fec26780add2",
+  "conditions": {
+    "provider": "ollama",
+    "model": "qwen2.5:7b",
+    "maxCostUsd": 0,
+    "maxTurns": 12,
+    "timeoutMs": 120000,
+    "inputPer1M": 0,
+    "outputPer1M": 0
+  },
+  "environment": {
+    "runtime": "v26.3.0",
+    "bun": "1.4.5",
+    "platform": "linux",
+    "arch": "x64",
+    "modelDigest": null,
+    "chromium": "Chromium 156.0.8078.79 built on Debian GNU/Linux 13 (trixie)",
+    "node": "v24.22.3"
+  },
+  "conditionsHash": "53d71f74421454541f4731e025c4df190943616a51805533635ffd1e224ca360",
+  "wallDurationMs": 108.937,
+  "finishedAt": "2026-11-22T03:59:14.328Z",
+  "parentReport": null,
+  "results": [
+    {
+      "taskId": "code-01",
+      "category": "code",
+      "attempts": [
+        {
+          "status": "blocked",
+          "reason": "local-model-unavailable",
+          "checks": [],
+          "spentUsd": 0,
+          "interventions": 0,
+          "modelCalls": 0,
+          "taskId": "code-01",
+          "attempt": 1,
+          "durationMs": 0.691,
+          "conditionsHash": "53d71f74421454541f4731e025c4df190943616a51805533635ffd1e224ca360"
+        }
+      ]
+    },
+    {
+      "taskId": "code-02",
+      "category": "code",
+      "attempts": [
+        {
+          "status": "blocked",
+          "reason": "local-model-unavailable",
+          "checks": [],
+          "spentUsd": 0,
+          "interventions": 0,
+          "modelCalls": 0,
+          "taskId": "code-02",
+          "attempt": 1,
+          "durationMs": 0.224,
+          "conditionsHash": "53d71f74421454541f4731e025c4df190943616a51805533635ffd1e224ca360"
+        }
+      ]
+    },
+    {
+      "taskId": "code-03",
+      "category": "code",
+      "attempts": [
+        {
+          "status": "blocked",
+          "reason": "local-model-unavailable",
+          "checks": [],
+          "spentUsd": 0,
+          "interventions": 0,
+          "modelCalls": 0,
+          "taskId": "code-03",
+          "attempt": 1,
+          "durationMs": 0.183,
+          "conditionsHash": "53d71f74421454541f4731e025c4df190943616a51805533635ffd1e224ca360"
+        }
+      ]
+    },
+    {
+      "taskId": "code-04",
+      "category": "code",
+      "attempts": [
+        {
+          "status": "blocked",
+          "reason": "local-model-unavailable",
+          "checks": [],
+          "spentUsd": 0,
+          "interventions": 0,
+          "modelCalls": 0,
+          "taskId": "code-04",
+          "attempt": 1,
+          "durationMs": 0.332,
+          "conditionsHash": "53d71f74421454541f4731e025c4df190943616a51805533635ffd1e224ca360"
+        }
+      ]
+    },
+    {
+      "taskId": "code-05",
+      "category": "code",
+      "attempts": [
+        {
+          "status": "blocked",
+          "reason": "local-model-unavailable",
+          "checks": [],
+          "spentUsd": 0,
+          "interventions": 0,
+          "modelCalls": 0,
+          "taskId": "code-05",
+          "attempt": 1,
+          "durationMs": 0.168,
+          "conditionsHash": "53d71f74421454541f4731e025c4df190943616a51805533635ffd1e224ca360"
+        }
+      ]
+    },
+    {
+      "taskId": "browser-01",
+      "category": "browser",
+      "attempts": [
+        {
+          "status": "blocked",
+          "reason": "local-model-unavailable",
+          "checks": [],
+          "spentUsd": 0,
+          "interventions": 0,
+          "modelCalls": 0,
+          "taskId": "browser-01",
+          "attempt": 1,
+          "durationMs": 0.162,
+          "conditionsHash": "53d71f74421454541f4731e025c4df190943616a51805533635ffd1e224ca360"
+        }
+      ]
+    },
+    {
+      "taskId": "browser-02",
+      "category": "browser",
+      "attempts": [
+        {
+          "status": "blocked",
+          "reason": "local-model-unavailable",
+          "checks": [],
+          "spentUsd": 0,
+          "interventions": 0,
+          "modelCalls": 0,
+          "taskId": "browser-02",
+          "attempt": 1,
+          "durationMs": 0.173,
+          "conditionsHash": "53d71f74421454541f4731e025c4df190943616a51805533635ffd1e224ca360"
+        }
+      ]
+    },
+    {
+      "taskId": "browser-03",
+      "category": "browser",
+      "attempts": [
+        {
+          "status": "blocked",
+          "reason": "local-model-unavailable",
+          "checks": [],
+          "spentUsd": 0,
+          "interventions": 0,
+          "modelCalls": 0,
+          "taskId": "browser-03",
+          "attempt": 1,
+          "durationMs": 0.101,
+          "conditionsHash": "53d71f74421454541f4731e025c4df190943616a51805533635ffd1e224ca360"
+        }
+      ]
+    },
+    {
+      "taskId": "browser-04",
+      "category": "browser",
+      "attempts": [
+        {
+          "status": "blocked",
+          "reason": "local-model-unavailable",
+          "checks": [],
+          "spentUsd": 0,
+          "interventions": 0,
+          "modelCalls": 0,
+          "taskId": "browser-04",
+          "attempt": 1,
+          "durationMs": 0.148,
+          "conditionsHash": "53d71f74421454541f4731e025c4df190943616a51805533635ffd1e224ca360"
+        }
+      ]
+    },
+    {
+      "taskId": "browser-05",
+      "category": "browser",
+      "attempts": [
+        {
+          "status": "blocked",
+          "reason": "local-model-unavailable",
+          "checks": [],
+          "spentUsd": 0,
+          "interventions": 0,
+          "modelCalls": 0,
+          "taskId": "browser-05",
+          "attempt": 1,
+          "durationMs": 0.146,
+          "conditionsHash": "53d71f74421454541f4731e025c4df190943616a51805533635ffd1e224ca360"
+        }
+      ]
+    },
+    {
+      "taskId": "research-01",
+      "category": "research",
+      "attempts": [
+        {
+          "status": "blocked",
+          "reason": "local-model-unavailable",
+          "checks": [],
+          "spentUsd": 0,
+          "interventions": 0,
+          "modelCalls": 0,
+          "taskId": "research-01",
+          "attempt": 1,
+          "durationMs": 0.171,
+          "conditionsHash": "53d71f74421454541f4731e025c4df190943616a51805533635ffd1e224ca360"
+        }
+      ]
+    },
+    {
+      "taskId": "research-02",
+      "category": "research",
+      "attempts": [
+        {
+          "status": "blocked",
+          "reason": "local-model-unavailable",
+          "checks": [],
+          "spentUsd": 0,
+          "interventions": 0,
+          "modelCalls": 0,
+          "taskId": "research-02",
+          "attempt": 1,
+          "durationMs": 0.251,
+          "conditionsHash": "53d71f74421454541f4731e025c4df190943616a51805533635ffd1e224ca360"
+        }
+      ]
+    },
+    {
+      "taskId": "research-03",
+      "category": "research",
+      "attempts": [
+        {
+          "status": "blocked",
+          "reason": "local-model-unavailable",
+          "checks": [],
+          "spentUsd": 0,
+          "interventions": 0,
+          "modelCalls": 0,
+          "taskId": "research-03",
+          "attempt": 1,
+          "durationMs": 0.239,
+          "conditionsHash": "53d71f74421454541f4731e025c4df190943616a51805533635ffd1e224ca360"
+        }
+      ]
+    },
+    {
+      "taskId": "research-04",
+      "category": "research",
+      "attempts": [
+        {
+          "status": "blocked",
+          "reason": "local-model-unavailable",
+          "checks": [],
+          "spentUsd": 0,
+          "interventions": 0,
+          "modelCalls": 0,
+          "taskId": "research-04",
+          "attempt": 1,
+          "durationMs": 0.119,
+          "conditionsHash": "53d71f74421454541f4731e025c4df190943616a51805533635ffd1e224ca360"
+        }
+      ]
+    },
+    {
+      "taskId": "research-05",
+      "category": "research",
+      "attempts": [
+        {
+          "status": "blocked",
+          "reason": "local-model-unavailable",
+          "checks": [],
+          "spentUsd": 0,
+          "interventions": 0,
+          "modelCalls": 0,
+          "taskId": "research-05",
+          "attempt": 1,
+          "durationMs": 0.241,
+          "conditionsHash": "53d71f74421454541f4731e025c4df190943616a51805533635ffd1e224ca360"
+        }
+      ]
+    },
+    {
+      "taskId": "connector-01",
+      "category": "connector",
+      "attempts": [
+        {
+          "status": "blocked",
+          "reason": "local-model-unavailable",
+          "checks": [],
+          "spentUsd": 0,
+          "interventions": 0,
+          "modelCalls": 0,
+          "taskId": "connector-01",
+          "attempt": 1,
+          "durationMs": 0.14,
+          "conditionsHash": "53d71f74421454541f4731e025c4df190943616a51805533635ffd1e224ca360"
+        }
+      ]
+    },
+    {
+      "taskId": "connector-02",
+      "category": "connector",
+      "attempts": [
+        {
+          "status": "blocked",
+          "reason": "local-model-unavailable",
+          "checks": [],
+          "spentUsd": 0,
+          "interventions": 0,
+          "modelCalls": 0,
+          "taskId": "connector-02",
+          "attempt": 1,
+          "durationMs": 0.14,
+          "conditionsHash": "53d71f74421454541f4731e025c4df190943616a51805533635ffd1e224ca360"
+        }
+      ]
+    },
+    {
+      "taskId": "connector-03",
+      "category": "connector",
+      "attempts": [
+        {
+          "status": "blocked",
+          "reason": "local-model-unavailable",
+          "checks": [],
+          "spentUsd": 0,
+          "interventions": 0,
+          "modelCalls": 0,
+          "taskId": "connector-03",
+          "attempt": 1,
+          "durationMs": 0.077,
+          "conditionsHash": "53d71f74421454541f4731e025c4df190943616a51805533635ffd1e224ca360"
+        }
+      ]
+    },
+    {
+      "taskId": "connector-04",
+      "category": "connector",
+      "attempts": [
+        {
+          "status": "blocked",
+          "reason": "local-model-unavailable",
+          "checks": [],
+          "spentUsd": 0,
+          "interventions": 0,
+          "modelCalls": 0,
+          "taskId": "connector-04",
+          "attempt": 1,
+          "durationMs": 0.095,
+          "conditionsHash": "53d71f74421454541f4731e025c4df190943616a51805533635ffd1e224ca360"
+        }
+      ]
+    },
+    {
+      "taskId": "connector-05",
+      "category": "connector",
+      "attempts": [
+        {
+          "status": "blocked",
+          "reason": "local-model-unavailable",
+          "checks": [],
+          "spentUsd": 0,
+          "interventions": 0,
+          "modelCalls": 0,
+          "taskId": "connector-05",
+          "attempt": 1,
+          "durationMs": 0.076,
+          "conditionsHash": "53d71f74421454541f4731e025c4df190943616a51805533635ffd1e224ca360"
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "total": 20,
+    "passed": 0,
+    "failed": 0,
+    "blocked": 20,
+    "executed": 0,
+    "successRateAll": 0,
+    "successRateExecuted": null,
+    "executionCoverage": 0,
+    "recoveredOnRetry": 0,
+    "attempts": 20,
+    "modelCalls": 0,
+    "unknownModelCallAttempts": 0,
+    "knownSpentUsd": 0,
+    "spentUsd": 0,
+    "unknownCostAttempts": 0,
+    "durationMs": 3.877,
+    "interventions": 0,
+    "unknownInterventionAttempts": 0
+  }
+}
