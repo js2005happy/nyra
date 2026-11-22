@@ -24,6 +24,20 @@ class ToolReportStatusTests(unittest.TestCase):
                 self.assertFalse(status.execution_verified)
                 self.assertFalse(status.safe_to_auto_resume)
 
+    def test_untyped_non_text_reports_are_unknown(self):
+        for result in ({"ok": True}, {"outcome": "reported_ok"}, None, 0, False, []):
+            with self.subTest(result=result):
+                status = classify_tool_report(result)
+                self.assertFalse(status.reported_failure)
+                self.assertTrue(status.reported_unknown)
+                self.assertFalse(status.execution_verified)
+                self.assertFalse(status.safe_to_auto_resume)
+
+    def test_raised_non_text_is_failure_not_unknown(self):
+        status = classify_tool_report(None, raised=True)
+        self.assertTrue(status.reported_failure)
+        self.assertFalse(status.reported_unknown)
+
     def test_exception_overrides_success_looking_result(self):
         self.assertTrue(classify_tool_report("ok", raised=True).reported_failure)
 
