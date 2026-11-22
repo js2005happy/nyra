@@ -252,7 +252,7 @@ nyra setup       # 首次启动向导（中文，三步到第一个任务）
 
 > 如实说明：没有在真手机上验证过（只在电脑上用 Playwright 模拟 iPhone 14 与 Pixel 7 跑过）；真机上的“添加到主屏幕”菜单、系统启动屏、iOS 独立窗口的存储行为都还没亲手试过。
 
-**安卓 APK（0.5.3 起）**：想装真 App 而不是浏览器书签时，到 [Releases](https://github.com/js2005happy/nyra/releases) 下最新版下载 `nyra-android-debug.apk`，装到手机上，打开后填电脑的局域网地址与配对码连接（配对方法与上面 PWA 相同）。iPhone 仍用上面的 PWA（没有 IPA，要 Apple Developer 账号与证书，见 [docs/installers.md](docs/installers.md)）。
+**安卓安装包（敬请期待）**：正式签名的安装包还在等证书，好了会挂到 [Releases](https://github.com/js2005happy/nyra/releases)。目前只有 CI 编出的 debug 包 `nyra-android-debug.apk`，想先试可以到最新版下载，装到手机上，打开后填电脑的局域网地址与配对码连接（配对方法与上面 PWA 相同）。iPhone 仍用上面的 PWA（没有 IPA，要 Apple Developer 账号与证书，见 [docs/installers.md](docs/installers.md)）。
 
 > 如实说明：APK 是 debug 签名（不是正式签名），且只在 CI 里编出来、没在真机上装过；第一次装时如有出入以手机上实际出现的为准。
 
