@@ -8,7 +8,7 @@ import {
   symlinkSync,
   readdirSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { EVAL_TASKS, DEFAULT_EVAL_CONDITIONS } from '../../src/eval/catalog.ts';
@@ -274,13 +274,14 @@ test('Eval symlink and traversal artifacts cannot escape workspace', () => {
   if (process.platform !== 'win32') {
     symlinkSync(join(outside, 'result.json'), join(workdir, 'result.json'));
     expect(checkJsonArtifact(workdir, {}).passed).toBe(false);
-    expect(() => writeEvalJson(join(workdir, 'result.json'), {})).toThrow();
+    expect(() => writeEvalJson(join(workdir, 'result.json'), {}, workdir)).toThrow();
   }
 });
 test('Eval report is private and atomic json', () => {
-  const p = join(tmp(), 'report.json');
-  writeEvalJson(p, { a: 1 });
-  writeEvalJson(p, { a: 2 });
+  const dir = tmp(),
+    p = join(dir, 'report.json');
+  writeEvalJson(p, { a: 1 }, dir);
+  writeEvalJson(p, { a: 2 }, dir);
   expect(JSON.parse(readFileSync(p, 'utf8'))).toEqual({ a: 2 });
   expectPerms(p, 0o600);
   expect(readdirSync(join(p, '..')).filter((n) => n.endsWith('.tmp'))).toEqual(
@@ -635,7 +636,7 @@ test('Eval DeepSeek connector provider returns canned usage and echoes tool name
     if (old === undefined) delete process.env.NYRA_EVAL_DEEPSEEK_HELPER;
     else process.env.NYRA_EVAL_DEEPSEEK_HELPER = old;
   }
-  expect(resolveDeepSeekHelperPath()).toContain(
+  expect(resolveDeepSeekHelperPath().split(sep).join('/')).toContain(
     'custom.deepseek/bin/deepseek.py',
   );
 });
