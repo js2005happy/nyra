@@ -1,3 +1,10 @@
+## 2026-11-23 — P1 web_fetch network exception privacy (static-only)
+
+- **Repository fact (source inspection):** `_tool_web_fetch` interpolated arbitrary network exception text into model-visible failure output. Network errors can contain sensitive URLs or credentials; this is a preventive source-based inference, not an observed Angel incident. Replaced that exception branch with a constant error (implemented, untested).
+- **External feedback (reviewed 2026-11-23):** [Codex #31015](https://github.com/openai/codex/issues/31015) (2026-07-03) describes pre-redaction tool output exposure; [Codex #34233](https://github.com/openai/codex/issues/34233) (2026-07-19) describes credential-bearing tool output. Individual external reports, not Angel incident evidence or population prevalence.
+- **Ranked candidates (value / difficulty / safety risk / dependencies):** P1 web_fetch exception privacy **high / low / low / existing fetch handler (implemented, untested)**; P1 remaining explicit ToolError and http_post exception audit **high / medium / medium / individual tool contracts (open)**; P1 trusted read-only typed adapters **high / medium / medium / local provenance (open)**; P1 pre-model/pre-transcript privacy boundary **high / high / high / lifecycle and consent design (research)**; P1 independent side-effect receipts **high / high / high / trusted external authority (blocked)**.
+- **Boundary:** successful fetched content, requested URL, evidence paths and HTTP POST responses are unchanged. No general DLP, retries, new dependencies or runtime validation.
+
 ## 2026-11-23 — P1 web_search exception privacy (static-only)
 
 - **Repository fact:** `web_search` included explicit ToolError and unexpected network exception text in model-visible fallback errors. This is a potential query/credential disclosure inferred from source inspection, not an observed incident. Fixed by using static provider-specific failure labels (implemented, untested).
