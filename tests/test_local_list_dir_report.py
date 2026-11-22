@@ -30,6 +30,18 @@ class LocalListDirReportTests(unittest.TestCase):
             self.assertTrue(output.startswith("错误："))
             self.assertTrue(classify_tool_report(report).reported_failure)
 
+    def test_missing_directory_does_not_echo_private_path(self):
+        with tempfile.TemporaryDirectory() as root:
+            ctx = ToolContext(workdir=Path(root), mode="readonly", interactive=False, memory_path=Path(root) / "MEMORY.md", skills_dir=Path(root) / "skills")
+            secret = "/private/customer-identifier/hidden-folder"
+            output, report = execute_local_list_dir_report(ctx, secret)
+            self.assertEqual(output, "错误：目录不存在")
+            self.assertNotIn(secret, output)
+            status = classify_tool_report(report)
+            self.assertTrue(status.reported_failure)
+            self.assertFalse(status.execution_verified)
+            self.assertFalse(status.safe_to_auto_resume)
+
     def test_listing_text_cannot_spoof_failure_status(self):
         with tempfile.TemporaryDirectory() as root:
             Path(root, "错误：fake.txt").write_text("x", encoding="utf-8")
