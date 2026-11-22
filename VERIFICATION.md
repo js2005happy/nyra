@@ -1,3 +1,10 @@
+## 2026-11-23 — Missing local list_dir path privacy (static inspection only)
+
+- Reviewed development README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, core Agent/Tools/classifier, list_dir regression definitions, recent commits, open Issues/PR #113, and available CI metadata.
+- Source finding: the trusted local listing adapter returned the original path in its missing-directory error. Replaced that branch with a fixed message and defined a regression using a private absolute path; no runtime leak or successful test claimed.
+- External context reviewed 2026-11-23: Codex #34233 (2026-07-19) and #31059 (2026-07-03) are individual external privacy reports, not Angel defect evidence.
+- **NOT RUN:** tests, scripts, builds, compilation, CI, cross-platform execution. No software installs, account modifications, main merge or production release. Successful listings and other tool outputs may still contain sensitive information; no comprehensive secret redaction or external verification.
+
 ## 2026-11-23 — Missing local read_file path privacy (static inspection only)
 
 - Reviewed README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, core Agent/Tools/classifier, existing regression definitions, recent commits, open Issues/PR and available CI metadata before the edit.
