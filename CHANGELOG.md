@@ -1,3 +1,8 @@
+## 2026-11-23 — Local missing-directory path redaction (unreleased, static-only)
+
+- Trusted local `list_dir` now uses a fixed missing-directory message instead of returning the caller-provided path. The structured failure status remains unchanged; successful listings and remote backends are unaffected. Added one unexecuted regression definition.
+- No tests, scripts, compilation, CI, installs, account modifications, new dependencies, main merge or production release.
+
 ## 2026-11-23 — Local missing-file path redaction (unreleased, static-only)
 
 - The trusted local read_file adapter now returns a fixed missing-file error rather than echoing the caller-provided path; typed failure status is unchanged. Added an unexecuted regression definition. No change to successful file contents or remote backends.
