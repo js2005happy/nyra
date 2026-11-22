@@ -33,6 +33,20 @@ class ToolReportStatusTests(unittest.TestCase):
                 self.assertFalse(status.execution_verified)
                 self.assertFalse(status.safe_to_auto_resume)
 
+    def test_blank_legacy_report_is_unknown(self):
+        for result in ("", " ", "\\n\\t", "\\u2003"):
+            with self.subTest(result=result):
+                status = classify_tool_report(result)
+                self.assertFalse(status.reported_failure)
+                self.assertTrue(status.reported_unknown)
+                self.assertFalse(status.execution_verified)
+                self.assertFalse(status.safe_to_auto_resume)
+
+    def test_blank_report_with_exception_is_failure(self):
+        status = classify_tool_report("  ", raised=True)
+        self.assertTrue(status.reported_failure)
+        self.assertFalse(status.reported_unknown)
+
     def test_raised_non_text_is_failure_not_unknown(self):
         status = classify_tool_report(None, raised=True)
         self.assertTrue(status.reported_failure)
