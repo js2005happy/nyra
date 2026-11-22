@@ -54,6 +54,23 @@ class ToolObservationTests(unittest.TestCase):
         self.assertFalse(any(kind == "no_progress_attention" for kind, _ in events))
         self.assertEqual(agent.no_progress_detector.snapshot().consecutive_idle, 1)
 
+    def test_reused_detector_starts_each_run_with_zero_idle(self):
+        events = []
+        detector = NoProgressDetector(idle_limit=2)
+        detector.observe_event("tool_returned")
+        self.assertEqual(detector.snapshot().consecutive_idle, 1)
+        agent = Agent(
+            OneToolProvider(), mode="readonly", interactive=False,
+            no_progress_detector=detector,
+            on_event=lambda kind, payload: events.append((kind, payload)),
+        )
+        with patch("angel.agent.save_session"), patch(
+            "angel.agent.execute_tool", return_value="ok"
+        ):
+            self.assertEqual(agent.run("new task"), "done")
+        self.assertEqual(detector.snapshot().consecutive_idle, 1)
+        self.assertFalse(any(kind == "no_progress_attention" for kind, _ in events))
+
     def test_one_tool_return_alerts_at_limit_one(self):
         events = []
         agent = Agent(
