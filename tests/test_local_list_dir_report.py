@@ -51,6 +51,16 @@ class LocalListDirReportTests(unittest.TestCase):
             self.assertFalse(status.execution_verified)
             self.assertFalse(status.safe_to_auto_resume)
 
+    def test_type_error_redacts_private_path(self):
+        with tempfile.TemporaryDirectory() as root:
+            ctx = ToolContext(workdir=Path(root), mode="readonly", interactive=False, memory_path=Path(root) / "MEMORY.md", skills_dir=Path(root) / "skills")
+            secret = "/private/session-key/location"
+            with patch("angel.tools._resolve_path", side_effect=TypeError(f"bad argument: {secret}")):
+                output, report = execute_local_list_dir_report(ctx)
+            self.assertEqual(output, "错误：工具参数不正确")
+            self.assertNotIn(secret, output)
+            self.assertTrue(classify_tool_report(report).reported_failure)
+
     def test_backend_is_rejected_before_remote_call(self):
         with tempfile.TemporaryDirectory() as root:
             ctx = ToolContext(workdir=Path(root), mode="readonly", interactive=False, memory_path=Path(root) / "MEMORY.md", skills_dir=Path(root) / "skills")
