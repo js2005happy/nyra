@@ -11,7 +11,7 @@ import * as termMark from "../../src/termMark.ts";
 import { renderHeader, stripAnsi, MARK_MIN_COLS } from "../../src/banner.ts";
 import { textWidth } from "../../src/consoleUi.ts";
 
-const INFO = { version: "0.5.3", model: "deepseek / deepseek-flash", mode: "auto", cwd: "/home/sj/projects/nyra-cli", branch: "main" };
+const INFO = { version: "0.5.4", model: "deepseek / deepseek-flash", mode: "auto", cwd: "/home/sj/projects/nyra-cli", branch: "main" };
 
 test("TermMark.test_coverage_constant_matches_brand_geometry", () => {
   // 改了 brandMark 的几何，这里会失败并打印新常量：把它贴回 src/termMark.ts。
@@ -124,7 +124,7 @@ test("TermMark.test_header_fallbacks", () => {
   // 不能画块字符（老 conhost / NYRA_ASCII）、太窄、非 TTY：单行，没有块字符。
   for (const o of [{ unicode: false, width: 100 }, { unicode: true, width: MARK_MIN_COLS - 1 }, { unicode: true, width: 120, compact: true }]) {
     const lines = renderHeader(INFO, { ...o, color: false, home: "/home/sj" });
-    expect(lines[1]).toMatch(/^[✻*] Nyra 0\.5\.3$/);
+    expect(lines[1]).toMatch(/^[✻*] Nyra 0\.5\.4$/);
     expect(lines.join("\n")).not.toMatch(block);
   }
   // 任何宽度都不超出终端。
