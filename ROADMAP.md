@@ -1,3 +1,9 @@
+## 2026-11-22 — 本地目录读取异常隐私边界（静态增量）
+
+- **仓库事实**：开发分支的本地 `list_dir` 结构化适配器在通用异常分支将 `str(exc)` 直接送入模型可见工具文本；文件系统异常可能含绝对路径、用户名或挂载位置。本轮改为固定的通用失败消息，同时保留 `StructuredToolReport(reported_error)`；仅修正本地 `list_dir`，不修改远端后端或其它工具。
+- **外部用户反馈**：[Codex #60104](https://github.com/openai/codex/issues/60104)，2026-11-07 用户报告长任务返工、错误状态与额度浪费；此为外部个案，**不是本地路径泄漏的实证**。本轮隐私风险由源码静态审查推断，未发生实际泄漏验证。
+- **价值/难度/风险/依赖排序**：① P1 本地异常输出最小化（高/低/低/现有结构化适配器；本轮已提交、未测试）；② P1 扩展其它本地只读工具结构化结果（高/中/中/逐工具保留模型兼容文本）；③ P1 独立进展/副作用回执（高/高/高/可信验收）；④ P1 私有任务契约持久化（中高/中/中高/安全存储与审批）；⑤ P0 跨进程执行所有权（高/高/高/跨平台锁及崩溃语义）。禁止自动重放未知副作用。
+
 ## 2026-11-22 — P1 trusted local list_dir structured report (static-only)
 
 - **Repository fact (source inspection):** the local `list_dir` handler has direct filesystem control-flow information, but Agent previously classified its returned text. A filename starting with `错误：` can therefore be mistaken for a failed listing when it is simply data. This is a static inference, not a runtime reproduction.
