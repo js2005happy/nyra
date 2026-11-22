@@ -1,3 +1,9 @@
+## 2026-11-22 — Terminal-reply idle false positive (static-only)
+
+- **Source facts (reviewed 2026-11-22):** Existing Angel main-loop source observed every model reply as idle before checking whether the reply contained tool calls; a terminal reply could therefore trigger an idle warning even when the task was ending. External [Codex #41007](https://github.com/openai/codex/issues/41007) (2026-08-27) and [#47802](https://github.com/openai/codex/issues/47802) (2026-09-24) report polling-related wasted activity; these individual reports do not establish Angel prevalence.
+- **Engineering inference and priority:** P1 terminal false-positive fix high value / low difficulty / low risk / existing advisory detector (**implemented, untested**). P1 independent verified progress source high / medium / medium / trusted controller (**open**). P1 private task contract persistence high / medium / medium-high / cross-platform storage (**blocked**). P0 claim dispatch high / high / high / sandbox and approval (**blocked**).
+- Terminal model replies now skip idle observation; model replies requesting tools and tool returns remain untrusted observations. No automatic cancellation or execution authorization. Tests/CI not run.
+
 ## 2026-11-22 — Opt-in advisory idle observation (static only)
 
 - External facts (reviewed 2026-11-22): Codex issue #41007 (2026-08-27, https://github.com/openai/codex/issues/41007) reports repeated unchanged-UI polling; #47802 (2026-09-24, https://github.com/openai/codex/issues/47802) reports failed subagent dispatch and polling. Individual reports, not prevalence or reproduced Angel defects.
