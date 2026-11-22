@@ -1,3 +1,9 @@
+## 2026-11-23 — git_status 缺失目录隐私（仅静态）
+
+- 已读取开发分支 README、DESIGN、CHANGELOG、VERIFICATION、ROADMAP、`angel/tools.py`、`angel/agent.py`，核对近期提交、开放 Issues/PR 和已有 CI 元数据；PR #113 已涵盖真实任务评测，本轮不重复实现。
+- 静态确认本地 `_tool_git_status` 的缺失目录分支直接插入调用方路径；改为固定错误文本，新增绝对私人路径回归测试定义。
+- 未运行测试、编译、CI、Git 命令或外部账户操作；未合并 main、未发布。GitHub 状态查询为空不能视为测试通过。远端后端和其他异常路径未覆盖。
+
 ## 2026-11-23 — HTTP POST exception privacy (static inspection only)
 
 - Reviewed development README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, core Agent/Tools, prior privacy regressions, latest visible main commits, open Issues (none) / PR #113, and prior commit CI status/workflow metadata (empty). Source finding: `_tool_http_post` returned unexpected exception text verbatim; potential private URL or credential disclosure is inferred from source, not a reproduced incident.
