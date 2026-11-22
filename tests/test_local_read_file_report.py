@@ -61,6 +61,14 @@ class LocalReadFileReportTests(unittest.TestCase):
                 execute_local_read_file_report(ctx, "note.txt")
 
 
+    def test_legacy_missing_file_does_not_echo_private_path(self):
+        from angel.tools import _tool_read_file
+        private_path = "/private-user/secret-token-location.txt"
+        with tempfile.TemporaryDirectory() as root:
+            result = _tool_read_file(self._ctx(root), private_path)
+        self.assertEqual(result, "错误：文件不存在")
+        self.assertNotIn(private_path, result)
+
     def test_missing_file_does_not_echo_private_path(self):
         private_path = "/private-user/secret-token-location.txt"
         with tempfile.TemporaryDirectory() as root:
