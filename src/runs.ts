@@ -62,6 +62,10 @@ hook_blocked: ["event", "tool", "hook", "reason"],
 // 为什么放行/拦截、命中哪条确定性规则）。与缺口 3b 的 review_decision
 // （审阅队列的批复）是两个事件，不要混用。
 reviewer_verdict: ["tool", "decision", "reason", "reviewer_model", "rule"],
+// Turnstone judge：打分制意向验证——放行、转人工、拒绝都记（谁判的、判了什么
+// 工具、风险分、证据、为什么）。与缺口 10 的 reviewer_verdict（二值结论）
+// 是两个事件，不要混用。
+tool_judge_verdict: ["tool", "verdict", "risk_score", "evidence", "reason", "judge_model"],
 // 缺口 13：验收者结论进证据链——谁验的（verifier_model / source）、验了什么
 // （target：审阅项 id 或子任务 id）、结论（verified/failed/not-verified）、
 // 为什么（reason）、过了几项检查（checks_passed/checks_failed）。打回重做
