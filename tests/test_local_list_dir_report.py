@@ -14,7 +14,7 @@ from angel.tools import ToolContext, execute_local_list_dir_report
 class LocalListDirReportTests(unittest.TestCase):
     def test_empty_directory_is_reported_ok_without_text_inference(self):
         with tempfile.TemporaryDirectory() as root:
-            ctx = ToolContext(workdir=Path(root), mode="readonly")
+            ctx = ToolContext(workdir=Path(root), mode="readonly", interactive=False, memory_path=Path(root) / "MEMORY.md", skills_dir=Path(root) / "skills")
             output, report = execute_local_list_dir_report(ctx)
             self.assertEqual(output, "（空目录）")
             status = classify_tool_report(report)
@@ -25,7 +25,7 @@ class LocalListDirReportTests(unittest.TestCase):
 
     def test_missing_directory_is_reported_error(self):
         with tempfile.TemporaryDirectory() as root:
-            ctx = ToolContext(workdir=Path(root), mode="readonly")
+            ctx = ToolContext(workdir=Path(root), mode="readonly", interactive=False, memory_path=Path(root) / "MEMORY.md", skills_dir=Path(root) / "skills")
             output, report = execute_local_list_dir_report(ctx, "missing")
             self.assertTrue(output.startswith("错误："))
             self.assertTrue(classify_tool_report(report).reported_failure)
@@ -33,14 +33,14 @@ class LocalListDirReportTests(unittest.TestCase):
     def test_listing_text_cannot_spoof_failure_status(self):
         with tempfile.TemporaryDirectory() as root:
             Path(root, "错误：fake.txt").write_text("x", encoding="utf-8")
-            ctx = ToolContext(workdir=Path(root), mode="readonly")
+            ctx = ToolContext(workdir=Path(root), mode="readonly", interactive=False, memory_path=Path(root) / "MEMORY.md", skills_dir=Path(root) / "skills")
             output, report = execute_local_list_dir_report(ctx)
             self.assertIn("错误：fake.txt", output)
             self.assertFalse(classify_tool_report(report).reported_failure)
 
     def test_backend_is_rejected_before_remote_call(self):
         with tempfile.TemporaryDirectory() as root:
-            ctx = ToolContext(workdir=Path(root), mode="readonly")
+            ctx = ToolContext(workdir=Path(root), mode="readonly", interactive=False, memory_path=Path(root) / "MEMORY.md", skills_dir=Path(root) / "skills")
             ctx.backend = object()
             with self.assertRaises(Exception):
                 execute_local_list_dir_report(ctx)
