@@ -62,7 +62,26 @@ export function cleanEvalEnv(home?: string): NodeJS.ProcessEnv {
     NYRA_LANG: 'zh',
   };
   // Windows runtime/process lookup; no tokens, provider config or permission overrides.
-  for (const k of ['SystemRoot', 'WINDIR', 'COMSPEC', 'TEMP', 'TMP'])
+  // Egress proxy vars are transport, not credentials: the DeepSeek connector
+  // helper needs them to reach api.deepseek.com (the runtime proxy also swaps
+  // the hsurr: surrogate for the real key). Without them its requests fail
+  // with SSL WRONG_VERSION_NUMBER. The surrogate itself is fetched from authd
+  // at call time and never enters the environment.
+  for (const k of [
+    'SystemRoot',
+    'WINDIR',
+    'COMSPEC',
+    'TEMP',
+    'TMP',
+    'https_proxy',
+    'HTTPS_PROXY',
+    'http_proxy',
+    'HTTP_PROXY',
+    'all_proxy',
+    'ALL_PROXY',
+    'no_proxy',
+    'NO_PROXY',
+  ])
     if (process.env[k]) env[k] = process.env[k];
   if (home) {
     env.NYRA_HOME = home;
