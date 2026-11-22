@@ -125,6 +125,7 @@
 | `nyra session <create\|list\|show\|join\|leave\|delegate\|accept\|complete\|share\|frame\|record\|end>` | 跨 agent 联合会话：多人多 agent 视频会（本地扇出模型），会内委派 + 共享任务产物（allowlist），画面默认不留存、录制须全体同意（详见 `docs/sessions.md`） |
 | `nyra call <ledger\|show <通话 id>\|summary>` | 通话成本与隐私仪表：每通电话的三本账（传输/媒体/token，本地与云端分开记）+ 录制仪表 + 通话纪要进证据链（详见 `docs/call-ledger.md`） |
 | `nyra agui <register\|list\|show\|link\|connect\|disconnect\|send\|exec\|accept-write\|revoke-write\|a2a>` | 协议中立接入：接任意 AG-UI endpoint 当 Bot（只读先行，写操作须机主显式接受），A2A 复用名片 + 交接（详见 `docs/agui.md`） |
+| `nyra screen <watch\|activity\|status> <电脑 id>` | 缺口 50 第一批：只读看屏——实时看 Bot 的浏览器在做什么（帧指纹，不记帧内容）+ 活动列表（正在做/下一步，与时间线同源）；画面里密码/验证码/卡号自动打码，接管是第二批（详见 `docs/bot-screen.md`） |
 | `nyra voice <status\|speak <文字>\|enable-tts\|disable-tts>` | 语音指挥：看配置与可用性、读一段文字、开关自动回读（默认关；详见 `docs/voice.md`） |
 | `nyra voice call <start\|answer\|decline\|end\|status\|list\|segment\|confirm>` | 实时语音通话：建通话、喂音频段落转写、可选回读（本地 whisper 优先，云端默认关；详见 `docs/voice.md`） |
 | `nyra video <call\|signal\|ice>` | 视频通话 + 按需视觉采样：信令 + TURN + ICE 直连传输，帧按需看（本地优先，云端默认关；详见 `docs/video-call.md`） |
