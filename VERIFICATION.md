@@ -1,3 +1,10 @@
+## 2026-11-23 — HTTP POST exception privacy (static inspection only)
+
+- Reviewed development README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, core Agent/Tools, prior privacy regressions, latest visible main commits, open Issues (none) / PR #113, and prior commit CI status/workflow metadata (empty). Source finding: `_tool_http_post` returned unexpected exception text verbatim; potential private URL or credential disclosure is inferred from source, not a reproduced incident.
+- Changed only the unexpected exception branch to a fixed message; added two unexecuted regression definitions for secret-bearing exceptions and successful response preservation. HTTPError response bodies remain unchanged; POST side effects may be unknown after transport failure and must not be retried automatically.
+- External reports reviewed 2026-11-23: [Codex #34233](https://github.com/openai/codex/issues/34233) opened 2026-07-19, [#31015](https://github.com/openai/codex/issues/31015) opened 2026-07-03, [#30831](https://github.com/openai/codex/issues/30831) opened 2026-07-01. External cases do not prove Angel incidents or population prevalence.
+- **NOT RUN:** tests, compilation, builds, CI, real HTTP requests or cross-platform checks. No installation, external account modification, main merge or production release; code behavior remains unverified at runtime.
+
 ## 2026-11-23 — Web fetch exception privacy (static inspection only)
 
 - Reviewed README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/Tools and prior privacy tests, recent commits, open Issues/PR #113 and available commit status (no statuses returned). Source finding: `_tool_web_fetch` exposed arbitrary network exception text. This is an inferred risk, not a reproduced incident.
