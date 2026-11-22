@@ -1,3 +1,10 @@
+## 2026-11-22 — P1 local list_dir argument error privacy guard (static-only)
+
+- Source fact: the trusted local listing adapter and Agent fallback echoed raw TypeError messages, potentially including sensitive caller values. Preventive source-based inference; no production incident established.
+- Fixed both paths to return generic argument error; regression definition added but not run.
+- External context: Codex #60104 (2026-11-07), https://github.com/openai/codex/issues/60104, reports progress/wasted-work concerns, not a path leak.
+- Ranked candidates (value / difficulty / security / dependency): P1 further read-only structured adapters (high / medium / medium / adapter review); P1 independent side-effect receipts (high / high / high / reconciliation); P1 private task persistence (medium / medium / medium-high / storage isolation). No dependencies added.
+
 ## 2026-11-22 — 本地目录读取异常隐私边界（静态增量）
 
 - **仓库事实**：开发分支的本地 `list_dir` 结构化适配器在通用异常分支将 `str(exc)` 直接送入模型可见工具文本；文件系统异常可能含绝对路径、用户名或挂载位置。本轮改为固定的通用失败消息，同时保留 `StructuredToolReport(reported_error)`；仅修正本地 `list_dir`，不修改远端后端或其它工具。
