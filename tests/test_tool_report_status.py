@@ -36,12 +36,14 @@ class ToolReportStatusTests(unittest.TestCase):
             with self.subTest(outcome=outcome):
                 status = classify_tool_report(StructuredToolReport(outcome))
                 self.assertEqual(status.reported_failure, failed)
+                self.assertEqual(status.reported_unknown, outcome == "unknown")
                 self.assertFalse(status.execution_verified)
                 self.assertFalse(status.safe_to_auto_resume)
 
     def test_structured_exception_overrides_report(self):
         status = classify_tool_report(StructuredToolReport("reported_ok"), raised=True)
         self.assertTrue(status.reported_failure)
+        self.assertFalse(status.reported_unknown)
         self.assertFalse(status.safe_to_auto_resume)
 
     def test_structured_invalid_outcome_rejected(self):
