@@ -400,8 +400,8 @@ class Agent:
                             result, trusted_report = execute_local_list_dir_report(
                                 self.ctx, **args
                             )
-                        except TypeError as exc:
-                            result = f"错误：工具参数不正确：{exc}"
+                        except TypeError:
+                            result = "错误：工具参数不正确"
                     else:
                         result = execute_tool(fn_name, args, self.ctx)
                 except Exception as exc:
