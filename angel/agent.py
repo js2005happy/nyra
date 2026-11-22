@@ -325,7 +325,7 @@ class Agent:
                 "content": msg.get("content") or "",
             }
             tool_calls = msg.get("tool_calls") or []
-            if self.no_progress_detector is not None:
+            if self.no_progress_detector is not None and tool_calls:
                 state = self.no_progress_detector.observe_event("model_message")
                 if state.needs_attention and not progress_alerted:
                     self._emit("no_progress_attention", {
