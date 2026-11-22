@@ -1,8 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/nyra-mark-dark.svg">
-    <img src="docs/assets/nyra-mark.svg" width="72" height="72" alt="Nyra">
-  </picture>
+  <img src="desktop/icon-src/nyra-app-icon.svg" width="88" height="88" alt="Nyra">
 </p>
 
 <h1 align="center">Nyra</h1>
@@ -27,20 +24,24 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/screenshots/mac.png" alt="Nyra 桌面端：会话、审批与 diff 审核" width="100%">
+  <img src="docs/assets/screenshots/desktop.png" alt="Nyra 网页界面：左边是会话，右侧抽屉打开在“改动”，对话里的审批卡和抽屉底部是同一个请求：不行，换个做法 / 允许一次" width="100%">
 </p>
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/assets/screenshots/windows.png" alt="Nyra for Windows"></td>
-    <td width="50%"><img src="docs/assets/screenshots/ios.png" alt="Nyra for iOS"></td>
+    <td width="50%"><img src="docs/assets/screenshots/desktop-wrapup.png" alt="一轮跑完的收尾交代：改了几个文件、有没有推送、检查点可 /undo，以及用时和 token"></td>
+    <td width="50%"><img src="docs/assets/screenshots/desktop-memory.png" alt="新对话首页的项目记忆卡：AGENTS.md、全局说明、MEMORY.md 和最近记下的几条"></td>
   </tr>
   <tr>
-    <td colspan="2"><img src="docs/assets/screenshots/android.png" alt="Nyra for Android"></td>
+    <td width="50%"><img src="docs/assets/screenshots/desktop-running.png" alt="运行中的实时状态行：正在跑哪条命令、已经多少秒；完全访问模式有提示条"></td>
+    <td width="50%"><img src="docs/assets/screenshots/desktop-overview.png" alt="右侧抽屉的概览：状态、改动的文件、计划、证据、用量"></td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="docs/assets/screenshots/mobile.png" alt="手机页面（/m）：对话列表、审批底部弹层（含改动）、对话、审阅队列"></td>
   </tr>
 </table>
 
-<p align="center"><sub>桌面端与移动端界面设计稿（macOS · Windows · iOS · Android），图中数据为示例。目前可用的是命令行与本地网页界面。</sub></p>
+<p align="center"><sub>v0.5.5 网页界面（<code>nyra ui</code>）与手机页面（<code>/m</code>）的实际截图，用本地测试夹具跑出来的示例会话，模型回复是脚本写好的。桌面 App 是同一个界面套壳。</sub></p>
 
 ---
 
@@ -332,7 +333,7 @@ nyra ui --open
 
 一个内嵌页面，不加载任何外部资源（字体随包内嵌）。只监听本机，每次启动生成随机访问 token。
 
-桌面端 v2 按定稿设计稿实现（黑白极简，浅色/深色跟随系统）：左侧按项目分组的会话列表；对话流里工具调用折叠成步骤行，写文件、跑命令前出现审批卡片（拒绝 / 本会话始终允许 / 允许一次，附真实 diff）；右侧审阅面板看改动 diff、计划、证据、终端输出与 Token 用量；输入框可切审批模式、选模型、开计划模式（先只读写出 `plan.md`，审核后按 SHA-256 执行）。Key 只从环境变量读，页面不输入也不保存。手机宽度可用，全键盘可操作。详见 [完整手册](GUIDE.md#网页界面)。
+界面是黑白极简，浅色/深色跟随系统：左侧按项目分组的会话列表；对话流里工具调用折叠成“显示过程”，运行中有实时状态行（正在跑哪条命令、多少秒），一轮跑完有收尾交代（改了几个文件、有没有推送、用时与 token）；写文件、跑命令前出现审批卡（写清这一步能动到什么，按钮是“不行，换个做法 / 允许一次”，“更多”里是本会话总是允许、记住为规则）；右侧抽屉分概览 / 改动 / 计划 / 证据 / 终端；新对话首页有项目记忆卡（AGENTS.md、全局说明、MEMORY.md）；输入框可切审批模式、选模型、开计划模式（先只读写出 `plan.md`，审核后按 SHA-256 执行）。Key 只从环境变量读，页面不输入也不保存。手机宽度可用，全键盘可操作。详见 [完整手册](GUIDE.md#网页界面)。
 
 ### 桌面 App（预览，macOS / Windows）
 

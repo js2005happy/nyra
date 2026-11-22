@@ -131,7 +131,7 @@ test("页面里用的是真标志，不再是 ✦ 占位；README / 启动页引
   expect(MOBILE_V2_HTML).toContain(d); // 配对页 + 空对话列表模板
   expect(MOBILE_V2_HTML).toContain('id="tpl-mark"');
   const readme = readFileSync(join(ROOT, "README.md"), "utf-8");
-  expect(readme).toContain("docs/assets/nyra-mark-dark.svg");
+  expect(readme).toContain("desktop/icon-src/nyra-app-icon.svg"); // README 顶部用应用图标（紫色团子方块）
   for (const page of ["index", "faq", "privacy", "terms", "acceptable-use"]) {
     const html = readFileSync(join(ROOT, "docs", `${page}.html`), "utf-8");
     expect(html).toContain('href="assets/favicon.svg"');
