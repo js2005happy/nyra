@@ -364,7 +364,7 @@ test("toolShell 接线：jobobject + 断网时联网工具在 PowerShell 启动�
     const local = await executeTool("shell", { command: "curl http://localhost:3000/x", timeout: 10 }, ctx);
     expect(local).not.toMatch("禁止联网工具");
     if (ps === null) expect(local).toMatch("Job Object 启动失败");
-    else expect(local).toMatch("沙箱命令退出码");
+    else expect(local).toMatch("沙箱内命令退出码");
     // allowNet=true 时不拦截，同样走到 PowerShell 启动。
     const ctxNet = newToolContext({
       workdir: wd, mode: "full", interactive: false,
