@@ -1,3 +1,7 @@
+## 2026-11-22 — Per-run advisory idle reset (unreleased, untested)
+
+- Clear caller-owned no-progress detector idle counts at the start of each Agent.run, preventing a previous task's observations from contributing to a new task's advisory threshold. Add one unexecuted regression definition. No automatic cancellation, trusted progress inference, new dependency, CI, merge or release.
+
 ## 2026-11-22 — One idle observation per tool return (unreleased, untested)
 
 - Removed the duplicate model-message idle observation before tool dispatch. Each returned tool now contributes one untrusted idle observation; terminal messages still contribute none. Thresholds now count tool returns, not model+tool event pairs.
