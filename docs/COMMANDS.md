@@ -44,7 +44,7 @@
 | `nyra tools` | 工具集体检：每轮 schema 成本与裁剪建议 |
 | `nyra models [list\|show\|refresh\|fallback]` | 模型上下文窗口查询与刷新；`fallback` 看备用链开关、顺序与本月切换统计 |
 | `nyra reviewer <status\|enable\|disable\|set-model\|add-rule\|remove-rule\|list-rules\|check>` | 独立审查层：敏感工具调用先过独立审查 agent，审查失败即拦截（详见 `docs/reviewer.md`） |
-| `nyra judge <status\|enable\|disable\|set-model\|set-thresholds\|check>` | 意向验证 judge：敏感工具调用先打风险分（0-100 + 引用证据），高分拒绝、中段转人工（详见 `docs/tool-judge.md`） |
+| `nyra judge <status\|enable\|disable\|set-model\|set-thresholds\|check\|verdicts>` | 意向验证 judge：敏感工具调用先打风险分（0-100 + 引用证据），高分拒绝、中段转人工；第 2 批 G-P1-12：启发式前置（critical 直接拒、high 转人工，零成本规则先扫一遍）+ verdict 落库，`verdicts` 查最近结论（详见 `docs/tool-judge.md`） |
 | `nyra verifier <status\|enable\|disable\|set-model\|rework-on\|rework-off\|add-rule\|remove-rule\|list-rules\|check>` | 验收者：并行产出合入前先验收，不通过打回重做，结论进证据链（详见 `docs/verifier.md`） |
 | `nyra account <status\|login\|logout\|list\|revoke\|link\|suspend\|reactivate>` | 用户账号登录：Google / GitHub / 邮箱 / SSO，账号身份 + 会话（详见 `docs/accounts.md`） |
 | `nyra sso <provider\|login\|status\|scim>` | 缺口 43 第二批：企业 SSO——OIDC 身份提供方注册与登录、SCIM 账号开通（详见 `docs/sso.md`） |
@@ -94,7 +94,9 @@
 | `nyra script <check\|preauth>` | Pi Bot 借鉴第 1 条：脚本内容判定 + 摘要预授权——纯脚本（白名单静态分析）走快路径不用每次问，例行里的脚本按内容摘要 `script:<SHA-256>` 钉死，内容一改授权自动失效；判定结果写进证据链与审计（详见 `docs/script-purity.md`） |
 | `nyra handover <contract\|checkers>` | Pi Bot 借鉴第 2 条：交接契约的程序化验收——交付物 + 验收项 + 修正轮次上限；验收是程序核对，不调模型，不过打回、轮次用完停下等人；打回与停下记一次信任阶梯违规；结果进证据链与审计（详见 `docs/handover-contract.md`） |
 | `nyra fanout <list\|show\|recover>` | H-5 + H-6：后台扇出——顶层委派默认后台跑，跑完单条 consolidated 消息回填；合并步合成为一份交付物（详见 `docs/merge-fanout.md`） |
-| `nyra team <create\|list\|show\|add\|remove\|dissolve\|dispatch\|handover\|writer>` | GROK 批（新缺口 52）：团队模式——参谋长独占入口，只拆解、分派、汇总；成员须有完整 Charter 才能接单；交接走 inbox/outbox/变更日志；对外动作一律回参谋长/人批；单写者门（同一文件同一时间只一个 agent 写，名额由参谋长移交）与零工具编排者（参谋长只剩委派工具）见 `docs/write-gate.md`（详见 `docs/team.md`） |
+| `nyra team <create\|list\|show\|add\|remove\|dissolve\|dispatch\|handover\|writer\|lead>` | GROK 批（新缺口 52）：团队模式——参谋长独占入口，只拆解、分派、汇总；成员须有完整 Charter 才能接单；交接走 inbox/outbox/变更日志；对外动作一律回参谋长/人批；单写者门（同一文件同一时间只一个 agent 写，名额由参谋长移交）与零工具编排者（参谋长只剩委派工具）见 `docs/write-gate.md`；第 2 批 G-P1-3：lead 租约 + 纪元（`lead <status\|acquire\|release\|transfer>`，换 lead 纪元 +1，旧纪元指令不路由，详见 `docs/team.md`） |
+| `nyra sfu <create\|rooms\|status\|join\|leave\|turn\|record\|close\|reclaim>` | 第 2 批 G-P0-2：群组语音 SFU——选型 mediasoup（Node 原生库，不另起服务），本地实现不走网络；一个 agent + N 个说话者（上限 8，听众 32）、闲置 60 秒回收；TURN 凭据带 TTL（默认 3600 秒）；录制全体同意门（详见 `docs/sfu.md`） |
+| `nyra group <room\|chat\|plan>` | 第 2 批 G-P1-1/G-P1-2：群聊 swarm + 群组计划——`room` 建群聊房（顺序发言，round-robin/selector/handoff 三种模式）；`chat run/send` 跑群聊（终止条件可 AND/OR 组合：消息数/关键词/token 预算/超时/交接/外部叫停）；`plan` 建分工计划（每步有负责人与验收项，步骤走隔离 worktree、验收独立，详见 `docs/group-chat.md` 与 `docs/group-plan.md`） |
 | `nyra subagent <list\|show\|register\|heartbeat\|sweep\|resume\|suspend\|stop\|confirm-stopped\|cancel-stop\|steer>` | 缺口 30：崩溃自续——子 agent 持久行 + 心跳检查点 + 启动扫荡 + 先验状态再续跑；H-3：单点停止（请求停止/确认停下/取消请求，停止现在真中断在途调用——模型请求 abort、工具与子进程被掐断，确认停下后才标已停，停不下来如实写“正在停止”，详见 `docs/roster.md` 与 `docs/cancellation.md`）；H-2：单点引导（排队式引导、检查点消费，`nyra subagent steer <运行 id> "<引导文本>" --yes`，详见 `docs/steer-schema.md`）；H-4：结构化输出契约（`delegate` / `delegate_parallel` 可带 `output_schema`，详见 `docs/steer-schema.md`） |
 | `nyra roster <list\|show>` | H-1：实时花名册——每个子 agent 一行：状态 + 已耗时 + 当前动作（只读快照，token/费用默认不显示，详见 `docs/roster.md`） |
 | `nyra side-effects <list\|show\|record\|mark\|recover>` | DSH-4：先存后做的副作用队列——执行前先落库，重启按年龄恢复、带 recovery note（详见 `docs/kanban.md`） |
@@ -122,9 +124,9 @@
 | `nyra shopify <auth\|status\|products\|product\|orders\|order\|inventory>` | Shopify 连接器（只读）：查商品、订单、库存；写操作一律拒绝（详见 `docs/connectors.md`） |
 | `nyra slack <auth\|status\|channels\|history\|send\|card>` | Slack 连接器：读频道/消息、发消息（须显式批准）、发审批卡；删消息/改频道/管理成员一律拒绝（详见 `docs/connectors.md`） |
 | `nyra mcp server <status\|enable\|disable\|allow-writes-on\|allow-writes-off>` | 对外 MCP 服务开关：别的 agent 经网关 `POST /mcp` 调 Nyra 的记忆与任务（默认关闭；写操作须显式开且过独立审查，详见 `docs/mcp.md`） |
-| `nyra peer <status\|enable\|disable\|list\|auth\|ask\|handoff\|card\|code\|add\|request\|accept\|friends\|block\|circle\|share>` | 对端协作：问别的 Nyra 实例、交接运行上下文、名片加好友（默认关闭；对外发送须开独立审查，详见 `docs/peer.md`） |
+| `nyra peer <status\|enable\|disable\|list\|auth\|ask\|handoff\|card\|code\|add\|request\|accept\|friends\|block\|circle\|share\|grant\|proposal\|branch>` | 对端协作：问别的 Nyra 实例、交接运行上下文、名片加好友（默认关闭；对外发送须开独立审查，详见 `docs/peer.md`）；第 2 批 G-P1-5/G-P1-6/G-P1-8/G-P1-10：名片 per-circle 可见性、带 scope 可吊销的 grant、对方写操作默认进提议、外来任务隔离分支 |
 | `nyra circle <create\|list\|show\|invite\|revoke\|delete\|bind\|unbind\|owner\|check\|bindings>` | 信任圈与跨实例准入：谁能给 agent 发任务（默认全封闭，圈外消息网关直接丢弃；详见 `docs/circles.md`） |
-| `nyra session <create\|list\|show\|join\|leave\|delegate\|accept\|complete\|share\|frame\|record\|end>` | 跨 agent 联合会话：多人多 agent 视频会（本地扇出模型），会内委派 + 共享任务产物（allowlist），画面默认不留存、录制须全体同意（详见 `docs/sessions.md`） |
+| `nyra session <create\|list\|show\|join\|leave\|delegate\|accept\|complete\|share\|frame\|record\|end\|join-request\|join-approve\|join-decline\|join-list>` | 跨 agent 联合会话：多人多 agent 视频会（本地扇出模型），会内委派 + 共享任务产物（allowlist），画面默认不留存、录制须全体同意；第 2 批 G-P1-5：好友进会要批（待批请求，批准时重查准入闸，详见 `docs/sessions.md`） |
 | `nyra call <ledger\|show <通话 id>\|summary>` | 通话成本与隐私仪表：每通电话的三本账（传输/媒体/token，本地与云端分开记）+ 录制仪表 + 通话纪要进证据链（详见 `docs/call-ledger.md`） |
 | `nyra budget <list\|show\|reserve\|settle\|release\|strict>` | 并发预算预留：模型调用前先预留额度、超上限不发请求；金额未知默认暂停等人工处理（详见 `docs/budget.md`） |
 | `nyra agui <register\|list\|show\|link\|connect\|disconnect\|send\|exec\|accept-write\|revoke-write\|a2a>` | 协议中立接入：接任意 AG-UI endpoint 当 Bot（只读先行，写操作须机主显式接受），A2A 复用名片 + 交接（详见 `docs/agui.md`） |

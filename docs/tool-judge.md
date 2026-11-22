@@ -104,6 +104,8 @@ nyra judge set-model deepseek:deepseek-flash       # 设 judge 模型（也可�
 nyra judge set-thresholds 70 40                   # 设分段：拒绝线 70，转人工线 40
 nyra judge check --tool shell --args '{"command":"rm -rf /tmp/x"}' [--task "清理临时文件"]
                                                    # 试运行一次打分：0 = 放行，2 = 转人工，3 = 拒绝
+nyra judge verdicts [--limit 20] [--layer heuristic|judge] [--decision allow|escalate|deny]
+                                                   # 查最近的意向验证结论（启发式 + judge 两层都落库）
 ```
 
 `check` 即使 judge 未开启也按开启后的口径打一次分（生产上未开启时不打），
@@ -151,6 +153,28 @@ deny 的写操作经 `executeToolIdempotent` 都不落盘）。
 两者可共用同一个模型配置（`judge.model` 不填时沿用审查层的模型解析），
 但开关各自独立；都开时每次被审调用多两次便宜模型调用（审查一次、
 judge 一次），只读工具不受影响。
+
+## 启发式前置 + verdict 落库（缺口 G-P1-12，第 2 批）
+
+judge 是模型打分，要花 token、要等模型。启发式是零成本的规则层，
+先扫一遍，再决定要不要调 judge（Turnstone 的意向验证思路，两层）：
+
+| 启发式结论 | 处理 |
+|---|---|
+| critical（删根目录、拉远程内容喂 shell、读凭据又往外发、毁设备类命令） | 直接拒绝，不调 judge 模型 |
+| high（读凭据文件、提权命令、对外发疑似凭据、rm -rf 带绝对路径） | 转人工：风险分标 85，交给 `checkApproval` 强制走人工审批链 |
+| medium（写工作区外绝对路径等） | 只留痕，放行 |
+| 没命中 | 直接过 |
+
+- 顺序：审查门 → judge → 启发式 → 提议门 → 单写者门。两层结论都落库。
+- 落库 `~/.nyra/intent-verdicts.jsonl`（0600，上限 2000 条）：只记工具名、
+  层（heuristic/judge）、结论、规则、理由，不记参数原文。
+- `judge` 的打分结论同样落库（`tool_judge_verdict` 事件已有，落库与之
+  并列，不互相替代）。
+
+```bash
+nyra judge verdicts [--limit <条数>] [--layer heuristic|judge] [--decision allow|escalate|deny]
+```
 
 ## 已知局限
 

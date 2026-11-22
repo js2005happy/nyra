@@ -99,6 +99,27 @@ nyra team writer <status|transfer <文件> <成员>|release <文件>> # 单写�
 - 交接包与 changelog 落在各 agent 电脑 workspace 的 `handover/` 下（见上）。
 - 17 个新运行事件已注册进 EVENT_FIELDS（`soul_charter_set` / `soul_charter_cleared` / `team_created` / `team_member_added` / `team_member_removed` / `team_dissolved` / `team_dispatched` / `team_handover_sent` / `team_handover_received` / `team_handover_accepted` / `team_approval_requested` / `team_approval_decided` / `team_charter_verified`，另加第 1 批单写者门的 `write_gate_granted` / `denied` / `transferred` / `released`），只记元数据与 id，不记任务原文、不记交接包内容、不记绝对路径；`src/timeline.ts` 加渲染。
 
+## 租约 + 纪元 + lead 路由（缺口 G-P1-3，第 2 批）
+
+两个参谋长同时分派会打架：lead 租约一次只给一个参谋长，换 lead 纪元 +1，
+旧纪元的指令不路由（Hermes 的租约 + 纪元思路，只抄机制；隔离仍用
+每 Bot 一台电脑，不抄 Hermes 的共享隔离）。
+
+- 账本 `~/.nyra/team-leases.json`（0600），TTL 10 分钟，只给参谋长——
+  成员来拿直接拒绝，不抢。
+- 真跑分派时先拿租约，拿不到直接拒绝；dry-run 不拿租约。
+- 换 lead 时纪元 +1；分派任务的纪元写进 chief 任务的“分派纪元”行，
+  团队模式下执行时校验：纪元过期、不是当前 lead，一律 fail-closed
+  拒绝执行。
+- 租约过期按没有处理，不自动续；释放只能由持有者本人来。
+
+```sh
+nyra team lead status <团队 id>
+nyra team lead acquire <团队 id>
+nyra team lead release <团队 id>
+nyra team lead transfer <团队 id> <新 lead>
+```
+
 ## 已知局限
 
 - 参谋长是单点瓶颈与单点故障，拆错了全队白跑，只收摘要不收全文。

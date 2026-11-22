@@ -250,8 +250,74 @@ nyra video call start --friend pilot --yes
 - 真实对端未接通过：只在假名片服务器（本机 Bun.serve）与假 MCP 服务器
   上验过握手与分享。
 - 名片发布只在网关跑着时才可达；网关没跑，对方拉不到名片。
-- 圈不限制名片拉取（只限主动分享），名片拉取的 per-circle 可见性是
-  缺口 34 的后续批次，第一批只做了信任圈准入（谁能发任务）。
+- 圈可以限制名片拉取（G-P1-5，第 2 批）：`config.json` 的 `peer_card.visible_circles`
+  配了圈名时，只有这些圈的好友凭有效 grant 才能拉到名片；不配时不限制圈
+  （只认 publish 开关）。网关 well-known 端点按圈放行，不认的直接 404，
+  不泄露“是没配还是没权限”。
 - 视频 `--friend` 只校验好友身份，不改媒体面；跨 agent 联合会话是
   缺口 39 的事，缺口 34 第一批已落地。
 - Windows / macOS 真机未验证。
+
+## 好友 grant：好友码升级（缺口 G-P1-6，第 2 批）
+
+好友码不再是一串死码，改成带 scope、可吊销的授权（Hermes 的 grant 思路，
+只抄机制）：
+
+```sh
+nyra peer grant issue <好友名> <scope,...> [--days <天数>]
+nyra peer grant list [--peer <好友名>]
+nyra peer grant verify <token> [--scope <scope>]
+nyra peer grant revoke <授权 id>
+```
+
+- scope 精确匹配，可选：`card:read`（拉名片）、`session:join`（进会）、
+  `share:receive`（收共享）、`call:video`（视频通话）。多 scope 用逗号隔开。
+- token 形如 `nyra-grant-…`，只在签发时打印一次；账本
+  `~/.nyra/friend-grants.json`（0600）里只记 SHA-256，不记原文。
+- 默认 30 天有效，可配 1–90 天；过期自动失效，不用手动清。
+- 吊销只影响这一家：每 peer 的授权独立记，吊销 alice 的不影响 bob。
+- 只发给已批准、未拉黑的好友；陌生人、待批的、拉黑的都签发不出去。
+
+## 对方写操作默认进提议（缺口 G-P1-10，第 2 批）
+
+对端发来的任务（来源 peer）里，写操作一律不直接执行：先记一条提议
+进 `~/.nyra/peer-proposals.json`（0600），等机主批了才执行。
+
+- 进提议的工具：`write_file` / `edit_file` / `apply_patch` / `shell` /
+  `http_post` / `gmail_send` / `memory_append` / `memory_delete` /
+  `memory_forget` / `save_skill` / `plan`。只读工具不受影响，照常跑。
+- 批准只标 `accepted`，不自动执行——执行由机主上下文另跑；提议不过期、
+  不静默执行。
+- 来源只记 `local` / `peer`，不记 peer 名（`~/.nyra/task-origins.json`）；
+  MCP 派发的任务记 `peer`。
+
+```sh
+nyra peer proposal list [--status pending|accepted|declined|executed] [--peer <好友名>]
+nyra peer proposal show <提议 id>
+nyra peer proposal accept <提议 id> --yes
+nyra peer proposal decline <提议 id> --yes
+```
+
+例外：隔离分支内的文件写操作不进提议门——见下节。写文件类操作被
+`workspaceWritePath` 物理限制在工作目录内，而外来子任务的工作目录
+就是隔离 worktree，写不出去；`shell`、发邮件、改记忆仍进提议门。
+
+## 外来 agent 先在隔离分支干活（缺口 G-P1-8，第 2 批）
+
+外来好友机器人派来的任务，不直接在主工作区干活：先在隔离分支
+`nyra/foreign/<任务 id>` 上跑，改动留在分支上，机主看过再决定合不合入。
+
+```sh
+nyra peer branch list
+nyra peer branch merge <任务 id> --yes
+nyra peer branch drop <任务 id> --yes
+```
+
+- 委派时 `delegate` 带 `foreign: true`（或隔离方式本身就是 worktree 时
+  由外来任务强制改成 worktree）；工作目录不是 git 仓库时直接拒绝，
+  不退化成主工作区直写。
+- 跑完有改动：改动清单记进分支账本，交回文本写合入 / 丢弃命令，
+  不自动合入。合入是 `git merge --no-ff`，冲突时自动 abort、分支保持
+  open，机主手动解决。
+- 没改动、取消、失败时：worktree 与分支一并删掉、账本标 dropped，
+  改动不进主工作区。

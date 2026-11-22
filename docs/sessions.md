@@ -40,6 +40,26 @@ nyra session end <会话> --yes               结束会话（只有机主能结�
 - 会话账本 `~/.nyra/sessions.json`（原子写 0600，损坏先备份 `.corrupt-<时间戳>` 再抛错）；共享包文件在 `~/.nyra/sessions/<会话>/shared/<共享id>.md`（0600）。
 - 9 个新运行事件已注册进 `src/runs.ts` 的 EVENT_FIELDS（`session_created` / `session_joined` / `session_left` / `session_ended` / `session_delegated` / `session_delegation_accepted` / `session_delegation_completed` / `session_shared` / `session_recording_consented`，`src/timeline.ts` 加渲染）；每次操作单独建一条只记 `session_*` 事件的证据运行，审计进 `~/.nyra/peer-audit.jsonl`。
 
+## 进群准入：待批进会（缺口 G-P1-5，第 2 批）
+
+好友进群要批：先记一条待批请求，机主批了才进会；默认只读（好友 tier
+不变，进会不等于能写）。
+
+```sh
+nyra session join-request <会话 id> <好友名>
+nyra session join-list [<会话 id>]
+nyra session join-approve <会话 id> <请求 id> --yes
+nyra session join-decline <会话 id> <请求 id> --yes
+```
+
+- 请求时先过准入闸：好友账本里没有、还没批准、拉黑了、不在任何信任圈里，
+  都直接拒绝，连请求都不记。
+- 批准时**重查**准入闸：请求后被踢出圈、被拉黑了，批准失败、请求保持待批，
+  不静默放人。
+- 只有机主能批 / 能拒；请求后已通过别的方式进会了，批准时直接标 approved，
+  不重复加人。
+- `nyra session show` 会显示待批进会请求。
+
 ## 诚实边界
 
 - 没有真 SFU 服务器、没有原生 WebRTC 栈（见缺口 37 的诚实边界）、不拨真实电话、不声称端到端加密；“SFU 转发”是本地确定性扇出模型（一方发帧，按成员表扇出，有记录、可审计），真实多方媒体协商是后续批次的事。
