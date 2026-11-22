@@ -1,3 +1,10 @@
+## 2026-11-22 — Reset advisory idle count at each Agent run (static-only)
+
+- **Repository fact (reviewed 2026-11-22):** The optional NoProgressDetector is caller-owned; Agent.run previously preserved its idle counter across separate user tasks. An idle_limit=2 detector with one old observation could alert after just one tool return in the next task. This is a source-derived risk, not a measured incident.
+- **External user reports (reviewed 2026-11-22):** [Codex #35259](https://github.com/openai/codex/issues/35259) (2026-07-24) and [#60104](https://github.com/openai/codex/issues/60104) (2026-11-07) describe wasted work or repeated activity. Individual reports do not establish frequency or prove this Angel-specific state leakage.
+- **Engineering inference / ranking (value / difficulty / safety risk / dependency):** P1 per-run advisory reset high / low / low / existing observer (**implemented, untested**); P1 independent verified progress source high / medium / medium-high / external trusted authority (**open**); P1 private durable task contract high / medium / medium-high / cross-platform secure storage (**blocked**); P0 claim dispatch high / high / high / sandbox and approvals (**blocked**).
+- Reset only advisory counts on each Agent.run, never task state, tool effects, approval, or execution verification. No automatic pause, replay or trust elevation. Tests and CI not run.
+
 ## 2026-11-22 — Count one idle observation per completed tool call (static-only)
 
 - **External facts (reviewed 2026-11-22):** [Codex #35259](https://github.com/openai/codex/issues/35259) (opened 2026-07-24) documents repeated model-mediated status polling and locally measured token volume; [Codex #60104](https://github.com/openai/codex/issues/60104) (opened 2026-11-07) reports repeated work and loss of no-rework constraints. These are individual external reports, not Angel reproductions or population prevalence.
