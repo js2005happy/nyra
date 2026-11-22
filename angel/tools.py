@@ -890,11 +890,13 @@ def _tool_web_search(ctx: ToolContext, query: str, count: int = 8) -> str:
     for name, url, parser in sources:
         try:
             results = parser(_fetch_search_page(url), count)
-        except ToolError as exc:
-            errors.append(f"{name}：{exc}")
+        except ToolError:
+            # Search backend errors may contain request URLs, query terms or credentials.
+            errors.append(f"{name}：搜索源拒绝请求")
             continue
-        except Exception as exc:
-            errors.append(f"{name}：请求失败（{exc}）")
+        except Exception:
+            # Never forward arbitrary network exception details to the model.
+            errors.append(f"{name}：请求失败")
             continue
         if results:
             body = "\n\n".join(results)
