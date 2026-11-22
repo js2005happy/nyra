@@ -1112,8 +1112,10 @@ def _tool_http_post(
         except Exception:
             text = ""
         return f"HTTP {exc.code}\n{_truncate(text)}"
-    except Exception as exc:
-        return f"错误：POST 请求失败：{exc}"
+    except Exception:
+        # POST errors can include private URLs, tokens or request metadata.
+        # A failed request may already have reached the remote service; do not retry.
+        return "错误：POST 请求失败"
 
 
 def _tool_poppy_discover(ctx: ToolContext, site: str) -> str:
