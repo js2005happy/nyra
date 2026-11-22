@@ -81,11 +81,11 @@ npx tauri build --bundles msi,nsis              # Windows
 cd src-tauri && cargo test                      # 外壳的单元测试
 ```
 
-图标全部由正式标志（圆盘 + 光标，= 入场动画终帧，几何在 `src/brandMark.ts`）生成：`bun scripts/make-icons.ts`（零依赖，自带光栅化与 PNG / ICO / ICNS 编码，任何平台都能跑；`--check` 只核对 SVG）。
+应用图标是紫色团子方块（几何在 `src/appIcon.ts`），由 `bun scripts/make-icons.ts` 生成（零依赖，自带光栅化与 PNG / ICO / ICNS 编码，任何平台都能跑；`--check` 只核对 SVG）。
 
-- App 图标 = 与手机主屏幕图标同一套：黑色圆角图块 + 浅色圆盘（#F5F5F7）+ 黑色光标（#0B0B0C），深色、浅色程序坞 / 任务栏上都看得清。矢量源 `desktop/icon-src/nyra-app-icon.svg`。
-- 16 / 24 / 32 px 用加粗版 `desktop/icon-src/nyra-mark-small.svg`（光标镂空加粗、圆盘更满），标题栏、任务栏、资源管理器列表里也看得清。
-- `icon.ico`（16/24/32/48/64/256）用于 exe、安装程序（`nsis.installerIcon`）、桌面与开始菜单快捷方式、任务栏和窗口；`icon.icns`（16–1024，含 @2x；按 macOS 图标网格留约 10% 透明边距）用于 macOS 的 .app、程序坞与访达；`icon.png`（512）给 Linux。没有使用 Tauri 默认图标。
+- 画面：团子本身就是图块——整块纯紫 #8688ff，只有两只 #141414 竖胶囊眼（比例同界面里的团子头像）。和手机启动器、PWA、favicon 同一套。矢量源 `desktop/icon-src/nyra-app-icon.svg`（Windows / Linux 图块，四周 6% 边距、圆角 19%）。
+- 16 / 24 / 32 px 用满格圆角版 `desktop/icon-src/nyra-mark-small.svg`（不留边距，眼睛按小尺寸规则放大：≤20 px +18%，≤28 px +8%），标题栏、任务栏、资源管理器列表里也看得清。
+- `icon.ico`（16/24/32/48/64/256）用于 exe、安装程序（`nsis.installerIcon`）、桌面与开始菜单快捷方式、任务栏和窗口；`icon.icns`（16–1024，含 @2x；≥64 px 按 macOS 图标网格 824/1024 的连续圆角主体 + 标准投影）用于 macOS 的 .app、程序坞与访达；`icon.png`（512）给 Linux。没有使用 Tauri 默认图标。
 - 启动引导页（`desktop/ui/`）的标志：浅色 `mark.svg`、深色 `mark-dark.svg`，用 `<picture>` 跟随系统切换。
 
 ## 已知限制 / 待办

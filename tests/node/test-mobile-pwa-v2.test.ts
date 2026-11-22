@@ -328,17 +328,19 @@ test("icons: manifest 192/512 any + maskable、apple 180、favicon；几何与 n
       if (spec.kind === "maskable" || spec.kind === "apple") expect(corner[3]).toBe(255); // 铺满不透明
       else expect(corner[3]).toBe(0); // any/favicon 透明底
     }
-    // 光标镂空：光标内部一点透明（露出底色），圆盘上一点是深色。
+    // 应用图标 = 紫色团子方块：纯紫 + 两只深色竖胶囊眼。
     const any = pngInfo(new Uint8Array(await (await fetch(`${base}/m/icon-512.png`)).arrayBuffer()));
-    expect(any.pixel(Math.round(512 * 0.47), Math.round(512 * 0.55))[3]).toBe(0);
-    expect(any.pixel(Math.round(512 * 0.25), Math.round(512 * 0.5))).toEqual([0x0b, 0x0b, 0x0c, 255]);
-    // maskable / apple：黑底 + 浅色圆盘（= 入场动画终帧），中心一点是浅色圆盘。
+    expect(any.pixel(256, 80)).toEqual([0x86, 0x88, 0xff, 255]);
+    expect(any.pixel(256, 272)).toEqual([0x86, 0x88, 0xff, 255]);
+    expect(any.pixel(185, 272)).toEqual([0x14, 0x14, 0x14, 255]);
+    expect(any.pixel(327, 272)).toEqual([0x14, 0x14, 0x14, 255]);
+    // maskable / apple：满版不透明（系统加遮罩），两只眼都在 80% 安全圆内。
     const mask = pngInfo(new Uint8Array(await (await fetch(`${base}/m/icon-maskable-512.png`)).arrayBuffer()));
-    expect(mask.pixel(0, 0).slice(0, 3)).toEqual([0x0b, 0x0b, 0x0c]);
-    expect(mask.pixel(Math.round(512 * 0.3), Math.round(512 * 0.5)).slice(0, 3)).toEqual([0xf5, 0xf5, 0xf7]);
+    expect(mask.pixel(0, 0).slice(0, 3)).toEqual([0x86, 0x88, 0xff]);
+    expect(Math.hypot(0.7175 - 0.5, 0.6469 - 0.5)).toBeLessThan(0.4); // 右眼最外角离中心 < 安全圆半径
     const fav = await fetch(`${base}/m/favicon.svg`);
     const favSvg = await fav.text();
-    expect(favSvg).toContain('fill="#0B0B0C"');
+    expect(favSvg).toContain('fill="#8688ff"');
     expect(favSvg).not.toContain("linearGradient");
     const page = await (await fetch(`${base}/m`)).text();
     expect(page).toContain('rel="apple-touch-icon"');

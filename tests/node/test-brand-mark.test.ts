@@ -9,6 +9,7 @@ import {
   icnsFromPngs, icoFromPngs, markPng, markSvg, rasterizeMark,
 } from "../../src/brandMark.ts";
 import { SVG_OUTPUTS } from "../../scripts/make-icons.ts";
+import { ICON_BG, ICON_EYE, ICON_PURPLE, appIconSvg } from "../../src/appIcon.ts";
 import { DESKTOP_HTML } from "../../src/webuiDesktop.ts";
 import { MOBILE_V2_HTML } from "../../src/webuiMobile.ts";
 import { Gateway } from "../../src/gateway.ts";
@@ -27,15 +28,23 @@ test("几何与入场动画一致：光标 = splash arrowD(40,31,0.86)，圆盘 
   expect(splash).toContain(`const W=1280,H=800,BG="${MARK_INK}",FG="${MARK_PAPER}"`);
 });
 
-test("仓库里的标志 SVG 与 src/brandMark.ts 同步（bun scripts/make-icons.ts 生成）", () => {
+test("仓库里的标志 / 应用图标 SVG 与 src/brandMark.ts、src/appIcon.ts 同步（bun scripts/make-icons.ts 生成）", () => {
   for (const [rel, svg] of Object.entries(SVG_OUTPUTS)) {
     expect(readFileSync(join(ROOT, rel), "utf-8")).toBe(svg);
-    expect(svg).not.toContain("<text"); // 只有圆盘 + 光标，不带字标
-    expect(svg).not.toContain("mask"); // 镂空是 evenodd 单路径，GitHub / 任意光栅器都一致
+    expect(svg).not.toContain("<text"); // 不带字标
+    expect(svg).not.toContain("mask"); // 标志镂空是 evenodd 单路径；应用图标用 clipPath，GitHub / 任意光栅器都一致
   }
   expect(readFileSync(join(ROOT, "docs/assets/nyra-mark.svg"), "utf-8")).toContain(`fill="${MARK_INK}"`);
   expect(readFileSync(join(ROOT, "docs/assets/nyra-mark-dark.svg"), "utf-8")).toContain(`fill="${MARK_PAPER}"`);
-  expect(readFileSync(join(ROOT, "docs/assets/favicon.svg"), "utf-8")).toContain("prefers-color-scheme:dark");
+  // favicon / App 图标 = 紫色团子方块：只用团子紫与深色眼两种颜色。
+  expect(ICON_BG).toBe(ICON_PURPLE);
+  for (const rel of ["docs/assets/favicon.svg", "docs/assets/nyra-app-icon.svg", "desktop/icon-src/nyra-app-icon.svg"]) {
+    const svg = readFileSync(join(ROOT, rel), "utf-8");
+    expect(svg).toContain(`fill="${ICON_PURPLE}"`);
+    expect(svg).toContain(`fill="${ICON_EYE}"`);
+    expect([...new Set(svg.match(/fill="#[0-9a-fA-F]{6}"/g))].sort()).toEqual([`fill="${ICON_EYE}"`, `fill="${ICON_PURPLE}"`]);
+  }
+  expect(readFileSync(join(ROOT, "docs/assets/favicon.svg"), "utf-8").trim()).toBe(appIconSvg("tile"));
 });
 
 function pngPixels(png: Buffer): { w: number; px: (x: number, y: number) => number[] } {
@@ -50,14 +59,22 @@ function pngPixels(png: Buffer): { w: number; px: (x: number, y: number) => numb
   return { w, px: (x, y) => [...raw.subarray(y * (w * 4 + 1) + 1 + x * 4, y * (w * 4 + 1) + 5 + x * 4)] };
 }
 
-test("提交的 Tauri / 官网位图：尺寸对、是新标志（黑色图块 + 浅色圆盘）", () => {
+const PURPLE = [0x86, 0x88, 0xff];
+const EYE = [0x14, 0x14, 0x14];
+test("提交的 Tauri / 官网位图：尺寸对、是紫色团子方块（纯紫 + 两只深色竖胶囊眼）", () => {
   const sizes: Record<string, number> = { "icon.png": 512, "32x32.png": 32, "128x128.png": 128, "128x128@2x.png": 256 };
   for (const [f, s] of Object.entries(sizes)) {
     const p = pngPixels(readFileSync(join(ROOT, "desktop/src-tauri/icons", f)));
     expect(p.w).toBe(s);
-    expect(p.px(Math.round(s * 0.06), Math.round(s * 0.5)).slice(0, 3)).toEqual([0x0b, 0x0b, 0x0c]); // 图块
-    expect(p.px(Math.round(s * 0.3), Math.round(s * 0.5)).slice(0, 3)).toEqual([0xf5, 0xf5, 0xf7]); // 圆盘
+    expect(p.px(0, 0)[3]).toBe(0); // 圆角外透明
+    expect(p.px(Math.floor(s * 0.5), Math.floor(s * 0.2)).slice(0, 3)).toEqual(PURPLE); // 团子方块
+    expect(p.px(Math.floor(s * 0.5), Math.floor(s * 0.53)).slice(0, 3)).toEqual(PURPLE); // 两眼之间
+    expect(p.px(Math.floor(s * 0.36), Math.floor(s * 0.53)).slice(0, 3)).toEqual(EYE); // 左眼
+    expect(p.px(Math.floor(s * 0.64), Math.floor(s * 0.53)).slice(0, 3)).toEqual(EYE); // 右眼
   }
+  const touch = pngPixels(readFileSync(join(ROOT, "docs/assets/apple-touch-icon.png")));
+  expect(touch.px(0, 0)).toEqual([...PURPLE, 255]); // 满版不透明，iOS 自己切圆角
+  expect(touch.px(65, 96).slice(0, 3)).toEqual(EYE);
   const ico = readFileSync(join(ROOT, "desktop/src-tauri/icons/icon.ico"));
   expect(ico.readUInt16LE(4)).toBe(6);
   const icns = readFileSync(join(ROOT, "desktop/src-tauri/icons/icon.icns"));
@@ -66,7 +83,22 @@ test("提交的 Tauri / 官网位图：尺寸对、是新标志（黑色图块 +
   expect(icns.includes(Buffer.from("ic10"))).toBe(true); // 1024
   const fav = readFileSync(join(ROOT, "docs/assets/favicon.ico"));
   expect([fav.readUInt16LE(4), fav[6], fav[22], fav[38]]).toEqual([3, 16, 32, 48]);
-  expect(pngPixels(readFileSync(join(ROOT, "docs/assets/apple-touch-icon.png"))).w).toBe(180);
+  expect(touch.w).toBe(180);
+});
+
+test("手机 Capacitor 图标：前景只有两只眼（在 72dp 可见区内）、背景纯紫、启动图标满版", () => {
+  const fg = pngPixels(readFileSync(join(ROOT, "mobile/assets/icon-foreground.png")));
+  expect(fg.w).toBe(1024);
+  expect(fg.px(512, 200)[3]).toBe(0); // 眼睛以外全透明（露出背景层的紫色）
+  expect(fg.px(512, 535)[3]).toBe(0);
+  const ex = Math.round(170.67 + 0.66667 * (512 - 142.48));
+  const ey = Math.round(170.67 + 0.66667 * 545.39);
+  expect(fg.px(ex, ey)).toEqual([...EYE, 255]);
+  const bg = pngPixels(readFileSync(join(ROOT, "mobile/assets/icon-background.png")));
+  expect(bg.px(10, 10)).toEqual([...PURPLE, 255]);
+  const icon = pngPixels(readFileSync(join(ROOT, "mobile/assets/icon.png")));
+  expect(icon.px(0, 0)).toEqual([...PURPLE, 255]);
+  expect(icon.px(512 - 142, 545)).toEqual([...EYE, 255]);
 });
 
 test("16 / 32 px 小尺寸光标仍可辨（圆盘里有一块镂空）", () => {
@@ -121,7 +153,7 @@ test("网关：/favicon.ico 是真 ICO（16/32/48），/nyra-mark.svg 是内置�
     const ico = Buffer.from(await res.arrayBuffer());
     expect([ico.readUInt16LE(4), ico[6], ico[22], ico[38]]).toEqual([3, 16, 32, 48]);
     const fav = await (await fetch(`${base}/m/favicon.svg`)).text();
-    expect(fav).toContain("prefers-color-scheme:dark");
+    expect(fav).toBe(appIconSvg("tile"));
     const mark = await fetch(`${base}/nyra-mark.svg?token=${info.token}`);
     if (mark.status === 200) expect((await mark.text()).trim()).toBe(markSvg());
   } finally { await gw.stop(); }

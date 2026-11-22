@@ -6,8 +6,10 @@
 // src/assets/mobile-app.css.txt / mobile-app.js.txt；入场动画移植自原 Nyra splash
 // （src/assets/mobile-splash.js.txt）。界面文案在 src/i18n.ts 的 m.* 键（中英）。
 // 页面本身不含任何秘密：设备 token 只在 localStorage，每次 API 调用带 X-Nyra-Token 头。
-// 图标是正式标志（圆盘 + 光标，= 入场动画终帧，几何在 src/brandMark.ts）在本机光栅化的 PNG。
-import { MARK_PRESETS, icoFromPngs, inlineMarkSvg, markPng, markSvg, rasterizeMark, type RasterOpts } from "./brandMark.ts";
+// 主屏幕 / 浏览器图标是应用图标（紫色团子方块，几何在 src/appIcon.ts）在本机光栅化的 PNG；
+// 页面里内联的标志仍是圆盘 + 光标（src/brandMark.ts）。
+import { icoFromPngs, inlineMarkSvg } from "./brandMark.ts";
+import { appIconPng, appIconSvg, rasterizeAppIcon, type IconShape } from "./appIcon.ts";
 import { MESSAGES, type Lang } from "./i18n.ts";
 import { NYRA_AVATAR } from "./nyraAvatar.ts";
 import APP_CSS from "./assets/mobile-app.css.txt" with { type: "text" };
@@ -34,17 +36,15 @@ export { MARK_CIRCLE, MARK_CURSOR, MARK_STROKE, MARK_ROTATE_DEG, rgbaPng } from 
 
 type IconKind = "any" | "maskable" | "apple" | "favicon";
 
-function presetFor(size: number, kind: IconKind): RasterOpts {
-  // any / favicon：透明底，深色圆盘，光标镂空（露出底色，与 nyra-mark.svg 一致）；
-  // maskable / apple：与入场动画终帧一致——黑底 + 浅色圆盘 + 黑色光标，从主屏幕图标到入场动画再到应用不跳色。
-  if (kind === "maskable") return MARK_PRESETS.maskable();
-  if (kind === "apple") return MARK_PRESETS.apple();
-  return MARK_PRESETS.light();
+function shapeFor(kind: IconKind): IconShape {
+  // maskable / apple：满版不透明方形，系统自己加遮罩（两只眼都在 maskable 80% 安全圆内）；
+  // any / favicon：满格圆角方图块，四角透明。
+  return kind === "maskable" || kind === "apple" ? "square" : "tile";
 }
 
-/** 光栅化 Nyra 标志（RGBA）。16–32 px 自动用光标加粗的小尺寸版。 */
+/** 光栅化 Nyra 应用图标（RGBA）。≤28 px 自动放大眼睛。 */
 export function renderMarkRgba(size: number, kind: IconKind): Uint8Array {
-  return rasterizeMark(size, presetFor(size, kind));
+  return rasterizeAppIcon(size, shapeFor(kind));
 }
 
 const iconCache = new Map<string, Buffer>();
@@ -52,7 +52,7 @@ export function mobileIconPng(size: number, kind: IconKind): Buffer {
   const key = `${kind}:${size}`;
   let png = iconCache.get(key);
   if (!png) {
-    png = markPng(size, presetFor(size, kind));
+    png = appIconPng(size, shapeFor(kind));
     iconCache.set(key, png);
   }
   return png;
@@ -76,9 +76,9 @@ export function mobileFaviconIco(): Buffer {
   return icoCache;
 }
 
-/** 矢量 favicon：同一几何；浅色系统下深色圆盘，深色系统下浅色圆盘，光标都是镂空。 */
+/** 矢量 favicon：应用图标的圆角图块版（深色、浅色标签栏上都看得清，不随系统换色）。 */
 export function mobileFaviconSvg(): string {
-  return markSvg({ disc: MOBILE_COLORS.mark, adaptive: true });
+  return appIconSvg("tile");
 }
 
 /** 内联进页面的标志（圆盘 = currentColor，光标镂空）。 */

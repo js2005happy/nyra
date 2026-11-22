@@ -133,9 +133,9 @@ nyra ui --pair
 ## Node 版实现（Codex 式审批卡）
 
 - `src/webuiMobile.ts`：手机页（黑白单色设计稿：底部五标签——对话 / 审阅 / 自动化 / 技能 / 设置；审批为底部弹层，审阅标签页接审阅队列）、
-  manifest、图标。图标是正式标志（圆盘 + 光标，= 入场动画终帧，几何在 `src/brandMark.ts`）在本机光栅化：
-  192/512 `any`（透明底、深色圆盘、光标镂空）、192/512 `maskable` 与 `apple-touch-icon` 180（黑底 + 浅色圆盘 + 黑色光标）、
-  favicon（`/m/favicon.svg` 跟随系统深浅色、`/m/favicon-32.png`、`/favicon.ico` 含 16/32/48；16–32 px 用光标加粗的小尺寸版）。
+  manifest、图标。图标是应用图标（紫色团子方块，几何在 `src/appIcon.ts`）在本机光栅化：
+  192/512 `any`（满格圆角图块，四角透明）、192/512 `maskable` 与 `apple-touch-icon` 180（满版不透明纯紫，系统加遮罩；两只眼都在 80% 安全圆内）、
+  favicon（`/m/favicon.svg` 圆角图块版、`/m/favicon-32.png`、`/favicon.ico` 含 16/32/48；≤28 px 眼睛放大）。
 - `src/qrcode.ts`：QR 编码器，与 Python 版逐模块一致；`nyra ui --pair` 在终端画二维码，
   `POST /api/pair/start` 额外返回 `qr_svg`。
 - `src/pairing.ts`：沿用已有 `DeviceRegistry`（6 位码 5 分钟、一次性、错 5 次作废、token 只存 SHA-256、可撤销）。
