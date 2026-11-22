@@ -102,6 +102,7 @@ class ToolObservationTests(unittest.TestCase):
         ):
             self.assertEqual(agent.run("task"), "done")
         self.assertTrue(detector.snapshot().needs_attention)
+        self.assertEqual(detector.snapshot().consecutive_idle, 1)
         alerts = [payload for kind, payload in events if kind == "no_progress_attention"]
         self.assertEqual(len(alerts), 1)
         self.assertFalse(alerts[0]["execution_verified"])
