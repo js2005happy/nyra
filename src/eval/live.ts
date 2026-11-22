@@ -192,7 +192,9 @@ export function makeLiveEvalAdapter(
           return 'isolated-test-runtime-unavailable';
         const probe = spawnSync(
           'bwrap',
-          ['--ro-bind', '/', '/', '--unshare-net', '--', '/bin/true'],
+          // 与 src/sandbox.ts 的 bwrapBaseArgs 同款：断网时先建 user ns，
+          // 否则无特权用户配不了 loopback（"loopback: Failed RTM_NEWADDR"）。
+          ['--unshare-user-try', '--ro-bind', '/', '/', '--unshare-net', '--', '/bin/true'],
           { env: cleanEvalEnv(), timeout: 3000 },
         );
         if (probe.error || probe.status !== 0)
@@ -318,6 +320,9 @@ async function openFixtureBrowser(
     'chromium',
     [
       '--headless=new',
+      // 以 root 跑评测时 Chrome 拒绝启动（Running as root without
+      // --no-sandbox is not supported）；只在 root 下加，普通用户保持原样。
+      ...(process.getuid?.() === 0 ? ['--no-sandbox'] : []),
       '--disable-dev-shm-usage',
       '--disable-background-networking',
       '--disable-sync',
