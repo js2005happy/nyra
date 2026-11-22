@@ -242,11 +242,11 @@ test("BotScreenTest.test_describe_screen_sleeping_and_empty", () => {
   expect(empty).toContain("还没打开过页面");
 });
 
-test("BotScreenTest.test_status_takeover_is_second_batch", () => {
+test("BotScreenTest.test_status_takeover_null_without_takeover", () => {
   const home = tmpHome("nyra-screen-");
   const { id } = setupComputer(home);
   const status = screenStatus(home, id, "owner");
-  expect(status.takeover).toBe("second-batch");
+  expect(status.takeover).toBeNull();
   expect(status.viewers).toContain("信任圈");
   expect(() => screenStatus(home, id, "stranger")).toThrow(ScreenError);
 });
@@ -266,7 +266,7 @@ test("BotScreenTest.test_cli_watch_activity_status", async () => {
   expect(activity.out).toContain("下一步：看不到");
   const status = await capture(() => handleScreen(["status", id], home));
   expect(status.code).toBe(0);
-  expect(status.out).toContain("第二批");
+  expect(status.out).toContain("没人接管");
 });
 
 test("BotScreenTest.test_cli_denied_and_unknown", async () => {
