@@ -1,3 +1,8 @@
+## 2026-11-22 — Unknown structured report journal guard (unreleased, static-only)
+
+- Add `reported_unknown` to conservative tool status; an explicit typed `unknown` is not silently treated as journal success. Exceptions remain failures, and all authority flags remain false. Legacy string reports unchanged.
+- Expand unexecuted regression assertions. No tests/CI, install, merge or release.
+
 ## 2026-11-22 — Typed in-process tool outcome boundary (unreleased, static-only)
 
 - Added immutable StructuredToolReport with a strict three-value reported outcome and conservative classifier support. Legacy string reports remain unchanged. Untrusted dicts/JSON do not acquire authority; exceptions override reported success. Verification and auto-resume remain false.
