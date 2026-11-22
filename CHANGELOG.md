@@ -1,3 +1,8 @@
+## 2026-11-22 — Blank legacy tool reports remain unknown (unreleased, static-only)
+
+- Static source finding: empty or whitespace-only string returns previously passed the prefix classifier as neither failed nor unknown, allowing the optional ToolJournal to record reported success despite no outcome information. Blank reports now classify as unknown; explicit exceptions remain failures. No external verification or automatic retry/resume.
+- Defined unexecuted regression cases for blank Unicode whitespace and exception precedence. No tests, scripts, CI, installs, new dependencies, main merge or release.
+
 ## 2026-11-22 — Untyped non-text tool reports fail closed (unreleased, static-only)
 
 - Classify non-string, non-`StructuredToolReport` tool returns as `reported_unknown` unless an exception was raised; exceptions remain reported failures. Prevent optional ToolJournal from treating ambiguous adapter values as reported success. Legacy string results unchanged.
