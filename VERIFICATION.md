@@ -1,3 +1,8 @@
+## 2026-11-22 — Blank legacy tool report boundary (static inspection only)
+
+- Reviewed README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/Tools, classifier, tests, recent commits, open Issues/PR and prior commit CI metadata. Found via source inspection that blank strings were neither failure nor unknown; optional journal could record result_ok without any outcome signal. Added conservative blank classification and unexecuted regression definitions.
+- External Codex #60104 (opened 2026-11-07) is an individual report of wasted work, not evidence of this Angel defect. Engineering inference: blank tool output should not become a positive report. Tests, scripts, compilation, CI and cross-platform runtime checks NOT RUN. No installs, external account changes, main merge or release.
+
 ## 2026-11-22 — Untyped non-text tool report boundary (static inspection only)
 
 - Reviewed README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent, Tools, report classifier, no-progress observer and regression source on the existing development branch; inspected recent repository commits, open Issues and PR #113. Codex #60104 (2026-11-07) is external user testimony, not an Angel reproduction.
