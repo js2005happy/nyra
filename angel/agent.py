@@ -12,6 +12,7 @@ from .providers import Provider, ProviderError
 from .tools import (
     TOOL_SCHEMAS, POPPY_TOOL_SCHEMA, POPPY_PERMISSION_SCHEMA, POPPY_IDENTITY_SCHEMA,
     ToolContext, ToolError, _check_approval, execute_tool,
+    execute_local_list_dir_report,
 )
 from .skills import Skill, load_skills, match_skills, render_skill
 from .memory import load_memory_summary, load_agents_md, new_session_id, save_session
@@ -375,6 +376,7 @@ class Agent:
                 # Never expose raw exception details: they may contain
                 # credentials or remote response bodies.
                 tool_exception = None
+                trusted_report = None
                 try:
                     if args is None or not isinstance(args, dict):
                         result = "错误：工具参数不是合法的 JSON 对象"
@@ -391,6 +393,15 @@ class Agent:
                             result = f"错误：{exc}"
                         else:
                             result = self.mcp_manager.execute(fn_name, args)
+                    elif fn_name == "list_dir" and self.ctx.backend is None:
+                        # Trusted local adapter: outcome comes from filesystem
+                        # control flow, never the listing's text.
+                        try:
+                            result, trusted_report = execute_local_list_dir_report(
+                                self.ctx, **args
+                            )
+                        except TypeError as exc:
+                            result = f"错误：工具参数不正确：{exc}"
                     else:
                         result = execute_tool(fn_name, args, self.ctx)
                 except Exception as exc:
@@ -409,7 +420,8 @@ class Agent:
                                     status.reported_failure or status.reported_unknown
                                 )
                             )(classify_tool_report(
-                                result, raised=tool_exception is not None
+                                trusted_report if trusted_report is not None else result,
+                                raised=tool_exception is not None
                             )),
                         )
                     except (JournalError, OSError) as exc:
@@ -427,7 +439,9 @@ class Agent:
                 if self.no_progress_detector is not None:
                     # A returned error is not a completed deliverable. Keep it
                     # distinct for diagnostics without trusting tool text as progress.
-                    failed_report = classify_tool_report(result).reported_failure
+                    failed_report = classify_tool_report(
+                        trusted_report if trusted_report is not None else result
+                    ).reported_failure
                     progress_event = "tool_failed" if failed_report else "tool_returned"
                     state = self.no_progress_detector.observe_event(progress_event)
                     if state.needs_attention and not progress_alerted:
