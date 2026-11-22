@@ -1,3 +1,9 @@
+## 2026-11-22 — Typed unknown journal safety (static inspection only)
+
+- Reviewed README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/Tools, typed classifier, tests, branch and latest commits; open Issues empty and PR #113 concerns evaluations. Prior commit 1e38fe9 returned no combined statuses or PR-triggered workflow runs (not proof of CI pass).
+- Static source finding: `success=not reported_failure` classified typed unknown as journal success. Added an explicit unknown bit and required both nonfailure and nonunknown for journal success. Added unexecuted regression assertions. External Codex #60104 (2026-11-07) is an individual report, not an Angel reproduction.
+- NOT RUN: tests, scripts, compilation, CI, cross-platform runtime checks. No installs, external account modification, main merge or production release. Typed reports remain untrusted as independent verification.
+
 ## 2026-11-22 — Typed tool outcome boundary (static inspection only)
 
 - Reviewed README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/tool dispatch, legacy classifier, observer and regression source; checked repository redirect, development branch, latest commits, open Issues/PR (#113 covers evaluation), and previous workflow metadata (no PR-triggered runs returned).
