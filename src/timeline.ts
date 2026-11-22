@@ -1022,6 +1022,15 @@ export function buildTimeline(store: RunStore, runId: string): Timeline {
       case "bot_computer_credential":
         push(at, "event", `电脑 ${str(ev.computer_id) ?? "?"}：凭证 ${str(ev.account) ?? "?"} ${str(ev.op) ?? "?"}`, null, null, null);
         break;
+      case "bot_takeover_started":
+        push(at, "event", `电脑 ${str(ev.computer_id) ?? "?"}：接管开始（${str(ev.taken_by) ?? "?"}，原因：${safeText(ev.reason) ?? "未说明"}，暂停 ${num(ev.paused_count) ?? "?"} 个任务）`, null, null, null);
+        break;
+      case "bot_takeover_ended": {
+        const did = safeText(ev.did);
+        const resume = safeText(ev.resume_from);
+        push(at, "event", `电脑 ${str(ev.computer_id) ?? "?"}：接管结束，已交还（${str(ev.handed_back_by) ?? "?"}${did ? `，做了：${did}` : ""}${resume ? `，从 ${resume} 继续` : ""}）`, null, null, null);
+        break;
+      }
       case "model_switch":
         push(at, "model", `换模型 ${str(ev.from) ?? "?"} → ${str(ev.to) ?? "?"}` + (str(ev.reason) ? `（${safeText(ev.reason)}）` : ""), null, null, null);
         break;

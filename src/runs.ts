@@ -137,6 +137,11 @@ bot_computer_credential: ["computer_id", "account", "op"],
 // 哪个 host）与打码（哪个电脑、打了哪几类、帧指纹；只记种类，不记原文）。
 bot_screen_watched: ["computer_id", "viewer", "frame_hash", "host"],
 bot_screen_redacted: ["computer_id", "kinds", "frame_hash"],
+// 缺口 50 第二批：接管进证据链——接管开始（哪个电脑、哪场接管、谁接的、
+// 为什么、暂停了几个任务）与交还（哪个电脑、哪场接管、谁交还的、接管
+// 期间做了什么、Bot 从哪步继续；did / resumeFrom 已打码，原文不留存）。
+bot_takeover_started: ["computer_id", "takeover_id", "taken_by", "reason", "paused_count"],
+bot_takeover_ended: ["computer_id", "takeover_id", "handed_back_by", "did", "resume_from"],
 // 缺口 26：持久任务板进证据链——建板（哪个任务、什么类型）、流转（哪个
 // 任务、从哪到哪）、熔断（哪个任务、失败几次）、审阅（哪个任务、批准还是
 // 打回）、验证（哪个任务、什么方法、通过与否）。只记元数据，不记任务正文。

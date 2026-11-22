@@ -1,5 +1,6 @@
 // src/botScreen.ts — 缺口 50 第一批：浏览器操作与接管——live screen +
-// 活动列表（只读）。接管（take the wheel）是第二批，本批不做。
+// 活动列表（只读）。接管（take the wheel）是第二批，见 src/botTakeover.ts
+//（本文件只在 screenStatus 里读接管账本，报当前有没有人在接管）。
 //
 // 口径（Bot 方向报告 §6 缺口 50，先做“看”再做“接管”）：
 //   - live screen：实时看 Bot 的浏览器在做什么。画面来自缺口 42 的电脑
@@ -30,6 +31,7 @@ import { ComputerError, getComputer, loadComputerProfile, readComputerActivity, 
 import { isAdmitted, OWNER_IDENTITY } from "./circles.ts";
 import { RunStore } from "./runs.ts";
 import { buildTimeline, stageDisplay } from "./timeline.ts";
+import { getActiveTakeover } from "./takeoverLedger.ts";
 
 export class ScreenError extends Error {
   constructor(message: string) {
@@ -287,8 +289,8 @@ export interface ScreenStatus {
   host: string | null;
   lastActivity: ComputerActivity | null;
   viewers: string;
-  /** 接管：本批不做，第二批做。 */
-  takeover: "second-batch";
+  /** 正在进行的接管 id（没有时为 null；第二批已落地，接管见 botTakeover.ts）。 */
+  takeover: string | null;
 }
 
 export function screenStatus(home: string, computerId: string, viewer: string): ScreenStatus {
@@ -296,6 +298,7 @@ export function screenStatus(home: string, computerId: string, viewer: string): 
   requireViewer(home, viewer);
   const profile = loadComputerProfile(home, computer);
   const activities = readComputerActivity(home, computerId, 1);
+  const active = getActiveTakeover(home, computerId);
   return {
     computerId,
     agent: computer.agent,
@@ -303,7 +306,7 @@ export function screenStatus(home: string, computerId: string, viewer: string): 
     host: profile.lastVisitedHost,
     lastActivity: activities.length ? activities[activities.length - 1] : null,
     viewers: "机主与信任圈成员",
-    takeover: "second-batch",
+    takeover: active ? active.id : null,
   };
 }
 
@@ -312,10 +315,12 @@ export function screenStatus(home: string, computerId: string, viewer: string): 
 // ---------------------------------------------------------------------------
 
 export const SCREEN_USAGE =
-  "用法：nyra screen <watch|activity|status> <电脑 id> [--as <身份>] [--run <运行 id>] [--limit N] [--text <画面文字>]\n" +
+  "用法：nyra screen <watch|activity|status|takeover|handover> <电脑 id> [--as <身份>] [--run <运行 id>] [--limit N] [--text <画面文字>]\n" +
   "  watch <电脑 id> [--as <身份>] [--run <运行 id>] [--text <画面文字>]   看屏（只读）：一帧快照——帧指纹 + 正在看的页面 + 最近动作，不记帧内容；画面文字先打码（密码/验证码/卡号）\n" +
   "  activity <电脑 id> [--as <身份>] [--run <运行 id>] [--limit N]   活动列表（只读）：正在做什么 + 下一步（下一步取关联运行的时间线阶段，没有关联运行就不编）\n" +
-  "  status <电脑 id> [--as <身份>]   看屏可用性：电脑状态、上次访问、最近活动；接管（take the wheel）是第二批，本批没有";
+  "  status <电脑 id> [--as <身份>]   看屏可用性：电脑状态、上次访问、最近活动、当前有没有人在接管\n" +
+  "  takeover <电脑 id> [--as <身份>] [--reason <原因>] [--run <运行 id>] --yes   接管（take the wheel）：人接手这台电脑，Bot 暂停（任务板挂起、新任务禁启动、调度 tick 跳过）；须 --yes 或交互确认（详见 docs/bot-screen.md 接管一节）\n" +
+  "  handover <电脑 id> [--as <身份>] [--did <做了什么>] [--resume-from <从哪步继续>] [--run <运行 id>]   交还：把电脑还给 Bot，暂停的任务回队列从挂起点继续；did / resume-from 先打码再记";
 
 function flagValue(argv: string[], name: string): string | undefined {
   const idx = argv.indexOf(name);
@@ -377,7 +382,7 @@ export async function handleScreen(argv: string[], home: string): Promise<number
     process.stdout.write(`上次访问：${status.host ?? "无"}\n`);
     if (status.lastActivity) process.stdout.write(`最近活动：${status.lastActivity.at} ${status.lastActivity.action} ${status.lastActivity.target}\n`);
     process.stdout.write(`谁能看：${status.viewers}\n`);
-    process.stdout.write("接管（take the wheel）：第二批才做，本批只有只读看屏。\n");
+    process.stdout.write(status.takeover ? `接管（take the wheel）：有人正在接管（${status.takeover}），Bot 已暂停\n` : "接管（take the wheel）：没人接管（nyra screen takeover <电脑 id> --yes 接管）\n");
     return 0;
   } catch (err) {
     if (err instanceof ScreenError || err instanceof ComputerError) {

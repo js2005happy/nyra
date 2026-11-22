@@ -21,6 +21,9 @@ import { resolveHome } from "./config.ts";
 import { RunStore } from "./runs.ts";
 import { SOUL_AGENT_ID_RE } from "./soul.ts";
 import { addTask, listTasks } from "./tasks.ts";
+// 缺口 50 第二批：接管期间禁启动任务——只读接管账本的叶子模块
+// （takeoverLedger 不 import 任何 src 模块，不形成循环导入）。
+import { getActiveTakeoverForAgent } from "./takeoverLedger.ts";
 
 export class KanbanError extends Error {
   constructor(message: string) {
@@ -228,6 +231,11 @@ export function startKanbanTask(home: string, id: string, runId?: string | null)
   const store = loadKanbanStore(home);
   const task = getTask(store, id);
   if (task.status !== "queued") throw new KanbanError(`只能启动 queued 状态的任务，当前为 ${task.status}`);
+  // 缺口 50 第二批：接管期间 Bot 已暂停——该 agent 的电脑正被人接管时，
+  // 新任务一律禁启动（防双写；交还后恢复进队列再跑）。
+  if (task.agent && getActiveTakeoverForAgent(home, task.agent)) {
+    throw new KanbanError(`Bot 已暂停（接管中），先交还再启动任务：${task.agent} 的电脑正被人接管`);
+  }
   if (runId) task.runId = runId;
   saveKanbanStore(home, store);
   return transition(home, id, "working", runId ? `开始执行，运行 ${runId}` : "开始执行");
@@ -257,7 +265,7 @@ export function failKanbanTask(home: string, id: string, error: string): KanbanT
  * 恢复后回 queued 等下一轮 tick。只能从 working/queued 暂停（已在
  * working 的任务是上限回调直接停的；queued 的是手动暂停）。
  */
-export function pauseKanbanTask(home: string, id: string, reason: string): KanbanTask {
+export function pauseKanbanTask(home: string, id: string, reason: string, note?: string): KanbanTask {
   const store = loadKanbanStore(home);
   const task = getTask(store, id);
   if (task.status !== "working" && task.status !== "queued") {
@@ -266,18 +274,18 @@ export function pauseKanbanTask(home: string, id: string, reason: string): Kanba
   task.lastError = String(reason).slice(0, 300);
   task.updatedAt = nowIso();
   saveKanbanStore(home, store);
-  return transition(home, id, "paused", `分层成本上限暂停：${task.lastError.slice(0, 100)}`);
+  return transition(home, id, "paused", note ?? `分层成本上限暂停：${task.lastError.slice(0, 100)}`);
 }
 
 /** 从 paused 恢复：回 queued（不重置 attempts，下一轮 tick 再跑）。 */
-export function resumeKanbanTask(home: string, id: string): KanbanTask {
+export function resumeKanbanTask(home: string, id: string, note?: string): KanbanTask {
   const store = loadKanbanStore(home);
   const task = getTask(store, id);
   if (task.status !== "paused") throw new KanbanError(`只能恢复 paused 状态的任务，当前为 ${task.status}`);
   task.lastError = null;
   task.updatedAt = nowIso();
   saveKanbanStore(home, store);
-  return transition(home, id, "queued", "分层上限放行，恢复进队列");
+  return transition(home, id, "queued", note ?? "分层上限放行，恢复进队列");
 }
 
 export function requestKanbanReview(home: string, id: string, by: string, note = ""): KanbanTask {
@@ -384,6 +392,12 @@ export function kanbanTick(
   const queued = listKanbanTasks(home, { status: "queued" });
   if (!queued.length) return { claimed: 0, dispatched: 0, runId: null, skipped: "队列为空" };
   const task = queued[0];
+  // 缺口 50 第二批：接管期间 Bot 已暂停——调度 tick 直接跳过，不 claim
+  //（startKanbanTask 的守卫会拒启动；tick 在这里先跳过，不让任务进
+  // working 也不进 fail 路径）。
+  if (task.agent && getActiveTakeoverForAgent(home, task.agent)) {
+    return { claimed: 0, dispatched: 0, runId: null, skipped: `Bot 已暂停（接管中），跳过派发：${task.agent} 的电脑正被人接管` };
+  }
   // 先 claim（queued → working），再派发：派发抛错时任务已是 working，
   // 走同一条 fail 路径（attempts+1，满 3 次熔断）。
   startKanbanTask(home, task.id);
