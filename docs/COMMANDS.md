@@ -44,6 +44,7 @@
 | `nyra tools` | 工具集体检：每轮 schema 成本与裁剪建议 |
 | `nyra models [list\|show\|refresh\|fallback]` | 模型上下文窗口查询与刷新；`fallback` 看备用链开关、顺序与本月切换统计 |
 | `nyra reviewer <status\|enable\|disable\|set-model\|add-rule\|remove-rule\|list-rules\|check>` | 独立审查层：敏感工具调用先过独立审查 agent，审查失败即拦截（详见 `docs/reviewer.md`） |
+| `nyra judge <status\|enable\|disable\|set-model\|set-thresholds\|check>` | 意向验证 judge：敏感工具调用先打风险分（0-100 + 引用证据），高分拒绝、中段转人工（详见 `docs/tool-judge.md`） |
 | `nyra verifier <status\|enable\|disable\|set-model\|rework-on\|rework-off\|add-rule\|remove-rule\|list-rules\|check>` | 验收者：并行产出合入前先验收，不通过打回重做，结论进证据链（详见 `docs/verifier.md`） |
 | `nyra account <status\|login\|logout\|list\|revoke\|link\|suspend\|reactivate>` | 用户账号登录：Google / GitHub / 邮箱 / SSO，账号身份 + 会话（详见 `docs/accounts.md`） |
 | `nyra sso <provider\|login\|status\|scim>` | 缺口 43 第二批：企业 SSO——OIDC 身份提供方注册与登录、SCIM 账号开通（详见 `docs/sso.md`） |

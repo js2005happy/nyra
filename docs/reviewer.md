@@ -122,6 +122,13 @@ nyra reviewer check --tool shell --args '{"command":"rm -rf /tmp/x"}' [--task "�
 两者可共用同一个审查模型配置（`reviewer.model` 不填时沿用
 `smart_approvals.reviewer_model`），但开关各自独立。
 
+## 与意向验证 judge 的关系
+
+judge（`src/toolJudge.ts`，详见 `docs/tool-judge.md`）是审查门之后的
+打分层：审查层二值拦住的，judge 不再看；审查层放行的，judge 再打一个
+0–100 的风险分 + 引用证据，高分拒绝、中段转人工、低分放行。judge 的
+模型配置不填时沿用审查层的模型解析，开关各自独立。
+
 ## 已知局限
 
 - 审查模型是“第二双眼睛”，不是“绝对正确”：它也会误判。误拦截时用户
