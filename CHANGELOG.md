@@ -1,3 +1,8 @@
+## 2026-11-23 — Legacy local read_file missing-path redaction (unreleased, static-only)
+
+- Legacy local `_tool_read_file` now returns a constant missing-file error instead of echoing the caller's raw path; trusted structured adapter already had this guard. Define a regression case, not executed. Remote backend and successful reads unchanged.
+- No tests/CI run, dependency changes, automatic retries, main merge or release.
+
 ## 2026-11-23 — Trusted local listing explicit ToolError redaction (unreleased, static-only)
 
 - Replaced explicit ToolError interpolation in the trusted local `list_dir` structured adapter with a fixed failure message to avoid leaking caller paths. Typed failure outcome preserved; one regression defined but not executed.
