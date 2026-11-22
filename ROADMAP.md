@@ -1,3 +1,10 @@
+## 2026-11-22 — Repair escaped-newline advisory source (static-only)
+
+- **Repository fact (reviewed 2026-11-22):** Six literal backslash-n sequences were embedded in a Python comment in the optional post-tool observation block of `angel/agent.py`. The assignments to `failed_report`, `progress_event`, and `state` were commented out, yet `state` was referenced on the next physical line. This is source analysis, not a runtime reproduction.
+- **External reports (reviewed 2026-11-22):** [Codex #47802](https://github.com/openai/codex/issues/47802) (2026-09-24) describes idle polling after failed subagent dispatch; [Codex #60104](https://github.com/openai/codex/issues/60104) (2026-11-07) describes repeated work and wasted usage. These individual reports do not establish Angel prevalence or this specific source defect.
+- **Engineering inference and ranking (value / difficulty / safety risk / dependency):** P1 repair advisory observation high / low / low / existing observer (**implemented, untested**); P1 independent trusted progress source high / medium-high / medium-high / external authority (**open**); P1 structured tool results high / medium / medium / tool compatibility (**open**); P1 private task-contract storage high / medium / medium-high / secure cross-platform filesystem (**blocked**); P0 claim dispatch high / high / high / sandbox and approvals (**blocked**).
+- Replaced only the six escaped sequences with physical newlines. No automatic cancellation, retry, trust elevation or dependency changes. Tests and CI not run.
+
 ## 2026-11-22 — Reset advisory idle count at each Agent run (static-only)
 
 - **Repository fact (reviewed 2026-11-22):** The optional NoProgressDetector is caller-owned; Agent.run previously preserved its idle counter across separate user tasks. An idle_limit=2 detector with one old observation could alert after just one tool return in the next task. This is a source-derived risk, not a measured incident.
