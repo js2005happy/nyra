@@ -3,7 +3,7 @@
 // MEMORY.md 最近几条记忆带来源会话 id 与时间（来自 sidecar 索引，代码早已记录，这里只是读出来）。
 // 只读：不写、不删、不分“你说的 / Nyra 记下”（代码没记这个区分，界面不编）。
 // 读文件一律拒绝符号链接、只认普通文件、最多读 64 KiB。
-import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { lstatSync, readFileSync, type Stats } from "node:fs";
 import { join } from "node:path";
 import { listMemoryEntries, resolveNyraHome } from "./memory.ts";
 
@@ -34,9 +34,14 @@ export function projectMemoryPath(home: string, workdir: string, kind: ProjectMe
   return join(resolveNyraHome(home), "MEMORY.md");
 }
 
+function lstatOrNull(path: string): Stats | null {
+  // 不用 existsSync：它跟随符号链接，悬空链接会被当成“不存在”而漏判。
+  try { return lstatSync(path); } catch { return null; }
+}
+
 function regularFileSize(path: string): number | null {
-  if (!existsSync(path)) return null;
-  const st = lstatSync(path);
+  const st = lstatOrNull(path);
+  if (!st) return null;
   if (st.isSymbolicLink() || !st.isFile()) return null;
   return st.size;
 }
@@ -69,7 +74,7 @@ export function projectMemoryFile(home: string, workdir: string, kind: string): 
   if (!(PROJECT_MEMORY_KINDS as readonly string[]).includes(kind)) throw new Error("文件种类无效");
   const k = kind as ProjectMemoryKind;
   const path = projectMemoryPath(home, workdir, k);
-  if (existsSync(path) && lstatSync(path).isSymbolicLink()) throw new Error("拒绝读取符号链接");
+  if (lstatOrNull(path)?.isSymbolicLink()) throw new Error("拒绝读取符号链接");
   const size = regularFileSize(path);
   if (size === null) return { kind: k, content: "", exists: false, truncated: false };
   const buf = readFileSync(path);

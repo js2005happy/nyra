@@ -88,10 +88,23 @@ test("projectMemory: 三个文件在不在、MEMORY.md 最近 3 条带来源会�
   expect(projectMemoryFile(home, workdir, "project")).toMatchObject({ exists: true, content: "# 项目说明\n", truncated: false });
   expect(projectMemoryFile(home, workdir, "global")).toMatchObject({ exists: false, content: "" });
   expect(() => projectMemoryFile(home, workdir, "../../etc/passwd")).toThrow();
+  // 符号链接一律拒绝：指向真实文件的与悬空的都要拦（目标用临时目录里的文件，各平台都有）
   const w2 = tmp("nyra-v8pm-link-");
-  symlinkSync("/etc/hostname", join(w2, "AGENTS.md"));
-  expect(() => projectMemoryFile(home, w2, "project")).toThrow();
-  expect(projectMemoryView(home, w2).files[0].exists).toBe(false);
+  const w3 = tmp("nyra-v8pm-dangle-");
+  writeFileSync(join(w2, "real.md"), "真内容");
+  let canLink = true;
+  try {
+    symlinkSync(join(w2, "real.md"), join(w2, "AGENTS.md"));
+    symlinkSync(join(w3, "missing.md"), join(w3, "AGENTS.md"));
+  } catch {
+    canLink = false; // Windows 上没权限建符号链接时跳过（与全仓同口径）
+  }
+  if (canLink) {
+    expect(() => projectMemoryFile(home, w2, "project")).toThrow();
+    expect(projectMemoryView(home, w2).files[0].exists).toBe(false);
+    expect(() => projectMemoryFile(home, w3, "project")).toThrow();
+    expect(projectMemoryView(home, w3).files[0].exists).toBe(false);
+  }
   // 大文件只给前 64 KiB
   writeFileSync(join(workdir, "AGENTS.md"), "x".repeat(70 * 1024));
   const big = projectMemoryFile(home, workdir, "project");
