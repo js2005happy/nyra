@@ -1,3 +1,10 @@
+## 2026-11-22 — Local list_dir argument error privacy (static review only)
+
+- Reviewed README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/Tools/classifier/tests, latest main commits, open issues/PR #113 and prior commit status (no statuses).
+- Source finding: TypeError strings were returned to the model; replaced with fixed error text in two local paths and defined mocked private-path regression. Not a reproduced runtime leak.
+- External Codex #60104 (2026-11-07) discusses repeated work, not this privacy issue; risk is engineering inference.
+- Not run: tests, scripts, builds, compilation, CI or cross-platform checks. No installs, account changes, main merge or production release.
+
 ## 2026-11-22 — Local list_dir exception redaction (static review only)
 
 - Reviewed development README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/Tools, structured result classifier, related regression source, recent main commits, open Issues/PR (#113), and prior commit CI metadata (no statuses or PR-triggered runs returned).
