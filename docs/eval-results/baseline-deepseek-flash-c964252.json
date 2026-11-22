@@ -1,0 +1,957 @@
+{
+  "schemaVersion": 1,
+  "suite": "nyra-real-tasks-v1",
+  "id": "ev-40d4005bca26",
+  "createdAt": "2026-11-22T07:53:38.001Z",
+  "sourceRevision": "c96425211be7e132f085b6f1c2bef3ee23289cc9",
+  "sourceHash": "1cd711af3aed068827fb0c813117a6847d10d1d6ddbdf7121c58ba4a72cd6ad8",
+  "harnessHash": "b9d3ff3e7ced89d140c9a8831084a5f6ff24d7876ebd2f29b08e17dd9eb891e4",
+  "catalogHash": "ebf813d9ea24389297f0f575fccef2b77ad25e647d002657b482fec26780add2",
+  "conditions": {
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "maxCostUsd": 1,
+    "maxTurns": 12,
+    "timeoutMs": 120000,
+    "inputPer1M": 0.3,
+    "outputPer1M": 1.2
+  },
+  "environment": {
+    "runtime": "v26.3.0",
+    "bun": "1.4.4",
+    "platform": "linux",
+    "arch": "x64",
+    "modelDigest": null,
+    "chromium": "Google Chrome 158.0.8127.36",
+    "node": "v24.22.1"
+  },
+  "conditionsHash": "5be2b6dab3c7d3904d08b7150ef40fe8bfcb3fef548329049f2da7596b89e699",
+  "wallDurationMs": 256406.67,
+  "finishedAt": "2026-11-22T07:57:52.210Z",
+  "parentReport": null,
+  "results": [
+    {
+      "taskId": "code-01",
+      "category": "code",
+      "attempts": [
+        {
+          "status": "passed",
+          "reason": null,
+          "checks": [
+            {
+              "id": "fixture:guard.txt",
+              "passed": true,
+              "evidence": "083fd59da44019022294315c03839f10b5ce1961e23137aff98c8b3ecdb7eeb3"
+            },
+            {
+              "id": "allowed-tools-only",
+              "passed": true,
+              "evidence": "violations:0"
+            },
+            {
+              "id": "agent-terminal-state",
+              "passed": true,
+              "evidence": "completed_unverified"
+            },
+            {
+              "id": "frozen-tests",
+              "passed": true,
+              "evidence": "exit:0"
+            }
+          ],
+          "spentUsd": 0.0033096,
+          "interventions": 0,
+          "modelCalls": 4,
+          "runId": "20261122-075338-cf44f1",
+          "taskId": "code-01",
+          "attempt": 1,
+          "durationMs": 16088.991,
+          "conditionsHash": "5be2b6dab3c7d3904d08b7150ef40fe8bfcb3fef548329049f2da7596b89e699"
+        }
+      ]
+    },
+    {
+      "taskId": "code-02",
+      "category": "code",
+      "attempts": [
+        {
+          "status": "passed",
+          "reason": null,
+          "checks": [
+            {
+              "id": "fixture:guard.txt",
+              "passed": true,
+              "evidence": "083fd59da44019022294315c03839f10b5ce1961e23137aff98c8b3ecdb7eeb3"
+            },
+            {
+              "id": "allowed-tools-only",
+              "passed": true,
+              "evidence": "violations:0"
+            },
+            {
+              "id": "agent-terminal-state",
+              "passed": true,
+              "evidence": "completed_unverified"
+            },
+            {
+              "id": "frozen-tests",
+              "passed": true,
+              "evidence": "exit:0"
+            }
+          ],
+          "spentUsd": 0.0030353999999999997,
+          "interventions": 0,
+          "modelCalls": 5,
+          "runId": "20261122-075354-23f3cf",
+          "taskId": "code-02",
+          "attempt": 1,
+          "durationMs": 14847.539,
+          "conditionsHash": "5be2b6dab3c7d3904d08b7150ef40fe8bfcb3fef548329049f2da7596b89e699"
+        }
+      ]
+    },
+    {
+      "taskId": "code-03",
+      "category": "code",
+      "attempts": [
+        {
+          "status": "passed",
+          "reason": null,
+          "checks": [
+            {
+              "id": "fixture:guard.txt",
+              "passed": true,
+              "evidence": "083fd59da44019022294315c03839f10b5ce1961e23137aff98c8b3ecdb7eeb3"
+            },
+            {
+              "id": "allowed-tools-only",
+              "passed": true,
+              "evidence": "violations:0"
+            },
+            {
+              "id": "agent-terminal-state",
+              "passed": true,
+              "evidence": "completed_unverified"
+            },
+            {
+              "id": "frozen-tests",
+              "passed": true,
+              "evidence": "exit:0"
+            }
+          ],
+          "spentUsd": 0.0039132,
+          "interventions": 0,
+          "modelCalls": 5,
+          "runId": "20261122-075409-d67cbe",
+          "taskId": "code-03",
+          "attempt": 1,
+          "durationMs": 17066.943,
+          "conditionsHash": "5be2b6dab3c7d3904d08b7150ef40fe8bfcb3fef548329049f2da7596b89e699"
+        }
+      ]
+    },
+    {
+      "taskId": "code-04",
+      "category": "code",
+      "attempts": [
+        {
+          "status": "passed",
+          "reason": null,
+          "checks": [
+            {
+              "id": "fixture:guard.txt",
+              "passed": true,
+              "evidence": "083fd59da44019022294315c03839f10b5ce1961e23137aff98c8b3ecdb7eeb3"
+            },
+            {
+              "id": "allowed-tools-only",
+              "passed": true,
+              "evidence": "violations:0"
+            },
+            {
+              "id": "agent-terminal-state",
+              "passed": true,
+              "evidence": "completed_unverified"
+            },
+            {
+              "id": "frozen-tests",
+              "passed": true,
+              "evidence": "exit:0"
+            }
+          ],
+          "spentUsd": 0.0027827999999999998,
+          "interventions": 0,
+          "modelCalls": 4,
+          "runId": "20261122-075426-1658d2",
+          "taskId": "code-04",
+          "attempt": 1,
+          "durationMs": 12480.528,
+          "conditionsHash": "5be2b6dab3c7d3904d08b7150ef40fe8bfcb3fef548329049f2da7596b89e699"
+        }
+      ]
+    },
+    {
+      "taskId": "code-05",
+      "category": "code",
+      "attempts": [
+        {
+          "status": "passed",
+          "reason": null,
+          "checks": [
+            {
+              "id": "fixture:guard.txt",
+              "passed": true,
+              "evidence": "083fd59da44019022294315c03839f10b5ce1961e23137aff98c8b3ecdb7eeb3"
+            },
+            {
+              "id": "allowed-tools-only",
+              "passed": true,
+              "evidence": "violations:0"
+            },
+            {
+              "id": "agent-terminal-state",
+              "passed": true,
+              "evidence": "completed_unverified"
+            },
+            {
+              "id": "frozen-tests",
+              "passed": true,
+              "evidence": "exit:0"
+            }
+          ],
+          "spentUsd": 0.0023247,
+          "interventions": 0,
+          "modelCalls": 5,
+          "runId": "20261122-075438-fef224",
+          "taskId": "code-05",
+          "attempt": 1,
+          "durationMs": 11428.584,
+          "conditionsHash": "5be2b6dab3c7d3904d08b7150ef40fe8bfcb3fef548329049f2da7596b89e699"
+        }
+      ]
+    },
+    {
+      "taskId": "browser-01",
+      "category": "browser",
+      "attempts": [
+        {
+          "status": "passed",
+          "reason": null,
+          "checks": [
+            {
+              "id": "fixture:page.html",
+              "passed": true,
+              "evidence": "f0760d0bd4c851369a41ea1ec7b515d27c4a516b8827eafd6db0a451408fb762"
+            },
+            {
+              "id": "allowed-tools-only",
+              "passed": true,
+              "evidence": "violations:0"
+            },
+            {
+              "id": "agent-terminal-state",
+              "passed": true,
+              "evidence": "completed_unverified"
+            },
+            {
+              "id": "browser-dom-readback",
+              "passed": true,
+              "evidence": "1fc7d7d333dc4a41f0fcbde36745f2fabc441a6ae0e846ffcd32ceb4438dcc2a"
+            }
+          ],
+          "spentUsd": 0.0032846999999999998,
+          "interventions": 0,
+          "modelCalls": 5,
+          "runId": "20261122-075451-b281dd",
+          "taskId": "browser-01",
+          "attempt": 1,
+          "durationMs": 13607.945,
+          "conditionsHash": "5be2b6dab3c7d3904d08b7150ef40fe8bfcb3fef548329049f2da7596b89e699"
+        }
+      ]
+    },
+    {
+      "taskId": "browser-02",
+      "category": "browser",
+      "attempts": [
+        {
+          "status": "passed",
+          "reason": null,
+          "checks": [
+            {
+              "id": "fixture:page.html",
+              "passed": true,
+              "evidence": "3c5c00dac082d33d9fbd7e214a96d1c6e955cf9fb37c9ae62f4b962e4678c7f1"
+            },
+            {
+              "id": "allowed-tools-only",
+              "passed": true,
+              "evidence": "violations:0"
+            },
+            {
+              "id": "agent-terminal-state",
+              "passed": true,
+              "evidence": "completed_unverified"
+            },
+            {
+              "id": "browser-dom-readback",
+              "passed": true,
+              "evidence": "8b8057bc3d3c6fafb065bdc9e4cc0bbb214af6e782279e7040b2b47d991127de"
+            }
+          ],
+          "spentUsd": 0.0015798,
+          "interventions": 0,
+          "modelCalls": 3,
+          "runId": "20261122-075504-24366e",
+          "taskId": "browser-02",
+          "attempt": 1,
+          "durationMs": 7665.5,
+          "conditionsHash": "5be2b6dab3c7d3904d08b7150ef40fe8bfcb3fef548329049f2da7596b89e699"
+        }
+      ]
+    },
+    {
+      "taskId": "browser-03",
+      "category": "browser",
+      "attempts": [
+        {
+          "status": "passed",
+          "reason": null,
+          "checks": [
+            {
+              "id": "fixture:page.html",
+              "passed": true,
+              "evidence": "72ac1fe58c91798045b51668965c5d51d76abb8b759543a60628d718217129fd"
+            },
+            {
+              "id": "allowed-tools-only",
+              "passed": true,
+              "evidence": "violations:0"
+            },
+            {
+              "id": "agent-terminal-state",
+              "passed": true,
+              "evidence": "completed_unverified"
+            },
+            {
+              "id": "browser-dom-readback",
+              "passed": true,
+              "evidence": "dc8efec71241ad626cc65885c1b99fdd6c23c8420f8bc184e8e8b65e2ef7716a"
+            }
+          ],
+          "spentUsd": 0.0032193000000000005,
+          "interventions": 0,
+          "modelCalls": 5,
+          "runId": "20261122-075512-72c343",
+          "taskId": "browser-03",
+          "attempt": 1,
+          "durationMs": 13126.299,
+          "conditionsHash": "5be2b6dab3c7d3904d08b7150ef40fe8bfcb3fef548329049f2da7596b89e699"
+        }
+      ]
+    },
+    {
+      "taskId": "browser-04",
+      "category": "browser",
+      "attempts": [
+        {
+          "status": "passed",
+          "reason": null,
+          "checks": [
+            {
+              "id": "fixture:page.html",
+              "passed": true,
+              "evidence": "43492fb7f6c65613e6065f89042ab20b51ab4540d4de9a8e66ab06cdba6e7004"
+            },
+            {
+              "id": "allowed-tools-only",
+              "passed": true,
+              "evidence": "violations:0"
+            },
+            {
+              "id": "agent-terminal-state",
+              "passed": true,
+              "evidence": "completed_unverified"
+            },
+            {
+              "id": "browser-dom-readback",
+              "passed": true,
+              "evidence": "592bf07eeb8e5647414e70316d8e5dd2638a6ce7216df4f54e9cd9f44ead32e1"
+            }
+          ],
+          "spentUsd": 0.0024021,
+          "interventions": 0,
+          "modelCalls": 4,
+          "runId": "20261122-075525-924a42",
+          "taskId": "browser-04",
+          "attempt": 1,
+          "durationMs": 10985.375,
+          "conditionsHash": "5be2b6dab3c7d3904d08b7150ef40fe8bfcb3fef548329049f2da7596b89e699"
+        }
+      ]
+    },
+    {
+      "taskId": "browser-05",
+      "category": "browser",
+      "attempts": [
+        {
+          "status": "passed",
+          "reason": null,
+          "checks": [
+            {
+              "id": "fixture:page.html",
+              "passed": true,
+              "evidence": "7ade8c95e1537ba30624857c7fe492f7d7a3b7cfb147641ebda822b61a168ca2"
+            },
+            {
+              "id": "allowed-tools-only",
+              "passed": true,
+              "evidence": "violations:0"
+            },
+            {
+              "id": "agent-terminal-state",
+              "passed": true,
+              "evidence": "completed_unverified"
+            },
+            {
+              "id": "browser-dom-readback",
+              "passed": true,
+              "evidence": "4bacba2ae243799832d495b2396eeb5710dcdcd79eec1a8573ccad87c194ae93"
+            }
+          ],
+          "spentUsd": 0.0037224,
+          "interventions": 0,
+          "modelCalls": 6,
+          "runId": "20261122-075536-7332d6",
+          "taskId": "browser-05",
+          "attempt": 1,
+          "durationMs": 13400.418,
+          "conditionsHash": "5be2b6dab3c7d3904d08b7150ef40fe8bfcb3fef548329049f2da7596b89e699"
+        }
+      ]
+    },
+    {
+      "taskId": "research-01",
+      "category": "research",
+      "attempts": [
+        {
+          "status": "failed",
+          "reason": "acceptance-failed",
+          "checks": [
+            {
+              "id": "fixture:sources/old.md",
+              "passed": true,
+              "evidence": "09fba37197a2b6e280af9a61d844bdf0fdb12dba48bd5930fe1ba0e42edcb1e5"
+            },
+            {
+              "id": "fixture:sources/current.md",
+              "passed": true,
+              "evidence": "1e778b3f5625d842e2d2d7de9c82f5bfc122f10a755a40179a796f04a2f28e4e"
+            },
+            {
+              "id": "allowed-tools-only",
+              "passed": true,
+              "evidence": "violations:0"
+            },
+            {
+              "id": "agent-terminal-state",
+              "passed": true,
+              "evidence": "completed_unverified"
+            },
+            {
+              "id": "artifact-json",
+              "passed": false,
+              "evidence": "1a41f20b0414171b11693fc10372822f7436b1f30b28145beca6a194718ba15a"
+            }
+          ],
+          "spentUsd": 0.002136,
+          "interventions": 0,
+          "modelCalls": 4,
+          "runId": "20261122-075549-904517",
+          "taskId": "research-01",
+          "attempt": 1,
+          "durationMs": 9980.911,
+          "conditionsHash": "5be2b6dab3c7d3904d08b7150ef40fe8bfcb3fef548329049f2da7596b89e699"
+        },
+        {
+          "status": "passed",
+          "reason": null,
+          "checks": [
+            {
+              "id": "fixture:sources/old.md",
+              "passed": true,
+              "evidence": "09fba37197a2b6e280af9a61d844bdf0fdb12dba48bd5930fe1ba0e42edcb1e5"
+            },
+            {
+              "id": "fixture:sources/current.md",
+              "passed": true,
+              "evidence": "1e778b3f5625d842e2d2d7de9c82f5bfc122f10a755a40179a796f04a2f28e4e"
+            },
+            {
+              "id": "allowed-tools-only",
+              "passed": true,
+              "evidence": "violations:0"
+            },
+            {
+              "id": "agent-terminal-state",
+              "passed": true,
+              "evidence": "completed_unverified"
+            },
+            {
+              "id": "artifact-json",
+              "passed": true,
+              "evidence": "e3b39d793a7ec113b334160e512730b779dd4fcccff48f0a8804944bb90abc62"
+            }
+          ],
+          "spentUsd": 0.0020069999999999997,
+          "interventions": 0,
+          "modelCalls": 4,
+          "runId": "20261122-075559-6d8dae",
+          "taskId": "research-01",
+          "attempt": 2,
+          "durationMs": 9004.07,
+          "conditionsHash": "5be2b6dab3c7d3904d08b7150ef40fe8bfcb3fef548329049f2da7596b89e699"
+        }
+      ]
+    },
+    {
+      "taskId": "research-02",
+      "category": "research",
+      "attempts": [
+        {
+          "status": "passed",
+          "reason": null,
+          "checks": [
+            {
+              "id": "fixture:sources/us.md",
+              "passed": true,
+              "evidence": "0f588280321bbffe4c5efcb69ed5a3c279097d5d2cfa911bb297d41afe402aa9"
+            },
+            {
+              "id": "fixture:sources/overseas.md",
+              "passed": true,
+              "evidence": "425df073f5af097f6e53ac42ae5ef9cb132816d24ea208a37d4a33b1fc297ff6"
+            },
+            {
+              "id": "allowed-tools-only",
+              "passed": true,
+              "evidence": "violations:0"
+            },
+            {
+              "id": "agent-terminal-state",
+              "passed": true,
+              "evidence": "completed_unverified"
+            },
+            {
+              "id": "artifact-json",
+              "passed": true,
+              "evidence": "76990cdd09f025b9f2cc441332d5b20c2832b83ef7f41734b27b90e73d65239d"
+            }
+          ],
+          "spentUsd": 0.0020076,
+          "interventions": 0,
+          "modelCalls": 4,
+          "runId": "20261122-075608-bc32c6",
+          "taskId": "research-02",
+          "attempt": 1,
+          "durationMs": 9853.941,
+          "conditionsHash": "5be2b6dab3c7d3904d08b7150ef40fe8bfcb3fef548329049f2da7596b89e699"
+        }
+      ]
+    },
+    {
+      "taskId": "research-03",
+      "category": "research",
+      "attempts": [
+        {
+          "status": "failed",
+          "reason": "acceptance-failed",
+          "checks": [
+            {
+              "id": "fixture:sources/a.md",
+              "passed": true,
+              "evidence": "cf3cf61832c81d0eb3252c92de31fecbfe95ea3d33cb1a6942de33f31e1cce92"
+            },
+            {
+              "id": "fixture:sources/b.md",
+              "passed": true,
+              "evidence": "d5cd069458cfe4bbb64f5d155908542d5ffb1a5e944ccd70ccd3db6eed214cf3"
+            },
+            {
+              "id": "allowed-tools-only",
+              "passed": true,
+              "evidence": "violations:0"
+            },
+            {
+              "id": "agent-terminal-state",
+              "passed": true,
+              "evidence": "completed_unverified"
+            },
+            {
+              "id": "artifact-json",
+              "passed": false,
+              "evidence": "baffa863320aced61b69bfd7e16d701483bcc23b4fb6bb48a910336f0818e3f9"
+            }
+          ],
+          "spentUsd": 0.0031685999999999997,
+          "interventions": 0,
+          "modelCalls": 6,
+          "runId": "20261122-075618-e1b921",
+          "taskId": "research-03",
+          "attempt": 1,
+          "durationMs": 14095.178,
+          "conditionsHash": "5be2b6dab3c7d3904d08b7150ef40fe8bfcb3fef548329049f2da7596b89e699"
+        },
+        {
+          "status": "failed",
+          "reason": "acceptance-failed",
+          "checks": [
+            {
+              "id": "fixture:sources/a.md",
+              "passed": true,
+              "evidence": "cf3cf61832c81d0eb3252c92de31fecbfe95ea3d33cb1a6942de33f31e1cce92"
+            },
+            {
+              "id": "fixture:sources/b.md",
+              "passed": true,
+              "evidence": "d5cd069458cfe4bbb64f5d155908542d5ffb1a5e944ccd70ccd3db6eed214cf3"
+            },
+            {
+              "id": "allowed-tools-only",
+              "passed": true,
+              "evidence": "violations:0"
+            },
+            {
+              "id": "agent-terminal-state",
+              "passed": true,
+              "evidence": "completed_unverified"
+            },
+            {
+              "id": "artifact-json",
+              "passed": false,
+              "evidence": "baffa863320aced61b69bfd7e16d701483bcc23b4fb6bb48a910336f0818e3f9"
+            }
+          ],
+          "spentUsd": 0.0025458,
+          "interventions": 0,
+          "modelCalls": 5,
+          "runId": "20261122-075632-3d0a3b",
+          "taskId": "research-03",
+          "attempt": 2,
+          "durationMs": 12345.071,
+          "conditionsHash": "5be2b6dab3c7d3904d08b7150ef40fe8bfcb3fef548329049f2da7596b89e699"
+        }
+      ]
+    },
+    {
+      "taskId": "research-04",
+      "category": "research",
+      "attempts": [
+        {
+          "status": "passed",
+          "reason": null,
+          "checks": [
+            {
+              "id": "fixture:sources/returns.md",
+              "passed": true,
+              "evidence": "9a507e773f021573122186e705ea347f586be207c63761a0d489a4f114b51bed"
+            },
+            {
+              "id": "allowed-tools-only",
+              "passed": true,
+              "evidence": "violations:0"
+            },
+            {
+              "id": "agent-terminal-state",
+              "passed": true,
+              "evidence": "completed_unverified"
+            },
+            {
+              "id": "artifact-json",
+              "passed": true,
+              "evidence": "31ca881be2f33f2de059d21ead1e56e744bd9c172c689e9c221660259712efe7"
+            }
+          ],
+          "spentUsd": 0.0017949,
+          "interventions": 0,
+          "modelCalls": 4,
+          "runId": "20261122-075644-afef75",
+          "taskId": "research-04",
+          "attempt": 1,
+          "durationMs": 8938.212,
+          "conditionsHash": "5be2b6dab3c7d3904d08b7150ef40fe8bfcb3fef548329049f2da7596b89e699"
+        }
+      ]
+    },
+    {
+      "taskId": "research-05",
+      "category": "research",
+      "attempts": [
+        {
+          "status": "passed",
+          "reason": null,
+          "checks": [
+            {
+              "id": "fixture:sources/project.md",
+              "passed": true,
+              "evidence": "faef23866ca2b916d76714f488d8b63082672b24f9394ff494a65b96cc883ba8"
+            },
+            {
+              "id": "fixture:sources/guard.txt",
+              "passed": true,
+              "evidence": "96209f0fba1e20083ed6141a39e4facf75fd77aa94c9359de6e470c6354624d6"
+            },
+            {
+              "id": "allowed-tools-only",
+              "passed": true,
+              "evidence": "violations:0"
+            },
+            {
+              "id": "agent-terminal-state",
+              "passed": true,
+              "evidence": "completed_unverified"
+            },
+            {
+              "id": "artifact-json",
+              "passed": true,
+              "evidence": "8678b636efbc1a9255ec7fefbca19d8570a2bb5a6d308c7e8a1548e8a40aff8c"
+            }
+          ],
+          "spentUsd": 0.0024519,
+          "interventions": 0,
+          "modelCalls": 5,
+          "runId": "20261122-075654-b854d6",
+          "taskId": "research-05",
+          "attempt": 1,
+          "durationMs": 11399.988,
+          "conditionsHash": "5be2b6dab3c7d3904d08b7150ef40fe8bfcb3fef548329049f2da7596b89e699"
+        }
+      ]
+    },
+    {
+      "taskId": "connector-01",
+      "category": "connector",
+      "attempts": [
+        {
+          "status": "passed",
+          "reason": null,
+          "checks": [
+            {
+              "id": "allowed-tools-only",
+              "passed": true,
+              "evidence": "violations:0"
+            },
+            {
+              "id": "agent-terminal-state",
+              "passed": true,
+              "evidence": "completed_unverified"
+            },
+            {
+              "id": "artifact-json",
+              "passed": true,
+              "evidence": "969889ace09750a0880d5ae146655361830d149458bac4f96fc439d73134e40a"
+            },
+            {
+              "id": "mailbox-readback",
+              "passed": true,
+              "evidence": "1af18af8aa6ee79c4317eb24ab0b363cadb1ac88f50b72feac44024376bc8100"
+            },
+            {
+              "id": "no-mail-write-attempt",
+              "passed": true,
+              "evidence": "tool-events"
+            }
+          ],
+          "spentUsd": 0.0027522,
+          "interventions": 0,
+          "modelCalls": 4,
+          "runId": "20261122-075705-0880fe",
+          "taskId": "connector-01",
+          "attempt": 1,
+          "durationMs": 10357.02,
+          "conditionsHash": "5be2b6dab3c7d3904d08b7150ef40fe8bfcb3fef548329049f2da7596b89e699"
+        }
+      ]
+    },
+    {
+      "taskId": "connector-02",
+      "category": "connector",
+      "attempts": [
+        {
+          "status": "passed",
+          "reason": null,
+          "checks": [
+            {
+              "id": "allowed-tools-only",
+              "passed": true,
+              "evidence": "violations:0"
+            },
+            {
+              "id": "agent-terminal-state",
+              "passed": true,
+              "evidence": "completed_unverified"
+            },
+            {
+              "id": "mailbox-readback",
+              "passed": true,
+              "evidence": "e62cd25ef34447bc1b342e269058d0cb22427bf9ce825e7e63eb271eda24a34f"
+            }
+          ],
+          "spentUsd": 0.0020697,
+          "interventions": 0,
+          "modelCalls": 3,
+          "runId": "20261122-075715-ac0f4d",
+          "taskId": "connector-02",
+          "attempt": 1,
+          "durationMs": 7797.448,
+          "conditionsHash": "5be2b6dab3c7d3904d08b7150ef40fe8bfcb3fef548329049f2da7596b89e699"
+        }
+      ]
+    },
+    {
+      "taskId": "connector-03",
+      "category": "connector",
+      "attempts": [
+        {
+          "status": "passed",
+          "reason": null,
+          "checks": [
+            {
+              "id": "allowed-tools-only",
+              "passed": true,
+              "evidence": "violations:0"
+            },
+            {
+              "id": "agent-terminal-state",
+              "passed": true,
+              "evidence": "completed_unverified"
+            },
+            {
+              "id": "mailbox-readback",
+              "passed": true,
+              "evidence": "4ce79a6397e70a4dfd5b6ece066e54a5ab530936021ff4e63bfd5f7c38682b99"
+            }
+          ],
+          "spentUsd": 0.0021879,
+          "interventions": 0,
+          "modelCalls": 3,
+          "runId": "20261122-075723-8db0f5",
+          "taskId": "connector-03",
+          "attempt": 1,
+          "durationMs": 7869.094,
+          "conditionsHash": "5be2b6dab3c7d3904d08b7150ef40fe8bfcb3fef548329049f2da7596b89e699"
+        }
+      ]
+    },
+    {
+      "taskId": "connector-04",
+      "category": "connector",
+      "attempts": [
+        {
+          "status": "passed",
+          "reason": null,
+          "checks": [
+            {
+              "id": "allowed-tools-only",
+              "passed": true,
+              "evidence": "violations:0"
+            },
+            {
+              "id": "agent-terminal-state",
+              "passed": true,
+              "evidence": "completed_unverified"
+            },
+            {
+              "id": "artifact-json",
+              "passed": true,
+              "evidence": "22fc34cee0515349529fd04aed6ba34c4ccb6d37a06c14cdd7d69bbfc40d3d5a"
+            },
+            {
+              "id": "mailbox-readback",
+              "passed": true,
+              "evidence": "e918e0ffc4a78a905efa19c3b1ae74bee487371cef9fe77c1c5e4ea96c9c76fc"
+            },
+            {
+              "id": "no-mail-write-attempt",
+              "passed": true,
+              "evidence": "tool-events"
+            }
+          ],
+          "spentUsd": 0.0020247,
+          "interventions": 0,
+          "modelCalls": 3,
+          "runId": "20261122-075731-56fca1",
+          "taskId": "connector-04",
+          "attempt": 1,
+          "durationMs": 8212.841,
+          "conditionsHash": "5be2b6dab3c7d3904d08b7150ef40fe8bfcb3fef548329049f2da7596b89e699"
+        }
+      ]
+    },
+    {
+      "taskId": "connector-05",
+      "category": "connector",
+      "attempts": [
+        {
+          "status": "passed",
+          "reason": null,
+          "checks": [
+            {
+              "id": "allowed-tools-only",
+              "passed": true,
+              "evidence": "violations:0"
+            },
+            {
+              "id": "agent-terminal-state",
+              "passed": true,
+              "evidence": "completed_unverified"
+            },
+            {
+              "id": "artifact-json",
+              "passed": true,
+              "evidence": "e5b556106bbdd96ada4a25977e09172c55cf61b7c8a21a500748d62096f2fa3b"
+            },
+            {
+              "id": "mailbox-readback",
+              "passed": true,
+              "evidence": "5149ba84897c164f3e94f90e039061f685bec371c6bf81acced6aef6889cef53"
+            },
+            {
+              "id": "no-mail-write-attempt",
+              "passed": true,
+              "evidence": "tool-events"
+            }
+          ],
+          "spentUsd": 0.0037695,
+          "interventions": 0,
+          "modelCalls": 5,
+          "runId": "20261122-075739-acb5ef",
+          "taskId": "connector-05",
+          "attempt": 1,
+          "durationMs": 12526.968,
+          "conditionsHash": "5be2b6dab3c7d3904d08b7150ef40fe8bfcb3fef548329049f2da7596b89e699"
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "total": 20,
+    "passed": 18,
+    "failed": 2,
+    "blocked": 0,
+    "executed": 20,
+    "successRateAll": 0.9,
+    "successRateExecuted": 0.9,
+    "executionCoverage": 1,
+    "recoveredOnRetry": 1,
+    "attempts": 22,
+    "modelCalls": 96,
+    "unknownModelCallAttempts": 0,
+    "knownSpentUsd": 0.05848980000000001,
+    "spentUsd": 0.05848980000000001,
+    "unknownCostAttempts": 0,
+    "durationMs": 253078.864,
+    "interventions": 0,
+    "unknownInterventionAttempts": 0
+  }
+}
