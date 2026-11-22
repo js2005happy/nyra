@@ -305,3 +305,61 @@ test("toolShell 接线：未配 sandbox 的旧调用保持原行为（不解析�
     expect(out).toContain("legacy-path");
   });
 });
+
+// ---- 隔离补强批：macOS auto → Seatbelt、Windows auto 仍不选 Job Object ----
+
+test("auto：macOS + sandbox-exec 可用时解析为 Seatbelt（探测覆盖模拟 darwin）", () => {
+  const r = resolveSandboxBackend({}, null, { platform: "darwin", seatbeltAvailable: true });
+  expect(r.backend).toBe("seatbelt");
+  expect(r.level).toBe("seatbelt");
+  expect(r.seatbeltAvailable).toBe(true);
+});
+
+test("auto：macOS 无 sandbox-exec 时回落工具级；danger-full-access 同样落工具级", () => {
+  const noSb = resolveSandboxBackend({}, null, { platform: "darwin", seatbeltAvailable: false });
+  expect(noSb.backend).toBe("local");
+  expect(noSb.level).toBe("tool-level");
+  const danger = resolveSandboxBackend({ sandbox_mode: "danger-full-access" }, null, { platform: "darwin", seatbeltAvailable: true });
+  expect(danger.backend).toBe("local");
+  expect(danger.level).toBe("tool-level");
+});
+
+test("auto：Windows 有 PowerShell 时仍不选 Job Object（隔离面不同、未真机验证）", () => {
+  const r = resolveSandboxBackend({}, null, { platform: "win32", jobObjectAvailable: true });
+  expect(r.backend).toBe("local");
+  expect(r.level).toBe("tool-level");
+});
+
+test("getSandboxStatus：探测覆盖的三后端可用性字段如实上报", () => {
+  const s = getSandboxStatus({}, null, { platform: "darwin", bwrapAvailable: false, seatbeltAvailable: true, jobObjectAvailable: false });
+  expect(s.level).toBe("seatbelt");
+  expect(s.bwrapAvailable).toBe(false);
+  expect(s.seatbeltAvailable).toBe(true);
+  expect(s.jobObjectAvailable).toBe(false);
+});
+
+test("toolShell 接线：jobobject + 断网时联网工具在 PowerShell 启动前就被拦", async () => {
+  const wd = tmpDir("nyra-shell-wd-");
+  await withEnv(cleanSandboxEnv(), async () => {
+    const ctx = newToolContext({
+      workdir: wd, mode: "full", interactive: false,
+      sandbox: { backend: "jobobject", mode: "workspace-write", allowNet: false },
+      sandboxProbe: { platform: "win32", jobObjectAvailable: true },
+    });
+    const out = await executeTool("shell", { command: "curl https://example.com", timeout: 10 }, ctx);
+    expect(out).toMatch("禁止联网工具 curl");
+    // 回环豁免：不触发拦截，继续走到 PowerShell 启动失败（本机无 PowerShell）。
+    const local = await executeTool("shell", { command: "curl http://localhost:3000/x", timeout: 10 }, ctx);
+    expect(local).not.toMatch("禁止联网工具");
+    expect(local).toMatch("Job Object 启动失败");
+    // allowNet=true 时不拦截，同样走到 PowerShell 启动失败。
+    const ctxNet = newToolContext({
+      workdir: wd, mode: "full", interactive: false,
+      sandbox: { backend: "jobobject", mode: "workspace-write", allowNet: true },
+      sandboxProbe: { platform: "win32", jobObjectAvailable: true },
+    });
+    const outNet = await executeTool("shell", { command: "curl https://example.com", timeout: 10 }, ctxNet);
+    expect(outNet).not.toMatch("禁止联网工具");
+    expect(outNet).toMatch("Job Object 启动失败");
+  });
+});

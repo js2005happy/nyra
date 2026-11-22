@@ -13,6 +13,7 @@ import {
   resolveSandboxBackend, getSandboxStatus, describeSandboxLevel, sandboxLevelText,
   SANDBOX_BACKENDS, toolLevelFallbackNotice,
 } from "../../src/sandbox.ts";
+import { checkJobObjectNetworkDenied } from "../../src/tools.ts";
 
 test("WindowsSandbox.script_contains_job_object_setup", () => {
   const script = buildJobObjectScript("echo hello", { mode: "workspace-write", workdir: "C:\\work" });
@@ -137,7 +138,7 @@ test("WindowsSandbox.resolve_requires_windows", () => {
 });
 
 test("WindowsSandbox.level_text_and_detail", () => {
-  expect(sandboxLevelText("jobobject")).toBe("进程级沙箱（Job Object，不管文件与网络）");
+  expect(sandboxLevelText("jobobject")).toBe("进程级沙箱（Job Object，文件靠工具级规则、网络靠工具级拦截）");
   expect(sandboxLevelText("seatbelt")).toBe("OS 沙箱（Seatbelt）");
   expect(sandboxLevelText("bwrap")).toBe("OS 沙箱（bwrap）");
   expect(sandboxLevelText("tool-level")).toBe("工具级（非 OS 沙箱）");
@@ -148,7 +149,8 @@ test("WindowsSandbox.level_text_and_detail", () => {
     level: "jobobject", allowNet: false, bwrapAvailable: false, jobObjectAvailable: true,
   });
   expect(job).toContain("Job Object");
-  expect(job).toContain("文件与网络隔离仍由工具级规则兜底");
+  expect(job).toContain("文件隔离仍由工具级规则兜底");
+  expect(job).toContain("工具级拦截联网工具");
   const sb = describeSandboxLevel({
     backend: "seatbelt", requested: "seatbelt", mode: "workspace-write",
     level: "seatbelt", allowNet: false, bwrapAvailable: false, seatbeltAvailable: true,
@@ -199,4 +201,30 @@ test("WindowsSandbox.run_missing_powershell_throws", async () => {
   if (process.platform === "win32") { console.log("跳过：Windows 上 PowerShell 一定存在"); return; }
   await expect(runWindowsSandboxed("echo hi", { workdir: tmpdir(), mode: "workspace-write" }))
     .rejects.toThrow("找不到 PowerShell");
+});
+
+// ---- 隔离补强批：Job Object 断网时的工具级网络拦截（纯函数，任何平台可测） ----
+
+test("checkJobObjectNetworkDenied：外网工具被拦，回环与无目标放行", () => {
+  expect(checkJobObjectNetworkDenied("curl https://example.com")).toMatch("禁止联网工具 curl");
+  expect(checkJobObjectNetworkDenied("curl example.com")).toMatch("禁止联网工具 curl");
+  expect(checkJobObjectNetworkDenied("wget https://example.com/x.tar.gz")).toMatch("禁止联网工具 wget");
+  expect(checkJobObjectNetworkDenied("nc example.com 80")).toMatch("禁止联网工具 nc");
+  expect(checkJobObjectNetworkDenied("bitsadmin /transfer j https://example.com/a C:\\a")).toMatch("禁止联网工具 bitsadmin");
+  expect(checkJobObjectNetworkDenied("powershell -Command \"iwr https://example.com\"")).toMatch("禁止联网工具 iwr");
+  expect(checkJobObjectNetworkDenied("Invoke-WebRequest -Uri https://example.com")).toMatch("禁止联网工具 invoke-webrequest");
+  expect(checkJobObjectNetworkDenied("certutil -urlcache https://example.com x")).toMatch("禁止联网工具 certutil");
+  // 回环豁免。
+  expect(checkJobObjectNetworkDenied("curl http://localhost:3000/x")).toBeNull();
+  expect(checkJobObjectNetworkDenied("curl http://127.0.0.1:8080")).toBeNull();
+  expect(checkJobObjectNetworkDenied("curl -o out.txt http://localhost:3000/x")).toBeNull();
+  expect(checkJobObjectNetworkDenied("nc localhost 8080")).toBeNull();
+  expect(checkJobObjectNetworkDenied("Invoke-WebRequest -Uri http://localhost:8080")).toBeNull();
+  // 无目标或非联网用法放行。
+  expect(checkJobObjectNetworkDenied("curl --version")).toBeNull();
+  expect(checkJobObjectNetworkDenied("certutil -hashfile foo SHA256")).toBeNull();
+  expect(checkJobObjectNetworkDenied("echo hello")).toBeNull();
+  expect(checkJobObjectNetworkDenied("echo curl")).toBeNull();
+  // 分隔符后的第二段同样拦。
+  expect(checkJobObjectNetworkDenied("echo ok; curl https://example.com")).toMatch("禁止联网工具 curl");
 });
