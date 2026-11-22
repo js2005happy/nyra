@@ -1,3 +1,10 @@
+## 2026-11-23 — P1 missing local read_file path privacy (static-only)
+
+- **Repository fact (static inspection):** the local trusted read adapter returned a missing-file error containing the raw caller-provided path. Paths may embed private directory names or sensitive identifiers. This is a source-derived exposure risk, not a reproduced leak.
+- **External feedback:** [Codex #34233](https://github.com/openai/codex/issues/34233) (opened 2026-07-19) reports credential disclosure through tool output; [Codex #31059](https://github.com/openai/codex/issues/31059) (opened 2026-07-03) requests pre-model sanitization of file-read results. Reviewed 2026-11-23. Individual reports, not Angel incident evidence or prevalence estimates.
+- **Ranking (value / difficulty / safety / dependency):** P1 missing-path redaction high / low / low / existing local adapter (**implemented, untested**); P1 other trusted read-only adapters high / medium / medium / per-tool provenance (**open**); P1 explicit ToolError audit high / medium / medium / tool contracts (**open**); P1 pre-model secret output policy high / high / high / compatibility and user consent (**research**); P1 independent side-effect receipts high / high / high / trusted authority (**blocked**).
+- **Scope:** missing local file errors no longer echo caller path. Successful file contents, remote backend, and generic ToolError contract are unchanged. No secret scanning, external verification, automatic retries, or new dependencies.
+
 ## 2026-11-22 — P1 generic tool dispatch exception privacy (static-only)
 
 - **Repository fact (source inspection):** `execute_tool` previously appended raw `TypeError` and arbitrary exception strings to model-visible tool results. Exception text may contain caller-supplied paths or credentials. This is a potential exposure inferred from source, not a reproduced incident.
