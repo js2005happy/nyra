@@ -1,3 +1,9 @@
+## 2026-11-22 — Untyped non-text tool report boundary (static inspection only)
+
+- Reviewed README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent, Tools, report classifier, no-progress observer and regression source on the existing development branch; inspected recent repository commits, open Issues and PR #113. Codex #60104 (2026-11-07) is external user testimony, not an Angel reproduction.
+- Static code-path finding: non-text values were neither failed nor unknown and could be recorded as `result_ok` by the optional journal. Changed the classifier to mark non-text as unknown unless `raised=True`; defined unexecuted regression cases. Legacy strings unchanged, no verified side effects or resume authority.
+- NOT RUN: tests, scripts, compilation, CI or cross-platform execution. No dependency install, account modification, main merge or production release. Workflow/check status is not a runtime verification substitute.
+
 ## 2026-11-22 — Typed unknown journal safety (static inspection only)
 
 - Reviewed README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/Tools, typed classifier, tests, branch and latest commits; open Issues empty and PR #113 concerns evaluations. Prior commit 1e38fe9 returned no combined statuses or PR-triggered workflow runs (not proof of CI pass).
