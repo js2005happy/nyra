@@ -1,3 +1,8 @@
+## 2026-11-23 — Web fetch network exception privacy (unreleased, static-only)
+
+- `web_fetch` now returns a fixed failure message rather than exposing arbitrary network exception details to the model. Successful fetch content and evidence behavior remain unchanged. Two regression definitions added, not executed.
+- No tests, builds, CI dispatch, installs, new dependencies, external account changes, main merge or production release.
+
 ## 2026-11-23 — Web search backend exception privacy (unreleased, static-only)
 
 - `web_search` now replaces raw explicit ToolError and unexpected network exception messages with fixed per-provider failure text. Search fallback and successful result content remain unchanged. Three regression definitions added, not executed.
