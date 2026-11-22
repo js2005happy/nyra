@@ -90,19 +90,19 @@
 <div class="main"><div class="cols"><div class="conv"><div class="feed"><div class="col">
  <div class="u">Login hangs for 30s on slow networks. Find the cause and fix it. Show me the diff before anything runs.</div>
  <div class="log"><div class="h">▾ Worked for 48s</div>
-  <div class="r">◇ Read <span class="c">auth/client.py</span></div>
+  <div class="r">◇ Read <span class="c">src/accounts.ts</span></div>
   <div class="r">⌕ Searched <span class="c">"http.post"</span> · 3 matches</div>
   <div class="r">◫ Saved 2 sources to evidence</div>
-  <div class="r">✎ Edited <span class="c">auth/client.py</span>, <span class="c">tests/test_auth.py</span></div></div>
- <div class="p">The login call in <code>auth/client.py</code> had no timeout, so a stalled socket blocked the UI thread. I added a 10 s timeout with one retry, moved the call onto the worker queue, and wrote a regression test that simulates a stalled socket.</div>
- <div class="files"><div class="fr"><span class="mono" style="font-size:12px">auth/client.py</span><span style="margin-left:auto" class="add">+6</span><span class="del">−2</span></div><div class="fr"><span class="mono" style="font-size:12px">tests/test_auth.py</span><span style="margin-left:auto" class="add">+24</span><span class="del">−0</span></div></div>
- <div class="files" style="border-color:var(--line2)"><div class="fr" style="gap:12px"><span>▷</span><div><div>Run <span class="mono" style="font-size:12px">pytest tests/test_auth.py -q</span></div><div style="color:var(--mu);font-size:12px;margin-top:2px">Shell needs your approval · runs in this checkout</div></div>
+  <div class="r">✎ Edited <span class="c">src/accounts.ts</span>, <span class="c">tests/node/test-accounts.test.ts</span></div></div>
+ <div class="p">The login call in <code>src/accounts.ts</code> had no timeout, so a stalled socket blocked the UI thread. I added a 10 s timeout with one retry, moved the call onto the worker queue, and wrote a regression test that simulates a stalled socket.</div>
+ <div class="files"><div class="fr"><span class="mono" style="font-size:12px">src/accounts.ts</span><span style="margin-left:auto" class="add">+6</span><span class="del">−2</span></div><div class="fr"><span class="mono" style="font-size:12px">tests/node/test-accounts.test.ts</span><span style="margin-left:auto" class="add">+24</span><span class="del">−0</span></div></div>
+ <div class="files" style="border-color:var(--line2)"><div class="fr" style="gap:12px"><span>▷</span><div><div>Run <span class="mono" style="font-size:12px">bun test tests/node/test-accounts.test.ts</span></div><div style="color:var(--mu);font-size:12px;margin-top:2px">Shell needs your approval · runs in this checkout</div></div>
   <span style="margin-left:auto;display:flex;gap:6px"><span class="tbtn">Deny</span><span class="tbtn">Always</span><span class="tbtn p">Run once</span></span></div></div>
 </div></div>
  <div class="comp"><div class="ph">Ask for follow-up changes</div><div class="rw"><span class="pk g">＋</span><span class="pk">◎ strong</span><span class="pk">⛨ Ask before writes</span><span class="pk">▢ Local</span><span class="pk g">/ commands</span><span class="send">↑</span></div></div>
 </div>
 <div class="review"><div class="rt"><span class="tab on">Diff</span><span class="tab">Plan</span><span class="tab">Evidence 2</span><span class="tab">Terminal</span><span style="margin-left:auto;color:var(--mu);font-size:12px">2 files · <span class="add">+30</span> <span class="del">−2</span></span></div>
- <div class="fh"><span>auth/client.py</span><span style="margin-left:auto" class="add">+6</span><span class="del">−2</span></div>
+ <div class="fh"><span>src/accounts.ts</span><span style="margin-left:auto" class="add">+6</span><span class="del">−2</span></div>
  <div class="code">
   <div class="ln"><span class="n">40</span>def login(user, password):</div>
   <div class="ln"><span class="n">41</span>    payload = encode(user, password)</div>
@@ -117,7 +117,7 @@
   <div class="ln d"><span class="n">48</span>-   return parse(resp)</div>
   <div class="ln a"><span class="n">48</span>+   return parse(resp)  # off the UI thread now</div>
  </div>
- <div class="term">$ pytest tests/test_auth.py -q<br><span style="color:var(--mu2)">waiting for approval…</span></div>
+ <div class="term">$ bun test tests/node/test-accounts.test.ts<br><span style="color:var(--mu2)">waiting for approval…</span></div>
 </div></div>
 <div class="status"><span>⎇ fix/login-timeout</span><span>↺ Checkpoint 3 · /undo</span><span>◔ Context 38%</span><span>12.5k in · 1.9k out</span><span style="margin-left:auto"><span class="dot" style="background:#3FB950"></span>MCP · 2 connected</span></div>
 </div></div></div></div></body></html>

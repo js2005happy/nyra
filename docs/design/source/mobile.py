@@ -58,16 +58,16 @@ ios=f'''<div class="row">
  <div class="hd"><span class="ib">‹</span><span class="tt">Fix login timeout<small>app · on your Mac</small></span><span class="ib">◫</span></div>
  <div class="feed">
   <div class="u">Login hangs 30s on slow networks. Fix it, diff first.</div>
-  <div class="lg"><span>▾ Worked for 48s</span><span>◇ Read <span class="c">auth/client.py</span></span><span>✎ Edited 2 files <span style="color:var(--add)">+30</span> <span style="color:var(--rm)">−2</span></span></div>
+  <div class="lg"><span>▾ Worked for 48s</span><span>◇ Read <span class="c">src/accounts.ts</span></span><span>✎ Edited 2 files <span style="color:var(--add)">+30</span> <span style="color:var(--rm)">−2</span></span></div>
   <div class="p">No timeout on the login call, so a stalled socket froze the UI. Added a 10 s timeout, one retry, and a regression test.</div>
-  <div class="box"><div style="font-weight:600">Run tests?</div><div class="c" style="margin:6px 0 2px">pytest tests/test_auth.py -q</div><div style="color:var(--mu);font-size:13px">Shell · runs on your Mac</div>
+  <div class="box"><div style="font-weight:600">Run tests?</div><div class="c" style="margin:6px 0 2px">bun test tests/node/test-accounts.test.ts</div><div style="color:var(--mu);font-size:13px">Shell · runs on your Mac</div>
    <div style="display:flex;gap:8px;margin-top:12px"><span class="bt s">Deny</span><span class="bt p">Run once</span></div></div>
  </div>
  <div class="pill" style="margin-top:8px"><div class="ph2">Follow up</div><div class="r"><span class="pk">＋</span><span class="pk">⛨ Ask first</span><span class="go">↑</span></div></div>
 </div></div>
 <div class="ph"><div class="sc">{IOSB}
  <div class="hd"><span class="ib">✕</span><span class="tt">Review changes<small>2 files · <span style="color:var(--add)">+30</span> <span style="color:var(--rm)">−2</span></small></span><span class="ib">⋯</span></div>
- <div style="display:flex;gap:6px;padding:4px 16px 12px"><span class="pk" style="background:var(--chip)">client.py</span><span class="pk">test_auth.py</span></div>
+ <div style="display:flex;gap:6px;padding:4px 16px 12px"><span class="pk" style="background:var(--chip)">accounts.ts</span><span class="pk">test-accounts.test.ts</span></div>
  <div class="code">
   <div class="ln"><span class="n">41</span>payload = encode(user, pw)</div>
   <div class="ln d"><span class="n">42</span>- resp = http.post(url, data=payload)</div>
@@ -111,7 +111,7 @@ andr=f'''<div class="row">
   <div class="p">No timeout on the login call. Added a 10 s timeout, one retry, and a test.</div>
  </div>
  <div class="dim"></div>
- <div class="sheet"><div class="grab"></div><div style="font-size:20px;font-weight:600">Allow this edit?</div><div style="color:var(--mu);font-size:13.5px;margin:4px 0 12px">write_file · auth/client.py · <span style="color:var(--add)">+6</span> <span style="color:var(--rm)">−2</span></div>
+ <div class="sheet"><div class="grab"></div><div style="font-size:20px;font-weight:600">Allow this edit?</div><div style="color:var(--mu);font-size:13.5px;margin:4px 0 12px">write_file · src/accounts.ts · <span style="color:var(--add)">+6</span> <span style="color:var(--rm)">−2</span></div>
   <div class="code" style="border:1px solid var(--line2);border-radius:14px;overflow:hidden;padding:6px 0">
    <div class="ln d"><span class="n">42</span>- resp = http.post(url, data=p)</div>
    <div class="ln a"><span class="n">44</span>+ resp = http.post(url, data=p,</div>
