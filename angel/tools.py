@@ -583,7 +583,7 @@ def execute_local_read_file_report(ctx: ToolContext, path: str) -> tuple[str, "S
     try:
         target = _resolve_path(ctx, path)
         if not target.is_file():
-            return f"错误：文件不存在：{path}", StructuredToolReport("reported_error")
+            return "错误：文件不存在", StructuredToolReport("reported_error")
         return _truncate(target.read_text(encoding="utf-8", errors="replace")), StructuredToolReport("reported_ok")
     except ToolError:
         return "错误：文件读取失败", StructuredToolReport("reported_error")
