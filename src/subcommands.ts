@@ -20,7 +20,7 @@ export const SUBCOMMANDS: readonly string[] = [
   // 后台与协作
   "ui", "gw", "schedule", "events", "task", "review", "mail-inbox", "responsibility", "bot", "channels", "kanban", "subagent", "roster", "side-effects", "heartbeat", "fanout", "governance", "optimize", "sso", "team", "goal", "trust", "workflow", "template", "script", "handover", "reconciler", "watch", "session",
   // 扩展与集成
-  "plugin", "creator", "kb", "knowledge", "hooks", "permissions", "eigenflux", "gmail", "shopify", "slack", "connector", "mcp", "peer", "circle", "voice", "video", "call", "agui", "export", "media",
+  "plugin", "creator", "kb", "knowledge", "hooks", "permissions", "eigenflux", "gmail", "shopify", "slack", "connector", "mcp", "peer", "circle", "voice", "video", "call", "agui", "screen", "export", "media",
   // 入职与模板
   "init", "templates", "wake",
   // 自检与运维

@@ -128,6 +128,7 @@ import { handleCircle } from "./circles.ts";
 import { handleSession } from "./session.ts";
 import { callLedgerMain } from "./callLedger.ts";
 import { aguiMain } from "./agui.ts";
+import { handleScreen } from "./botScreen.ts";
 import { handleInit, handleTemplates, handleWake } from "./onboarding.ts";
 import { reviewBusinessAction, appendBusinessRedlineAudit } from "./businessRedlines.ts";
 import { handleVoice, loadAudioFile, resolveVoiceConfig } from "./voice.ts";
@@ -222,6 +223,7 @@ nyra circle <create|list|show|invite|revoke|delete|bind|unbind|owner|check|bindi
 nyra session <create|list|show|join|leave|delegate|accept|complete|share|frame|record|end>   跨 agent 联合会话：多人多 agent 视频会（本地扇出模型），会内委派 + 共享任务产物（allowlist），画面默认不留存、录制须全体同意（详见 docs/sessions.md）
 nyra call <ledger|show <通话 id>|summary>   通话成本与隐私仪表：每通电话三本账（传输 / 媒体 / token），录制默认关、须全体同意，纪要进证据链（详见 docs/call-ledger.md）
 nyra agui <register|list|show|link|connect|disconnect|send|exec|accept-write|revoke-write|a2a>   协议中立接入：接任意 AG-UI endpoint 当 Bot（只读先行，写操作须机主显式接受），A2A 复用名片 + 交接（详见 docs/agui.md）
+nyra screen <watch|activity|status> <电脑 id>   缺口 50 第一批：只读看屏——实时看 Bot 的浏览器在做什么（帧指纹，不记帧内容）+ 活动列表（正在做/下一步，与时间线同源）；画面里密码/验证码/卡号自动打码，接管是第二批（详见 docs/bot-screen.md）
 nyra voice <status|speak <文字>|enable-tts|disable-tts>   语音指挥：看配置与可用性、读一段文字、开关自动回读（详见 docs/voice.md）
 nyra voice call <start|answer|decline|end|status|list|segment|confirm>   实时语音通话：建通话、喂音频段落转写、可选回读（本地 whisper 优先，云端默认关；详见 docs/voice.md）
 nyra video <call|signal|ice>   视频通话 + 按需视觉采样：信令 + TURN + ICE 直连传输，帧按需看（本地优先，云端默认关；详见 docs/video-call.md）
@@ -354,6 +356,7 @@ nyra circle <create|list|show|invite|revoke|delete|bind|unbind|owner|check|bindi
 nyra session <create|list|show|join|leave|delegate|accept|complete|share|frame|record|end>   cross-agent joint sessions: multi-person multi-agent video meetings (local fanout model), in-session delegation + shared task products (allowlist), frames not retained by default, recording needs everyone's consent (see docs/sessions.md)
 nyra call <ledger|show <call id>|summary>   call cost and privacy dashboard: three books per call (transport / media / tokens), recording off by default and needs everyone's consent, minutes go into the evidence chain (see docs/call-ledger.md)
 nyra agui <register|list|show|link|connect|disconnect|send|exec|accept-write|revoke-write|a2a>   protocol-neutral access: attach any AG-UI endpoint as a Bot (read-only first, writes need the owner's explicit acceptance), A2A reuses peer cards + handoff (see docs/agui.md)
+nyra screen <watch|activity|status> <computer id>   gap 50 batch 1: read-only screen watch — see what the Bot's browser is doing live (frame fingerprint, no frame content) + activity list (doing now / next, same source as the timeline); passwords / verification codes / card numbers are masked automatically, takeover is batch 2 (see docs/bot-screen.md)
 nyra voice <status|speak <text>|enable-tts|disable-tts>   voice commands: show config and availability, speak a text, toggle auto readback (see docs/voice.md)
 nyra voice call <start|answer|decline|end|status|list|segment|confirm>   live voice call: start a call, feed audio segments to transcribe, optional readback (local whisper.cpp first, cloud off by default; see docs/voice.md)
 nyra video <call|signal|ice>   video call + on-demand frame sampling: signaling + TURN + ICE direct transport, frames seen on demand (local first, cloud off by default; see docs/video-call.md)
@@ -5811,6 +5814,7 @@ export async function main(argv: string[]): Promise<number> {
   if (args.subcommand === "session") return handleSession(args.subArgs ?? [], home);
   if (args.subcommand === "call") return callLedgerMain(args.subArgs ?? [], home);
   if (args.subcommand === "agui") return aguiMain(args.subArgs ?? [], home);
+  if (args.subcommand === "screen") return handleScreen(args.subArgs ?? [], home);
   if (args.subcommand === "init") return handleInit(args.subArgs ?? [], home);
   if (args.subcommand === "templates") return handleTemplates(args.subArgs ?? [], home);
   if (args.subcommand === "wake") return handleWake(args.subArgs ?? [], home);

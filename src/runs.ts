@@ -133,6 +133,10 @@ bot_computer_created: ["computer_id", "agent", "isolation"],
 bot_computer_action: ["computer_id", "kind", "action", "target", "ok"],
 bot_computer_lifecycle: ["computer_id", "action", "reason"],
 bot_computer_credential: ["computer_id", "account", "op"],
+// 缺口 50 第一批：看屏进证据链——看屏（哪个电脑、谁看的、帧指纹、
+// 哪个 host）与打码（哪个电脑、打了哪几类、帧指纹；只记种类，不记原文）。
+bot_screen_watched: ["computer_id", "viewer", "frame_hash", "host"],
+bot_screen_redacted: ["computer_id", "kinds", "frame_hash"],
 // 缺口 26：持久任务板进证据链——建板（哪个任务、什么类型）、流转（哪个
 // 任务、从哪到哪）、熔断（哪个任务、失败几次）、审阅（哪个任务、批准还是
 // 打回）、验证（哪个任务、什么方法、通过与否）。只记元数据，不记任务正文。
