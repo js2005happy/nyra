@@ -102,5 +102,7 @@ nyra team dispatch <团队名或 id> "<任务>" [--dry-run]
 - Charter 写得再好模型也可能不遵守，抽查是确定性启发式检查、只核说法不验语义。
 - 文件交接不管内容对错，内容对错仍由 verifier + 人批负责。
 - 团队审批门只拦对外动作，不拦本地读写与 shell。
-- 真实多 agent 场景只在假 provider 上验过；模型调用本身不能真中断。
+- 真实多 agent 场景只在假 provider 上验过；模型调用的取消已接通
+  （可靠性打磨第 1 项第一批：/stop、超时、预算触顶都发取消信号，
+  见 `docs/cancellation.md`）。
 - Windows/macOS 真机未验证。

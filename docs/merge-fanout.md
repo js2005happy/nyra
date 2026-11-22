@@ -123,5 +123,6 @@ blocked，只人 reset），并写收件箱通知；已终态的扇出不动。
   `nyra fanout recover` 回收（见上）。
 - 合并确定性检查是启发式文本判定，只核说法不验语义；内容对错由人批复。
 - 合并子 agent 只读；合并步占 1 次子 agent 预算。
-- 真实多 agent 场景只在假 provider 上验过；模型调用本身不能真中断；
-  Windows/macOS 真机未验证。
+- 真实多 agent 场景只在假 provider 上验过；模型调用的取消已接通
+  （可靠性打磨第 1 项第一批：/stop、超时、预算触顶都发取消信号，
+  见 `docs/cancellation.md`）；Windows/macOS 真机未验证。
