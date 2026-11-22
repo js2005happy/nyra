@@ -599,7 +599,7 @@ def _tool_read_file(ctx: ToolContext, path: str) -> str:
         return _truncate(ctx.backend.read_file(_resolve_backend_path(ctx, path)))
     target = _resolve_path(ctx, path)
     if not target.is_file():
-        return f"错误：文件不存在：{path}"
+        return "错误：文件不存在"
     return _truncate(target.read_text(encoding="utf-8", errors="replace"))
 
 
