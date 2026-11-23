@@ -464,9 +464,15 @@ export function parseAguiSse(body: string): AguiSseEvent[] {
     if (!isPlainObject(parsed)) continue;
     const type = typeof parsed.type === "string" && parsed.type ? parsed.type : pendingType;
     pendingType = "";
-    const text = typeof parsed.text === "string" ? parsed.text : (typeof parsed.content === "string" ? parsed.content : "");
+    // 缺口 47 第二批：AG-UI 规范的增量字段是 delta（TEXT_MESSAGE_CONTENT
+    // 与 TOOL_CALL_ARGS 都用它）；服务端按规范发 delta，客户端三者都认。
+    const text = typeof parsed.text === "string" ? parsed.text
+      : (typeof parsed.content === "string" ? parsed.content
+      : (typeof parsed.delta === "string" ? parsed.delta : ""));
     const tool = typeof parsed.tool === "string" ? parsed.tool : (typeof parsed.toolName === "string" ? parsed.toolName : "");
-    const args = typeof parsed.args === "string" ? parsed.args : (isPlainObject(parsed.args) ? JSON.stringify(parsed.args) : "");
+    const args = typeof parsed.args === "string" ? parsed.args
+      : (isPlainObject(parsed.args) ? JSON.stringify(parsed.args)
+      : (typeof parsed.delta === "string" ? parsed.delta : ""));
     out.push({ type: type || "unknown", text, tool, args });
   }
   return out;
@@ -643,6 +649,7 @@ const AGUI_USAGE = [
   "  accept-write <名字> --yes                  机主显式接受该 endpoint 的写操作",
   "  revoke-write <名字>                        撤销写接受",
   "  a2a <好友名> <消息>                         给 A2A 对端发消息（复用缺口 38 名片 + 缺口 12 交接）",
+  "  serve <enable|disable|status|start|token|grant|revoke-grant>  AG-UI 服务端：把 Nyra 对外暴露成 AG-UI endpoint（第二批，默认关闭）",
   "外部 agent 发来的任何内容都按不可信输入处理（先过注入扫描再决定做不做）；",
   "写操作须对方主人显式接受，接受前一律拒绝。详见 docs/agui.md。",
 ].join("\n");
@@ -808,6 +815,12 @@ export async function aguiMain(argv: string[], home: string, deps?: AguiFetchDep
       const { answer } = await sendA2a(home, peer, message, deps);
       process.stdout.write(`${answer}\n`);
       return 0;
+    }
+    if (cmd === "serve") {
+      // 缺口 47 第二批：serve 的实现在 aguiServer.ts；aguiServer 静态引
+      // agui.ts（复用事件名与握手口径），这里只能动态 import，否则循环导入。
+      const { aguiServeMain } = await import("./aguiServer.ts");
+      return aguiServeMain(argv.slice(1), home);
     }
     process.stderr.write(`未知子命令 ${cmd}\n${AGUI_USAGE}\n`);
     return 2;

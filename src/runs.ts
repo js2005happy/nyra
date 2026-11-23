@@ -434,6 +434,15 @@ agui_write_revoked: ["endpoint"],
 agui_write_blocked: ["endpoint", "tool", "reason"],
 agui_a2a_sent: ["peer", "run"],
 agui_a2a_received: ["peer", "run", "ok"],
+agui_server_started: ["host", "port"],
+agui_server_run_started: ["thread", "run", "token"],
+agui_server_run_finished: ["thread", "run", "text_chars", "spent_usd"],
+agui_server_blocked: ["thread", "run", "labels"],
+agui_server_tool_proposed: ["thread", "run", "tool", "proposal"],
+agui_server_write_granted: ["token", "granted_by"],
+agui_server_write_revoked: ["token"],
+agui_server_token_created: ["token"],
+agui_server_token_revoked: ["token"],
 // 缺口 51：业务动作硬红线进证据链——改表（哪个连接器、哪个动作、从哪档到
 // 哪档、原因指纹）与拦截（哪个连接器、哪个动作、哪档、哪个工具）。只记
 // 元数据与 SHA-256 前 12 位指纹，不记原因原文、不记业务内容。
