@@ -1,3 +1,7 @@
+## Unreleased — 2026-11-23 bounded web_search backend reads (static only)
+
+- Limit each Bing/Baidu search HTML fetch to 128 KiB plus a one-byte overflow check; reject oversized pages rather than parsing partial HTML, allowing existing fallback behavior. No new dependencies or retries. Static inspection only; tests not run.
+
 ## Unreleased — 2026-11-23 bounded web_fetch network read (static only)
 
 - Cap `web_fetch` response reads at 32,001 bytes and decode at most 32,000 bytes before HTML cleanup. Mark truncated content in both model-visible output and saved evidence so partial pages are not mistaken for complete evidence. No new dependencies or retries. Static review only; tests not run.
