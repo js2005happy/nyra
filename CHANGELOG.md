@@ -1,7 +1,8 @@
 # Nyra 变更记录
 
-## 未发布（0.5.8）
+## 0.5.8（2026-11-23）
 
+- 开机动画去掉结尾笑眼（用户 2026-11-23：「那个笑脸去了就OK了」）。0.5.7 的动画结尾眼睛会弯成笑眼（∩∩），现在去掉：字标浮现时眼睛保持两只正常竖眼、正视前方；结尾歪头保留但减轻（约 2.5°，原约 5°）；减少动态效果时淡入的终帧同样是正常竖眼。其余节奏、尺寸（方块头宽 `min(14vw, 64px)`、居中）、时长（约 4.5 秒）不变。设计源 `docs/design/splash/splash.js` 删掉 `smile()`，运行时 `src/assets/mobile-splash.js.txt` 逐字一致；`nyra-splash.mp4` 与 `final.png` 重渲染。测试：`test-brand-mark` 新增断言——3.3 秒起到终帧都是两只竖眼（无描边弧线），终帧眼睛尺寸与标志几何一致；`test-mobile-pwa-v2` 改为断言页面不含 `smile()`。诚实边界：只在桌面 Chromium 逐帧渲染核对过，没在真 iPhone / 安卓主屏幕和桌面外壳里看过。
 - 缺口 39-40 后续（第二批）：联合会话交活验收 + 通话账本按人分摊（Teamly 报告 §5，2026-11-23）。**会内委派交活即验收**（`src/session.ts`）：委派时落成的契约不再只是记下来，`nyra session complete` 交活时按契约逐项跑验收——验收标准是 manual 检查项（编号 a1、a2……），交活的人须逐项确认（`--confirm <编号>` 算通过，`--fail <编号>` 算不通过；编号见只读的 `nyra session verify <会话> <委派id>`）；全部检查项都要有结论才跑验收，缺一项就拒绝交活、什么都不改；结论 accepted 时委派标 completed，rejected 时标 rejected（可重新委派再做）；验收经过与结论记进证据链（新运行事件 `session_delegation_verified`，已注册进 EVENT_FIELDS，`src/timeline.ts` 加渲染）与 `peer-audit.jsonl`；`nyra session show` 里每条委派都显示验收状态（契约状态 + 最近一次几项通过）。**通话账本按人分摊**（`src/callLedger.ts`）：`nyra call summary --by-person` 把整通的账按参与人拆开（`summarizeCallLedgerByParticipant` + `formatLedgerSummaryByParticipant`，`--json` 可出结构化数据）——费用与 token、云端 STT 秒按参与人数平分（费用只有源头标了未计价时分到 null；会话与语音本来就没有理解费用/token，按 0 计，不毒化合计）；时长按各人实际在场时间（语音/视频按整通，会话按 joined_at→left_at，进行中的通话按当前时间算）；录制按各人同意且在场的时间（语音 0，视频 null——时长未知不编数，会话从录制时间线与同意事件推导）。测试：新增 `tests/node/test-sessions-39-verify.test.ts`（7 项：缺确认拒绝交活、未知编号与既通过又不通过拒绝、全确认通过/一项不通过标 rejected/verify 只读/CLI 两路）与 `tests/node/test-call-ledger-split.test.ts`（4 项：费用与 token 与时长均摊、录制按人推导、未计价费用分 null、CLI --by-person）；`test-sessions-39.test.ts` 里两处调 `completeDelegation` 的旧口径按新验收口径改（须 await + 附 --confirm）。诚实边界：只在临时 home 上验过；真 SFU / 真实多方媒体协商仍未做（G-P0-2 的活，本机没有真媒体栈可验）；待取委派（delivery pending 的任务“对方来取”）没有对端取件口径，本批没做；按人分摊是均摊口径不是按人实测——通话里没有按人计量的表头；Windows/macOS 真机未验证。
 
 ## 0.5.7（2026-11-23）
