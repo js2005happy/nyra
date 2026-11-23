@@ -1,3 +1,7 @@
+## Unreleased — 2026-11-23 HTTP POST non-2xx response classification (static only)
+
+- When a transport returns a non-2xx response normally instead of raising HTTPError, `http_post` now reports a fixed `错误：HTTP <status>` without exposing the response body. Existing 2xx output, approval and no-retry policy are unchanged. Static review only; tests not run.
+
 ## Unreleased — 2026-11-23 HTTP POST error-body privacy (static only)
 
 - HTTPError now returns status without untrusted response body, preventing that body from entering model-visible tool output. No automatic retry; success responses unchanged. Static review only, tests not run.
