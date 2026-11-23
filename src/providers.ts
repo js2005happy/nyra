@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { plaintextHttpError, resolveProvider, type ResolvedProvider } from "./config.ts";
 import { cancelErrorFromSignal, combineSignals } from "./cancel.ts";
 import { buildQuotaHandoff, type QuotaHandoff } from "./quotaHandoff.ts";
+import { filterHealthyChain, markDegraded } from "./modelHealth.ts";
 
 export const RECOVERABLE_KINDS = ["quota", "rate_limit", "server", "timeout", "network"] as const;
 export type ProviderErrorKind =
@@ -773,6 +774,13 @@ export interface SwitchRecord {
    * 落盘由 recordModelSwitch 顺带做；通知里只引用它的 id，不塞全文。
    */
   handoff?: QuotaHandoff;
+  /**
+   * G-P1-33：这次切换把 from 标 degraded 的恢复时间（ISO，可选）。
+   * 只在 FallbackProvider 真把 from 标 degraded 时才带——旧测试的
+   * 精确比对不受影响（见 G-P0-6 的 cancelledAt 教训）。通知与审计
+   * 凭它写“几分钟内不再选用”。
+   */
+  degradedUntil?: string;
 }
 
 /** 模型切换的触发原因（SwitchRecord.trigger 的取值）。 */
@@ -825,6 +833,12 @@ export interface FallbackProviderOptions {
   /** 睡眠实现，默认 sleepMs（可中断）；测试可注入立即返回的版本。 */
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   onRetry?: ((record: RetryRecord) => void) | null;
+  /**
+   * G-P1-33：故障账本接线（可选，不传 = 不标 degraded、不做过滤，
+   * 老行为一字不改）。传了 home 时：切换走之前把刚失败的 provider
+   * 标 degraded（默认 5 分钟恢复），下次建链过滤掉还没恢复的尾巴。
+   */
+  health?: { home: string; minutes?: number };
 }
 
 export class FallbackProvider implements ProviderLike {
@@ -837,6 +851,8 @@ export class FallbackProvider implements ProviderLike {
   retryDelaysMs: number[];
   private retrySleep: (ms: number, signal?: AbortSignal) => Promise<void>;
   onRetry: ((record: RetryRecord) => void) | null;
+  /** G-P1-33：故障账本接线（可选，见 FallbackProviderOptions.health）。 */
+  health?: { home: string; minutes?: number };
 
   constructor(providers: ProviderLike[], onSwitch?: ((record: SwitchRecord) => void) | null, opts: FallbackProviderOptions = {}) {
     if (!providers.length) throw new Error("FallbackProvider needs at least one provider");
@@ -845,6 +861,7 @@ export class FallbackProvider implements ProviderLike {
     this.retryDelaysMs = opts.retryDelaysMs ?? [...PROVIDER_RETRY_BACKOFF_MS];
     this.retrySleep = opts.sleep ?? ((ms, signal) => sleepMs(ms, signal));
     this.onRetry = opts.onRetry ?? null;
+    this.health = opts.health ?? undefined;
   }
 
   get name(): string { return this.providers[this.activeIndex].name; }
@@ -941,6 +958,17 @@ export class FallbackProvider implements ProviderLike {
           const trigger = switchTriggerFor(exc.kind);
           const handoff = buildQuotaHandoff({ from: provider.name, to: nxt.name, error: String(exc.message), trigger, messages });
           const record: SwitchRecord = { from: provider.name, to: nxt.name, error: String(exc.message), kind: exc.kind, status: exc.status, trigger, ...(handoff ? { handoff } : {}) };
+          // G-P1-33：刚失败的 provider 标 degraded（默认 5 分钟恢复），
+          // 恢复时间挂在切换记录上——通知与审计凭它写“几分钟内不再选用”。
+          // 标 degraded 本身不抛错、不拦切换（账本写失败就当没标）。
+          if (this.health) {
+            try {
+              const entry = markDegraded(this.health.home, provider.name, `${switchTriggerFor(exc.kind)}：${String(exc.message)}`, { minutes: this.health.minutes, model: provider.model });
+              record.degradedUntil = entry.until;
+            } catch {
+              // 账本写失败不拦切换。
+            }
+          }
           this.switches.push(record);
           this.activeIndex = index + 1;
           this.onSwitch?.(record);
@@ -1115,14 +1143,19 @@ export function buildProviderChain(
     cliProviderCls?: new (cfg: ResolvedProvider) => ProviderLike;
     /** 缺口 20：同一 provider 重试前的回调（CLI 用来显示 429 冷却倒计时）。 */
     onRetry?: ((record: RetryRecord) => void) | null;
+    /** G-P1-33：故障账本接线（见 FallbackProviderOptions.health）。 */
+    health?: { home: string; minutes?: number };
   },
 ): ProviderLike {
   const providerCls = opts?.providerCls ?? Provider;
   const resolver = opts?.resolver;
   const cliProviderCls = opts?.cliProviderCls ?? CliProvider;
   if (primaryCfg.auth === "cli") return new cliProviderCls(primaryCfg);
+  // G-P1-33：建链时先按健康过滤兜底尾巴（链首主模型永远保留，见
+  // filterHealthyChain）；没接 health 时链原样不动。
+  const healthyNames = opts?.health ? filterHealthyChain(opts.health.home, chainNames) : chainNames;
   const providers: ProviderLike[] = [new providerCls(primaryCfg)];
-  for (const name of chainNames.slice(1)) {
+  for (const name of healthyNames.slice(1)) {
     if (!resolver) break;
     let candidateCfg: ResolvedProvider;
     try {
@@ -1149,7 +1182,7 @@ export function buildProviderChain(
     providers.push(candidate);
   }
   if (providers.length === 1) return providers[0];
-  return new FallbackProvider(providers, onSwitch ?? null, { onRetry: opts?.onRetry ?? null });
+  return new FallbackProvider(providers, onSwitch ?? null, { onRetry: opts?.onRetry ?? null, health: opts?.health ?? undefined });
 }
 
 /**

@@ -31,10 +31,10 @@ import { dirname, join, resolve } from "node:path";
 import { Agent, AgentError } from "./agent.ts";
 import {
   loadConfig,
-  resolveFallbackChain,
   resolveProvider,
   validateMode,
 } from "./config.ts";
+import { resolvePresetFallbackChain } from "./modelPresets.ts";
 import { loadSession } from "./memory.ts";
 import {
   buildProviderChain,
@@ -46,7 +46,7 @@ import {
   type ProviderLike,
   type SwitchRecord,
 } from "./providers.ts";
-import { formatModelSwitchNotice, recordModelSwitch } from "./modelSwitch.ts";
+import { formatModelSwitchNotice, recordModelSwitch, switchTimeShort } from "./modelSwitch.ts";
 import { decryptEntry, encryptEntry, Vault } from "./vault.ts";
 import type { SandboxMode } from "./sandbox.ts";
 
@@ -98,8 +98,10 @@ function fallbackNotice(record: SwitchRecord): void {
   let reason = record.error;
   if (reason.length > 120) reason = reason.slice(0, 117) + "…";
   const trigger = switchTriggerLabel(record.trigger ?? switchTriggerFor(record.kind));
+  // G-P1-33：这次切换把 from 标 degraded 时，提示里写明恢复时间。
+  const degradedNote = record.degradedUntil ? `；${record.from} 已标故障，${switchTimeShort(new Date(record.degradedUntil))} 前不再选用` : "";
   console.error(
-    `模型切换（${trigger}）：${record.from} 失败（${reason}），已切换到 ${record.to} 继续`,
+    `模型切换（${trigger}）：${record.from} 失败（${reason}），已切换到 ${record.to} 继续${degradedNote}`,
   );
 }
 
@@ -867,7 +869,7 @@ export class GroupStore {
     const rotating = new KeyRotatingProvider(keyed, (r) => this.onBotSwitch(bot, r));
     // 缺口 5：该机器人自己的兜底 opt-in（null = 沿用全局配置）；false =
     // 该机器人永不自动换（全局开了也不换），true = 触顶就换（全局没开也换）。
-    const chainNames = resolveFallbackChain(config, base.name, bot.fallback_enabled ?? undefined, bot.fallback_providers ?? undefined);
+    const chainNames = resolvePresetFallbackChain(config, base.name, bot.fallback_enabled ?? undefined, bot.fallback_providers ?? undefined);
     const fallbacks: ProviderLike[] = [];
     for (const name of chainNames.slice(1)) {
       let candidateCfg;
@@ -905,7 +907,8 @@ export class GroupStore {
       fallbacks.push(candidate);
     }
     if (!fallbacks.length) return rotating;
-    return new FallbackProvider([rotating, ...fallbacks], (r) => this.onBotSwitch(bot, r));
+    // G-P1-33：故障账本接线——切换时标 degraded、建链时过滤未恢复的尾巴。
+    return new FallbackProvider([rotating, ...fallbacks], (r) => this.onBotSwitch(bot, r), { health: { home: this.home } });
   }
 
   /** 与 Python _provider 一致：注入的 factory 原样使用；否则 Key 走轮换，无 Key 走默认链。 */
@@ -930,12 +933,14 @@ export class GroupStore {
         });
         provider = buildProviderChain(
           primary,
-          resolveFallbackChain(config, primary.name, bot.fallback_enabled ?? undefined, bot.fallback_providers ?? undefined),
+          resolvePresetFallbackChain(config, primary.name, bot.fallback_enabled ?? undefined, bot.fallback_providers ?? undefined),
           (r) => this.onBotSwitch(bot, r),
           {
             providerCls: Provider,
             resolver: (name: string) =>
               resolveProvider({ home: this.home, config, providerName: name }),
+            // G-P1-33：故障账本接线（与 keyRotatingProvider 同款）。
+            health: { home: this.home },
           },
         );
       }

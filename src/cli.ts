@@ -12,7 +12,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync, realpathSync, chmodSync, renameSync, unlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
-  loadConfig, resolveHome, resolveProvider, resolveProfile, resolveFallbackChain, resolveSwitchAllowlist,
+  loadConfig, resolveHome, resolveProvider, resolveProfile, resolveSwitchAllowlist,
   listProfiles, validateMode, resolveSandbox, PROVIDERS, VERSION, envVar, getProviderPresets, saveConfig,
 } from "./config.ts";
 import { Provider, FallbackProvider, buildProviderChain, makeModelFactory, ProviderError, switchTriggerFor, type RetryRecord, type SwitchRecord } from "./providers.ts";
@@ -27,6 +27,7 @@ import { handleAcp } from "./acpCli.ts";
 import { handleA2a } from "./a2aCli.ts";
 import { formatModelSwitchNotice, modelSwitchSummaryLine, recordModelSwitch, switchTimeShort } from "./modelSwitch.ts";
 import { handleModels } from "./modelsCli.ts";
+import { resolvePresetFallbackChain } from "./modelPresets.ts";
 import { handleMemoryGate } from "./memoryGateCli.ts";
 import { loadModelCache, manualWindowFromConfig, resolveContextWindow } from "./modelCatalog.ts";
 import { modelSupportsVision, prepareVisionInputs, resolveVisionConfig, visionGateMessage } from "./vision.ts";
@@ -291,7 +292,7 @@ nyra memory <export|export-prompt|import|local|import-zip|search|forget|remember
 nyra soul <show|status|list|init|add|remove|enable|disable|edit|export|import>  Soul 身份层：每 agent 的身份与 Tenets（不变量进规则层、代码拦截；Charter 角色契约见 nyra soul charter <set|show|clear>，详见 docs/soul.md 与 docs/team.md）
 nyra style <learn|show|list|delete|export|import>  分应用文风学习（详见 docs/style.md）
 nyra doctor [--provider 名字]  中文自检：运行时、配置文件、配置目录、Key、网络、磁盘、写权限、密码箱权限
-nyra models [list|show <模型名>|refresh|fallback|handoff]   查模型上下文窗口、刷新模型数据、看备用链与本月切换统计、查限流接力摘要（见 docs/model-catalog.md）
+nyra models [list|show <模型名>|refresh|fallback|handoff|preset|health]   查模型上下文窗口、刷新模型数据、看备用链与本月切换统计、查限流接力摘要、设降级预设与看故障账本（见 docs/model-catalog.md）
 nyra setup                     首次启动向导
 nyra init [--name 名字] [--role researcher|assistant|shopkeeper|custom] [--work 干什么活] [--persona 风格] [--redline 红线] [--agent default] [--yes] [--force]   对话式入职：三个问题（叫什么、干什么活、什么风格/红线）→ 生成 Soul + 按角色预装技能包 + 配置清单确认后生效，确认后发就绪简报（详见 docs/onboarding.md）
 nyra templates <list|show <角色>|apply <角色>|export <角色> <文件>|import <文件>>   一键角色模板：研究员 / 助理 / 店小二（Soul + 技能包 + 权限规则的打包文件，可导出成本地文件分享；导入先验后装；与 nyra template 业务流程模板不同，详见 docs/onboarding.md）
@@ -443,7 +444,7 @@ nyra memory <export|export-prompt|import|local|import-zip|search|forget|remember
 nyra soul <show|status|list|init|add|remove|enable|disable|edit|export|import>  Soul identity layer: per-agent identity and Tenets (invariants compile into the rule layer and are enforced by code; role Charter via nyra soul charter <set|show|clear>, see docs/soul.md and docs/team.md)
 nyra style <learn|show|list|delete|export|import>  per-channel writing style profiles (see docs/style.md)
 nyra doctor [--provider name]  self-check: runtime, config, home dir, key, network, disk, write access, vault permissions
-nyra models [list|show <model>|refresh|fallback|handoff]   look up model context windows, refresh model data, show fallback chain and this month's switches, view rate-limit handoff summaries (see docs/model-catalog.md)
+nyra models [list|show <model>|refresh|fallback|handoff|preset|health]   look up model context windows, refresh model data, show fallback chain and this month's switches, view rate-limit handoff summaries, set the degradation preset and view the health ledger (see docs/model-catalog.md)
 nyra setup                     first-run wizard
 nyra init [--name name] [--role researcher|assistant|shopkeeper|custom] [--work job] [--persona style] [--redline redline] [--agent default] [--yes] [--force]   guided onboarding: three questions (name, job, style/redlines) -> Soul + role skill pack + a reviewable checklist, applied only after you confirm; then a ready briefing (see docs/onboarding.md)
 nyra templates <list|show <role>|apply <role>|export <role> <file>|import <file>>   one-click role templates: researcher / assistant / shopkeeper (Soul + skill pack + permission rules in one pack, shareable as local files; imports are validated first; different from nyra template business-process templates, see docs/onboarding.md)
@@ -767,7 +768,7 @@ async function buildAgent(args: CliArgs, opts?: { interactive: boolean; skillsDi
       providerName: args.provider ?? profile.provider,
       model: args.model ?? profile.model ?? undefined,
     });
-  const chain = resolveFallbackChain(config, primaryCfg.name, fallbackEnabled(args) ?? undefined);
+  const chain = resolvePresetFallbackChain(config, primaryCfg.name, fallbackEnabled(args) ?? undefined);
   // 缺口 5：兜底切换的事件落点——provider 在 Agent 之前建成，先用 holder
   // 占位；Agent 建好后挂上去，之后每次自动切换都经 agent.emit 发
   // model_switch 事件，RunRecorder 写进 events.jsonl（与 REPL /model
@@ -787,6 +788,7 @@ async function buildAgent(args: CliArgs, opts?: { interactive: boolean; skillsDi
         kind: r.kind, status: r.status,
         trigger: r.trigger ?? switchTriggerFor(r.kind),
         spent_usd: spent,
+        ...(r.degradedUntil ? { degraded_until: r.degradedUntil } : {}),
       });
   };
   const provider = buildProviderChain(
@@ -796,6 +798,8 @@ async function buildAgent(args: CliArgs, opts?: { interactive: boolean; skillsDi
       resolver: (name: string) => resolveProvider({ home, config, providerName: name }),
       // 缺口 20：同一 provider 重试前的回调（CLI 用来显示 429 冷却倒计时）。
       onRetry: opts?.onRetry ?? null,
+      // G-P1-33：故障账本接线——切换时标 degraded、建链时过滤未恢复的尾巴。
+      health: { home },
     },
   );
   if (!provider.hasCredentials()) {
@@ -6594,10 +6598,12 @@ async function runRepl(args: CliArgs): Promise<number> {
         }
         try {
           const targetCfg = resolveProvider({ home, config, providerName: targetName, model: targetModel });
-          const chain = resolveFallbackChain(config, targetCfg.name, fallbackEnabled(args) ?? undefined);
+          const chain = resolvePresetFallbackChain(config, targetCfg.name, fallbackEnabled(args) ?? undefined);
           const next = buildProviderChain(targetCfg, chain, built.onModelSwitch, {
               resolver: (n: string) => resolveProvider({ home, config, providerName: n }),
               onRetry: (r) => retryNotify?.(r),
+              // G-P1-33：故障账本接线（与 buildAgent 同款）。
+              health: { home },
             });
           // 推理档位与当前运行一致（provider.extraBody）。
           (next as { extraBody?: Record<string, unknown> }).extraBody = toRequestBody(resolveReasoningOptions(config));

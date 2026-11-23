@@ -127,6 +127,8 @@ const zh = {
   "fallback.trigger.other": "调用失败",
   // Kooyu 429 接力：通知里引用接力摘要的 id 与查看办法（不塞全文；句首带句号，接在 fallback.notice 后面）。
   "fallback.handoffRef": "。接力摘要已存证（{id}，运行 `nyra models handoff {id}` 查看）",
+  // G-P1-33：切换把 from 标 degraded 时，通知里写明恢复时间（句首带分号，接在 fallback.notice 后面；until 是本地时间短格式）。
+  "fallback.degradedNote": "；{from} 已标故障，{until} 前不再选用",
   "inbox.title": "未读任务通知（{n}）：",
   // /context
   "ctx.empty": "上下文为空，无需优化。",
@@ -966,6 +968,8 @@ const en: Record<MsgKey, string> = {
   "fallback.trigger.other": "call failed",
   // Kooyu 429 handoff: the notice cites the handoff summary id and how to view it (not the full text; leading period joins it to fallback.notice).
   "fallback.handoffRef": ". Handoff summary saved ({id}; run `nyra models handoff {id}` to view)",
+  // G-P1-33: when a switch marks from as degraded, the notice states the recovery time (leading semicolon joins it to fallback.notice; until is a short local time).
+  "fallback.degradedNote": "; {from} marked degraded, not retried before {until}",
   "inbox.title": "Unread task notifications ({n}):",
   "ctx.empty": "Context is empty; nothing to optimize.",
   "ctx.sysTop": "System prompt is the largest part: check whether AGENTS.md / long-term memory is too long, or trim the resident skill index.",

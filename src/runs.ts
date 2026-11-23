@@ -42,7 +42,7 @@ snapshot: ["snapshot_id", "tool", "backend", "files"],
 restore: ["snapshot_id", "triggered_by", "mode", "files", "messages_deleted", "messages_kept"],
 // 缺口 5：换模型进证据链——何时换（at）、从谁换到谁（from/to）、为什么换
 // （reason/trigger/kind/status）、当时已花多少（spent_usd）。
-model_switch: ["from", "to", "reason", "trigger", "kind", "status", "spent_usd"],
+model_switch: ["from", "to", "reason", "trigger", "kind", "status", "spent_usd", "degraded_until"],
 // 缺口 3a：并行委派进证据链——成功/失败各几个、已计价花费合计（超时线程事后
 // 花的钱不进合计，见 docs/parallel-delegate.md）、并发上限。
 parallel_delegate: ["succeeded", "failed", "total_spent_usd", "max_concurrency"],

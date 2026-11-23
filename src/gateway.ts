@@ -16,9 +16,10 @@ import { join } from "node:path";
 import { networkInterfaces } from "node:os";
 import { Agent } from "./agent.ts";
 import {
-  loadConfig, resolveProfile, resolveProvider, resolveFallbackChain, validateMode,
+  loadConfig, resolveProfile, resolveProvider, validateMode,
   getProviderPresets, VERSION, VALID_MODES, resolveSandbox, type ResolvedProvider,
 } from "./config.ts";
+import { resolvePresetFallbackChain } from "./modelPresets.ts";
 import { Provider, buildProviderChain, makeModelFactory, switchTriggerFor, switchTriggerLabel, type ProviderLike, type SwitchRecord } from "./providers.ts";
 import { TOOL_SCHEMAS, SESSION_GRANT_TOOLS, APPROVE_ALWAYS, MUTATING_TOOLS, type ApproveResult } from "./tools.ts";
 import { SessionRules, RuleStore, RULE_SCOPES, MAX_FEEDBACK, normalizeProject, type RuleScope, type RuleSuggestion } from "./approvalRules.ts";
@@ -35,7 +36,7 @@ import { listMailInboxPublic } from "./mailInbox.ts";
 import { listResponsibilitiesPublic } from "./responsibilities.ts";
   // 缺口 30：网关入口此前完全不接成本硬顶与用量账本——Web UI 一跑等于绕过 --max-cost。
 import { resolvePricing, resolveMonthlyLimit } from "./cost.ts";
-import { recordModelSwitch } from "./modelSwitch.ts";
+import { recordModelSwitch, switchTimeShort } from "./modelSwitch.ts";
 import { UsageLedger, monthKeyString } from "./usageLedger.ts";
 import type { UsageSnapshot } from "./usage.ts";
 import { resolveSandboxBackend, type SandboxMode } from "./sandbox.ts";
@@ -290,12 +291,14 @@ export class Gateway {
       home: this.home, config: this.config,
       providerName: this.providerName ?? profile.provider, model: this.model ?? profile.model ?? undefined,
     });
-    const chain = resolveFallbackChain(this.config, primaryCfg.name);
+    const chain = resolvePresetFallbackChain(this.config, primaryCfg.name);
     this.providerInstance = buildProviderChain(
       primaryCfg, chain,
       (record) => this.onSwitch(record),
       {
         resolver: (name: string) => resolveProvider({ home: this.home, config: this.config, providerName: name }),
+        // G-P1-33：故障账本接线——切换时标 degraded、建链时过滤未恢复的尾巴。
+        health: { home: this.home },
       },
     );
     if (this.maxTurns === null) this.maxTurns = (this.config.max_turns as number | undefined) ?? 20;
@@ -377,14 +380,16 @@ export class Gateway {
   private onSwitch(record: SwitchRecord): void {
     const reason = record.error.length > 120 ? record.error.slice(0, 117) + "…" : record.error;
     const trigger = record.trigger ?? switchTriggerFor(record.kind);
-    process.stderr.write(`模型切换（${switchTriggerLabel(trigger)}）：${record.from} 失败（${reason}），已切换到 ${record.to} 继续\n`);
+    // G-P1-33：这次切换把 from 标 degraded 时，提示里写明恢复时间。
+    const degradedNote = record.degradedUntil ? `；${record.from} 已标故障，${switchTimeShort(new Date(record.degradedUntil))} 前不再选用` : "";
+    process.stderr.write(`模型切换（${switchTriggerLabel(trigger)}）：${record.from} 失败（${reason}），已切换到 ${record.to} 继续${degradedNote}\n`);
     const running = [...this.runs.values()].filter((run) => run.status === "running");
     // 备用模型切换通知：每次真切换记一行审计（SIEM 导出第 7 个来源）；
     // run_id 只在恰好一个会话在跑时才认得出，多会话并发时记 null（事件本身
     // 已按会话分别记进各 running 会话的事件流，网页端照样立刻看到）。
     recordModelSwitch(this.home, record, { runId: running.length === 1 ? running[0].sessionId : null });
     for (const run of running) {
-      this.record(run, "model_switch", { from: record.from, to: record.to, error: reason, trigger, kind: record.kind });
+      this.record(run, "model_switch", { from: record.from, to: record.to, error: reason, trigger, kind: record.kind, ...(record.degradedUntil ? { degraded_until: record.degradedUntil } : {}) });
     }
   }
 

@@ -50,6 +50,11 @@ export interface ModelSwitchAuditEntry {
    * 里的那条）。可选字段、只在有摘要时才带——旧审计行的精确比对不受影响。
    */
   handoff_id?: string;
+  /**
+   * G-P1-33：这次切换把 from 标 degraded 的恢复时间（ISO，可选）。
+   * 只在真标了 degraded 时才带——旧审计行的精确比对不受影响。
+   */
+  degraded_until?: string;
 }
 
 /**
@@ -107,6 +112,7 @@ export function recordModelSwitch(
       status: record.status ?? null,
       error: scrubSwitchError(record.error, resolved),
       ...(handoffId ? { handoff_id: handoffId } : {}),
+      ...(record.degradedUntil ? { degraded_until: record.degradedUntil } : {}),
     };
     const path = join(resolved, MODEL_SWITCH_AUDIT_FILE);
     mkdirSync(dirname(path), { recursive: true });
@@ -146,6 +152,7 @@ export function readModelSwitchAudit(home: string): ModelSwitchAuditEntry[] {
           status: typeof row.status === "number" ? row.status : null,
           error: typeof row.error === "string" ? row.error : "",
           ...(typeof row.handoff_id === "string" ? { handoff_id: row.handoff_id } : {}),
+          ...(typeof row.degraded_until === "string" ? { degraded_until: row.degraded_until } : {}),
         });
       } catch {
         continue;
@@ -209,7 +216,12 @@ export function formatModelSwitchNotice(record: SwitchRecord): string {
   const reason = record.error.length > 120 ? record.error.slice(0, 117) + "…" : record.error;
   const trigger = record.trigger ?? switchTriggerFor(record.kind);
   const label = t(`fallback.trigger.${trigger}` as MsgKey);
-  const base = t("fallback.notice", { from: record.from, reason, to: record.to, trigger: label });
+  let base = t("fallback.notice", { from: record.from, reason, to: record.to, trigger: label });
+  // G-P1-33：这次切换把 from 标 degraded 时，通知里写明恢复时间——
+  // 用户一眼知道它几分钟内不再被选用，而不是以为它“消失了”。
+  if (record.degradedUntil) {
+    base += t("fallback.degradedNote", { from: record.from, until: switchTimeShort(new Date(record.degradedUntil)) });
+  }
   // Kooyu 429 接力：通知里只引用接力摘要的 id 与查看办法，不塞全文——
   // 全文在 quota-handoffs.jsonl 里，`nyra models handoff <id>` 可看。
   // 没摘要的切换通知原样不动。
