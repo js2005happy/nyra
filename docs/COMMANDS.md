@@ -90,7 +90,7 @@
 | `nyra watch <add\|list\|show\|remove\|check\|enable\|disable\|config\|run-action>` | 缺口 32：变化监测例程——盯页面或文件，变了才汇报（变了什么 → 详情 → 来源）；触发条件与动作分开声明，下载类敏感动作须人批；自动巡查默认关（详见 `docs/watch.md`） |
 | `nyra goal <create\|list\|show\|add-item\|start-item\|verify-item\|complete\|pause\|resume\|cancel\|instruct\|link\|split>` | GROK-5（缺口 26/30 深化）：长目标对象——目标陈述 + 动态进度清单 + 逐项验证，全部通过才标完成；中途加指令不丢目标，可暂停/恢复/取消；恢复前重验证；目标可拆成任务板任务（详见 `docs/goal-object.md`） |
 | `nyra trust <register\|list\|show\|evidence\|promote\|demote\|review\|check>` | GROK-6（缺口 43 治理深化）：信任阶梯——新 agent / 新技能默认只读，攒够 N 次连续成功且零违规才升一级（只读 → 起草 → 发送 → 购买）；每次记成功有概率被随机抽查，抽中须复核才计入；降级随时可做（详见 `docs/trust-ladder.md`） |
-| `nyra workflow <import\|list\|show\|run\|dry-run\|resume\|trial\|activate\|remove\|verify>` | 缺口 25 其余形态：声明式可复用工作流——三种执行形态（固定图 / 协调者 / 动态）+ 审批节点（复用审阅队列）+ dry-run；激活前须真实数据试跑 + 人工确认；协调者每轮只调一次模型做决定，简单判断仍走 if（详见 `docs/workflow.md`） |
+| `nyra workflow <import\|list\|show\|run\|dry-run\|resume\|trial\|activate\|remove\|verify\|triggers>` | 缺口 25 其余形态：声明式可复用工作流——三种执行形态（固定图 / 协调者 / 动态）+ 审批节点（复用审阅队列）+ dry-run；激活前须真实数据试跑 + 人工确认；协调者每轮只调一次模型做决定，简单判断仍走 if；触发器执行（定时 cron 与事件，默认关，`triggers enable --yes` 开启，只跑 active 的工作流，详见 `docs/workflow.md`） |
 | `nyra template <list\|show\|builtin\|import\|trial\|activate\|run\|dry-run\|remove\|publish\|install>` | 缺口 46：业务流程模板库——流程 DSL + 连接器 + 验收标准 + 试跑数据，激活前须真实数据试跑 + 人工确认；首批 5 个模板（店铺订单异常跟进打头），随机器人市场分发（详见 `docs/templates.md`） |
 | `nyra script <check\|preauth>` | Pi Bot 借鉴第 1 条：脚本内容判定 + 摘要预授权——纯脚本（白名单静态分析）走快路径不用每次问，例行里的脚本按内容摘要 `script:<SHA-256>` 钉死，内容一改授权自动失效；判定结果写进证据链与审计（详见 `docs/script-purity.md`） |
 | `nyra handover <contract\|checkers>` | Pi Bot 借鉴第 2 条：交接契约的程序化验收——交付物 + 验收项 + 修正轮次上限；验收是程序核对，不调模型，不过打回、轮次用完停下等人；打回与停下记一次信任阶梯违规；结果进证据链与审计（详见 `docs/handover-contract.md`） |
@@ -104,7 +104,7 @@
 | `nyra subagent <list\|show\|register\|heartbeat\|sweep\|resume\|suspend\|stop\|confirm-stopped\|cancel-stop\|steer>` | 缺口 30：崩溃自续——子 agent 持久行 + 心跳检查点 + 启动扫荡 + 先验状态再续跑；H-3：单点停止（请求停止/确认停下/取消请求，停止现在真中断在途调用——模型请求 abort、工具与子进程被掐断，确认停下后才标已停，停不下来如实写“正在停止”，详见 `docs/roster.md` 与 `docs/cancellation.md`）；H-2：单点引导（排队式引导、检查点消费，`nyra subagent steer <运行 id> "<引导文本>" --yes`，详见 `docs/steer-schema.md`）；H-4：结构化输出契约（`delegate` / `delegate_parallel` 可带 `output_schema`，详见 `docs/steer-schema.md`） |
 | `nyra roster <list\|show>` | H-1：实时花名册——每个子 agent 一行：状态 + 已耗时 + 当前动作（只读快照，token/费用默认不显示，详见 `docs/roster.md`） |
 | `nyra side-effects <list\|show\|record\|mark\|recover>` | DSH-4：先存后做的副作用队列——执行前先落库，重启按年龄恢复、带 recovery note（详见 `docs/kanban.md`） |
-| `nyra heartbeat <add\|list\|remove\|enable\|disable\|run\|commitments>` | 缺口 31：静默巡查——无事安静、有发现先记证据再写收件箱；推断承诺须用户确认一次、过期自动失效（详见 `docs/heartbeat.md`） |
+| `nyra heartbeat <add\|list\|remove\|enable\|disable\|run\|commitments\|check-script\|wake\|seen-clear>` | 缺口 31：静默巡查——无事安静、有发现先记证据再写收件箱；推断承诺须用户确认一次、过期自动失效；零 Token 值守：巡检脚本预检（只跑本地只读命令，命中才通知/唤醒）、指纹去重（重复异常不重复通知）、唤醒入队只读任务、模型回 NO_REPLY 静默收敛（详见 `docs/heartbeat.md`） |
 | `nyra governance <policy\|mandate\|mode\|dry-runs>` | 缺口 43：企业治理——版本化策略 + 不可变授权 + observe/auto 接单模式 + 干跑记录（详见 `docs/governance.md`） |
 | `nyra governance caps <set\|list\|show\|check\|assign-team\|pause\|resume\|discard\|pauses>` | 缺口 43 第三批：分层成本上限——按 Bot/角色/团队/人设设月度美元与 token 上限，触顶进可恢复暂停态，放宽留痕（详见 `docs/governance.md`） |
 | `nyra governance audit <export\|verify>` | 缺口 43 第三批：审计导出——治理审计日志导出给 SIEM（JSONL + 哈希链，可验证；详见 `docs/governance.md`） |

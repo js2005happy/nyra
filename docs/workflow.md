@@ -202,6 +202,7 @@ nyra workflow trial <名字> --yes [--input k=v]...  # 真实数据试跑，跑�
 nyra workflow activate <名字> --yes                # 试跑通过后激活
 nyra workflow remove <名字> --yes                  # 删除定义与注册（运行记录保留）
 nyra workflow verify <运行 id>                     # 用定义快照重算 dry-run 计划、比哈希
+nyra workflow triggers <status|enable|disable|run> # 触发器执行总开关（默认关；enable 须 --yes）与到点触发器手动跑一轮
 ```
 
 `--input k=v` 覆盖 `inputs` 的默认值（`k` 须是已声明的输入名；`true`/`false`/数字自动认类型）。`--max-cost N` 设本次运行的成本上限（美元），不给则用定义里的 `max_cost_usd`。
@@ -219,6 +220,14 @@ DSL 用自写的确定性 YAML 子集解析器（无依赖），只认 block 风
 | 动态 | 本批已做：种子步骤可为空，协调者运行中派生子问题；与协调者共用一个循环 |
 
 `mode` 写错（不是这三个之一）会在 `import` 时直接拒绝。`nyra workflow show <名字>` 会打印形态、目标与协调者配置；`nyra workflow run` / `trial` / `resume` 在三种形态下是同一个命令，协调者形态挂起后 `resume` 回到协调者循环续跑。
+
+## 触发器执行（缺口 25 的尾巴，G-P1-37）
+
+定义里的 `triggers` 字段以前只校验、不执行。本批补上执行层，复用现有守护进程轮询器与事件派发，不另起调度器：
+
+- **定时触发**：`triggers: [{ type: "schedule", cron: "30 10 * * *" }]`（5 字段 cron：分 时 日 月 周；`*`、列表、范围、步长都认；日与周两边都限时任一边命中；7 当周日）。守护进程每轮跑到点的触发器（每轮最多 5 个、同一分钟不重复），只跑 `active` 的工作流，执行走 `runWorkflowByName`（mode normal、interactive false、成本上限继承定义里的 `max_cost_usd`）；失败记 `failed` 不炸整轮；每轮结果写证据 `~/.nyra/evidence/workflow-triggers/<日期>.jsonl`。
+- **事件触发**：`triggers: [{ type: "event", event: "github_issue_opened" }]`（事件名精确命中）。网关 webhook 与 Gmail 轮询派发事件后顺带触发同名工作流（fire-and-forget，不等跑完、不破坏 webhook 响应）；同事件 id 只跑一次；事件 payload 不注进工作流输入（不可信外部数据）。
+- **总开关默认关**：`nyra workflow triggers enable --yes` 才开（须显式批准）；`status` 看开关与最近触发记录；`disable` 关闭；`run` 手动跑一轮到点触发器。关着时定时与事件触发全部跳过，只记 skipped。
 
 ## 诚实边界
 

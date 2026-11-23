@@ -24,6 +24,23 @@ nyra heartbeat run --agent nyra [--force]   # 或 --all
 
 默认间隔 30 分钟（5–1440 分钟可配）；未到间隔的跳过，`--force` 重跑。
 
+## 巡检脚本 + 去重 + 唤醒（零 Token 值守，Kooyu 借鉴）
+
+巡查只读本地状态、不调模型；零 Token 值守再加一层“先跑本地脚本预检，无异常静默跳过，只命中才唤醒”：
+
+```bash
+nyra heartbeat check-script add --agent nyra --name 磁盘 --command "df -h /tmp" [--mode exit-zero-is-hit|non-empty-stdout-is-hit] [--on-hit notify|wake] [--timeout 30] --yes
+nyra heartbeat check-script list --agent nyra
+nyra heartbeat check-script run --agent nyra --name 磁盘   # 只探一次，不通知不唤醒
+nyra heartbeat check-script remove --agent nyra --name 磁盘 --yes
+nyra heartbeat wake --agent nyra --on|--off
+nyra heartbeat seen-clear --yes
+```
+
+- **巡检脚本**：命令只走本地 `spawnSync`（不拼 shell）、环境变量只给白名单（PATH/HOME/语言/时区/临时目录，不带密钥类变量）、超时默认 30 秒（5–120 秒可配）、输出截断 4000 字。结果三态：`exit-zero-is-hit`（0 命中、1 安静、其他失败）、`non-empty-stdout-is-hit`（stdout 非空命中、退出码非 0 失败）。添加须 `--yes` 显式批准该命令；命令须过无人值守安全检查（`isUnattendedSafeCommand`，与审批规则同一套拒绝清单：rm、sudo、curl、ssh、bash -c、python -c、find、xargs……与含 `; & | $()` 的复合命令一律拒绝；`git --version`、`df -h` 这类“程序 + 纯标志”放行）。批准的是整条命令原文，运行时逐字比对，被改过就拒绝执行。
+- **指纹去重**：每条发现按（种类 + 摘要）记 SHA-256 指纹进 `~/.nyra/heartbeat-seen.json`（留最近 1000 条，损坏备份后从空开始）。重复异常只记审计、不写收件箱、不唤醒；摘要变了才算新异常。巡查自己的通知不计入未读（否则未读数每轮涨 1，去重永远不生效）。
+- **唤醒**：只有 `fresh`（去重后新的）发现 + 脚本 `onHit=wake` + 该 monitor 开了 `wake` 开关，三条同时满足才唤醒：以 `unattended: true` 入队只读任务（缺口 8：模式强制 readonly），提示词末尾带 `NO_REPLY`。唤醒任务跑完后模型回 `NO_REPLY`（须是模型回复的最后一行）就静默收敛：不写收件箱、不回邮件、不推 Bot 通知；运行记录照常留。先入队成功再记指纹，入队失败不记、下一轮重试。
+
 ## 推断承诺：确认一次才生效
 
 模型从对话里推断出的短期跟进（“下周二提醒我看报价”），只进“提议”态：

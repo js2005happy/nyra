@@ -102,6 +102,8 @@ nyra vault add webhook-secret-slack
 
 手动跑一次：`nyra events poll`（强制轮询一次，不受 5 分钟间隔限制）。
 
+每封新邮件派发后，还会顺带触发同名事件的工作流（`docs/workflow.md` 的触发器执行：事件名精确命中、同事件 id 去重、事件 payload 不注进工作流输入；网关 webhook 派发后同样顺带触发）。
+
 ## 可审计与幂等
 
 - 每一次触发都在新任务的 `events.jsonl` 里记一条 `event_triggered`（触发器 id/名、
