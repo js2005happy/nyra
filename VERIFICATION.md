@@ -1,3 +1,10 @@
+## 2026-11-24 — HTTP POST unsupported charset fallback (static only)
+
+- Reviewed development branch README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/Tools, recent repository commits, open Issues (none), PR #113 and available commit status metadata (empty). Repository redirects from angel to nyra.
+- **Source fact:** HTTP POST decoded the successful response with a server-supplied charset inside a broad exception handler; an unknown codec raised LookupError and was classified as unknown despite the observed 2xx. This is a source-level misclassification risk, not an observed production incident. The fallback affects decoding only and retains 2xx as a transport report, not proof of business acceptance.
+- **External user reports reviewed 2026-11-24:** [Codex #31015](https://github.com/openai/codex/issues/31015) (opened 2026-07-03) discusses tool output privacy boundaries; [Codex #34233](https://github.com/openai/codex/issues/34233) (opened 2026-07-19) describes sensitive tool output. Neither establishes this charset defect or its prevalence; they inform the adjacent privacy backlog, not the implementation proof.
+- **Not executed:** tests, builds, runtime POST, CI, dependency installation, account actions, main merge or release. The fallback cannot repair malformed response bytes, verify remote side effects, or guarantee cross-platform behavior.
+
 ## 2026-11-24 — HTTP POST structured outcome (static only)
 
 - Reviewed README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, core Agent/Tools and typed classifier on existing development branch; checked recent commits, open Issues (none), draft PR #113 and available CI metadata. No project code executed.
