@@ -1,3 +1,10 @@
+
+## 2026-11-23 — git_status diff 阶段失败关闭（仅静态）
+
+- 核对开发分支 README、DESIGN、CHANGELOG、VERIFICATION、ROADMAP、Agent/Tools 源码、近期提交及开放 Issues/PR；确认 `git_status` 的第二个 subprocess 原先没有超时捕获。
+- 将第二阶段的 `TimeoutExpired` 与 `FileNotFoundError` 转为固定错误文本，不包含异常中的绝对路径；保留既有 15 秒上限，不自动重试，不改变远端 backend。
+- 未运行测试、编译、CI、git 命令或外部 API 操作。未验证运行时行为及跨平台兼容性，不能视为 CI 通过或外部任务完成。
+
 ## 2026-11-23 — git_status 缺失目录隐私（仅静态）
 
 - 已读取开发分支 README、DESIGN、CHANGELOG、VERIFICATION、ROADMAP、`angel/tools.py`、`angel/agent.py`，核对近期提交、开放 Issues/PR 和已有 CI 元数据；PR #113 已涵盖真实任务评测，本轮不重复实现。
