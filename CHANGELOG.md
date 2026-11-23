@@ -1,3 +1,8 @@
+## Unreleased — 2026-11-24 web_fetch non-2xx evidence guard (static only)
+
+- Read-only web_fetch now rejects a non-2xx response before reading its body or persisting evidence, including transports that return the status without raising HTTPError. Generic failure text avoids exposing response URLs. No changes to successful fetches, dependencies or approvals.
+- Static source review only; no tests, scripts, network probes, CI dispatch, main merge or production release.
+
 ## Unreleased — 2026-11-24 read-only web charset fallback (static only)
 
 - web_fetch and web_search retain bounded HTTP response text when an unsupported/malformed server charset is advertised, falling back to UTF-8 replacement. Valid codec path, caps, evidence and no-retry behavior unchanged. No new dependency, tests, live HTTP, CI, merge or release.
