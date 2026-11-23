@@ -1124,14 +1124,10 @@ def _tool_http_post(
             text = response.read().decode(charset, errors="replace")
         return f"HTTP {response.status}\n{_truncate(text)}"
     except urllib.error.HTTPError as exc:
-        try:
-            text = exc.read().decode("utf-8", errors="replace")
-        except Exception:
-            text = ""
-        # urllib raised HTTPError: preserve status/body, but classify as failure.\n        # A POST may have taken effect remotely; never auto-retry.\n        return f"错误：HTTP {exc.code}\n{_truncate(text)}"
+        # Untrusted response bodies can echo tokens or submitted data.
+        # Preserve trusted status only; never retry an uncertain POST.
+        return f"错误：HTTP {exc.code}"
     except Exception:
-        # POST errors can include private URLs, tokens or request metadata.
-        # A failed request may already have reached the remote service; do not retry.
         return "错误：POST 请求失败"
 
 
