@@ -116,7 +116,11 @@ test("ProvidersTest.test_provider_http_error_surfaces_kind", async () => {
     let caught: unknown = null;
     try { await p.chat([{ role: "user", content: "hi" }]); } catch (e) { caught = e; }
     expect(caught).toBeInstanceOf(ProviderError);
-    expect((caught as ProviderError).kind).toBe("rate_limit");
+    // Kooyu 429 接力：`insufficient_quota` 现在认作 quota（用量耗尽、终结），
+    // 不再是笼统的 rate_limit——重试同一家没有意义，应直接换下一家。
+    // 以前是 rate_limit，只因为配额表里只有带空格的 "insufficient quota"，
+    // 下划线变体没被认出来。
+    expect((caught as ProviderError).kind).toBe("quota");
     expect((caught as ProviderError).status).toBe(429);
   } finally {
     (globalThis as Record<string, unknown>).fetch = origFetch;
