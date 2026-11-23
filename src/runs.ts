@@ -412,6 +412,10 @@ session_delegated: ["session", "from", "to", "delegation", "contract", "delivery
 session_delegation_accepted: ["session", "delegation", "by"],
 session_delegation_completed: ["session", "delegation", "by"],
 session_delegation_verified: ["session", "delegation", "verdict", "passed", "total", "by"],
+// G-P1-31 主动记忆进证据链：回复前召回了哪档、命中几条、有没有升级
+// 深挖；只记数字与档位，不记召回内容原文。
+active_memory_recalled: ["tier", "hits", "escalated"],
+active_memory_escalated: ["tier", "hits"],
 session_shared: ["session", "from", "kind", "items"],
 session_recording_consented: ["session", "by", "consented"],
 // 缺口 40：通话账本进证据链——通话纪要只含数字与 id（时长、字节、帧数、

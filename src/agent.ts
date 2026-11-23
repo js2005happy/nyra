@@ -27,6 +27,7 @@ import { loadSkills, canonicalSkillDirs, matchSkills, matchSkillsByPaths, parseS
 import { recordSkillUse } from "./skillUsage.ts";
 import { pluginSkillDirs } from "./plugins.ts";
 import { loadMemorySummary, loadAgentsMd, newSessionId, saveSession, buildMemorySection } from "./memory.ts";
+import { isActiveMemoryEnabled, recallBeforeReply } from "./activeMemory.ts";
 import { loadStyleProfile, buildStyleSection } from "./style.ts";
 import {
   compactMessages, shouldAutoCompact, validateAutoCompactThreshold,
@@ -626,6 +627,8 @@ export class Agent {
   private skillsDisabled: readonly string[] = [];
   /** 跨会话回忆：上次同类任务的结论（历史，需复核）。 */
   private recallNote: string | null = null;
+  /** G-P1-31 主动记忆：本轮回复前召回的段落（默认关；召回失败不拦运行）。 */
+  private activeMemoryNote: string | null = null;
   /** tool_search 开关是否被显式要求。 */
   private toolSearchRequested = false;
   private toolSearchTopK = MCP_LAZY_LOAD_THRESHOLD;
@@ -1549,6 +1552,10 @@ export class Agent {
     // 同类任务的结论，两边都留。
     const memory = buildMemorySection(this.memoryPath, this.home, task);
     if (memory) sections.push(memory);
+    // G-P1-31 主动记忆：本轮回复前召回的段落（runLoopInner 里算好；没开
+    // 或没命中时是 null，零影响）。与 buildMemorySection 的 MEMORY.md
+    // 检索互补：这里还含知识库与会话历史。
+    if (this.activeMemoryNote) sections.push(this.activeMemoryNote);
     // 缺口 4：分应用文风学习——按当前渠道注入画像（有画像才加，没有零影响；
     // 画像损坏时不拦运行，只是不注入，损坏本身由 `nyra style show` 报错）。
     if (this.channel) {
@@ -1980,6 +1987,29 @@ export class Agent {
     // search_tools 拉回的工具追加进 schemas 数组（同一个数组对象，
     // 后续轮次直接发给模型）；system prompt 本身不再重建。
     // 顺序有讲究：先 toolSchemas(task) 算出 deferredNote，再拼进 system prompt。
+    // G-P1-31 主动记忆：回复前召回（默认关；开了才跑）。先 quick、不够
+    // 再升级 deep；只读注入提示词，召回失败（库损坏、会话库不存在等）
+    // 绝不拦运行，只是不注入。每轮先清掉上一轮的段落，免得复用旧召回。
+    this.activeMemoryNote = null;
+    if (isActiveMemoryEnabled(this.home, this.sessionId)) {
+      try {
+        const recall = await recallBeforeReply(this.home, task, {
+          sessionId: this.sessionId,
+          memoryPath: this.memoryPath,
+        });
+        this.activeMemoryNote = recall.text || null;
+        try {
+          this.emit("active_memory_recalled", { tier: recall.tier, hits: recall.hits.length, escalated: recall.escalated });
+        } catch { /* 记账失败绝不破坏主循环 */ }
+        if (recall.escalated) {
+          try {
+            this.emit("active_memory_escalated", { tier: recall.tier, hits: recall.hits.length });
+          } catch { /* ignore */ }
+        }
+      } catch {
+        this.activeMemoryNote = null;
+      }
+    }
     const schemas = this.toolSchemas(task);
     const system = this.buildSystemPrompt(task, [], this.deferredNote);
     // OpenMausBot B 项：循环检测守卫——同一失败调用 3 次拒执行、同一成功

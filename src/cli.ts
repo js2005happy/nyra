@@ -286,7 +286,7 @@ nyra plugin <list|search|install|uninstall|enable|disable|verify|audit|pin|unpin
 nyra hooks list                列出已安装的钩子（~/.nyra/hooks/<事件>.d/ 下的脚本，详见 docs/hooks.md）
 nyra status                    诊断清单：损坏的配置、不可用沙箱、被忽略的权限设置、永不匹配的 hook matcher（只读，详见 docs/status.md）
 nyra creator "<一句话需求>" [--yes]   创造模式：一句话搓出插件（先验证、经确认才安装）
-nyra memory <export|export-prompt|import|local|import-zip|search|forget|remember|entries|entry|update|rejections>  记忆交换与检索/删除；remember/entries/entry/update/rejections 走记忆证据门（写记忆须附用户原话依据，详见 docs/memory.md）；remember/entries 支持 --org 组织记忆
+nyra memory <export|export-prompt|import|local|import-zip|search|forget|remember|entries|entry|update|rejections|recall>  记忆交换与检索/删除；remember/entries/entry/update/rejections 走记忆证据门（写记忆须附用户原话依据，详见 docs/memory.md）；remember/entries 支持 --org 组织记忆；recall 是主动记忆开关与试跑（默认关，详见 docs/memory.md）
 nyra soul <show|status|list|init|add|remove|enable|disable|edit|export|import>  Soul 身份层：每 agent 的身份与 Tenets（不变量进规则层、代码拦截；Charter 角色契约见 nyra soul charter <set|show|clear>，详见 docs/soul.md 与 docs/team.md）
 nyra style <learn|show|list|delete|export|import>  分应用文风学习（详见 docs/style.md）
 nyra doctor [--provider 名字]  中文自检：运行时、配置文件、配置目录、Key、网络、磁盘、写权限、密码箱权限
@@ -437,7 +437,7 @@ nyra plugin <list|search|install|uninstall|enable|disable|verify|audit|pin|unpin
 nyra hooks list                list installed hooks (~/.nyra/hooks/<event>.d/, see docs/hooks.md)
 nyra status                    diagnose broken configs, unavailable sandbox, ignored permission rules, never-matching hook matchers (read-only, see docs/status.md)
 nyra creator "<one-line idea>" [--yes]   creator mode: build a plugin from one sentence (verified, installed only after you confirm)
-nyra memory <export|export-prompt|import|local|import-zip|search|forget|remember|entries|entry|update|rejections>  memory exchange, search and forget; remember/entries/entry/update/rejections go through the memory evidence gate (writes need verbatim user quotes, see docs/memory.md); remember/entries support --org org memory
+nyra memory <export|export-prompt|import|local|import-zip|search|forget|remember|entries|entry|update|rejections|recall>  memory exchange, search and forget; remember/entries/entry/update/rejections go through the memory evidence gate (writes need verbatim user quotes, see docs/memory.md); remember/entries support --org org memory; recall is the active-memory switch and dry run (off by default, see docs/memory.md)
 nyra soul <show|status|list|init|add|remove|enable|disable|edit|export|import>  Soul identity layer: per-agent identity and Tenets (invariants compile into the rule layer and are enforced by code; role Charter via nyra soul charter <set|show|clear>, see docs/soul.md and docs/team.md)
 nyra style <learn|show|list|delete|export|import>  per-channel writing style profiles (see docs/style.md)
 nyra doctor [--provider name]  self-check: runtime, config, home dir, key, network, disk, write access, vault permissions
@@ -3784,6 +3784,11 @@ async function handleMemory(argv: string[], home: string): Promise<number> {
   // Kooyu 记忆证据门：结构化条目那几个子命令（remember/entries/entry/update/rejections）。
   if (cmd === "remember" || cmd === "entries" || cmd === "entry" || cmd === "update" || cmd === "rejections") {
     return handleMemoryGate(argv, home);
+  }
+  // G-P1-31 主动记忆：开关与试跑（recall status|on|off|cross-on|cross-off|test）。
+  if (cmd === "recall") {
+    const { handleActiveMemory } = await import("./activeMemoryCli.ts");
+    return handleActiveMemory(argv.slice(1), home);
   }
   // 缺口 1：nyra memory search <关键词> [--limit N] [--session <会话 id>]
   if (cmd === "search") {
