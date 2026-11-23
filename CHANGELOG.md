@@ -1,3 +1,7 @@
+## Unreleased — 2026-11-23 HTTP POST failure classification (static only)
+
+- `http_post` now prefixes `urllib.error.HTTPError` results with `错误：` so existing legacy tool report classification records a reported failure, retaining HTTP status and truncated response body. No automatic retry, permission or dependency changes. Static review only; tests not executed.
+
 ## Unreleased — 2026-11-23 local git diff failure (static only)
 
 - Local git_status now reports a fixed error when git diff --stat exits nonzero, rather than returning a partial status as if complete; suppresses untrusted stderr. Adds two regression definitions, not executed. Remote backend, permissions, retry policy and dependencies unchanged.
