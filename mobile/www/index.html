@@ -29,88 +29,123 @@
   .row { display: flex; gap: 12px; }
   .row > div { flex: 1; }
   button {
-    width: 100%; margin-top: 20px; padding: 14px; border: none; border-radius: 12px;
+    width: 100%; margin-top: 12px; padding: 14px; border: none; border-radius: 12px;
     background: #EAC45F; color: #0B0B0C; font-size: 17px; font-weight: 700; cursor: pointer;
   }
   button.secondary { background: transparent; border: 1px solid #33333a; color: #F5F5F7; font-weight: 400; }
+  button.provider { background: #26262b; color: #F5F5F7; font-weight: 400; font-size: 15px; padding: 12px; }
   .err { color: #ff7a7a; font-size: 13px; min-height: 18px; margin-top: 10px; }
   ol { margin: 0; padding-left: 20px; font-size: 14px; line-height: 1.9; color: #cfcfd4; }
   code { background: #0B0B0C; border: 1px solid #33333a; border-radius: 6px; padding: 1px 6px; font-size: 13px; }
   .note { width: 100%; max-width: 420px; font-size: 12px; line-height: 1.7; color: #77777e; }
   .hidden { display: none; }
+  details { width: 100%; max-width: 420px; }
+  details summary { color: #9a9aa0; font-size: 13px; cursor: pointer; padding: 8px 0; }
+  details .card { margin-top: 8px; }
 </style>
 </head>
 <body>
 <svg class="mark" viewBox="6 6 88 88" aria-hidden="true"><path fill="#F5F5F7" fill-rule="evenodd" d="M10 50 A40 40 0 1 0 90 50 A40 40 0 1 0 10 50 Z M39.93 29.80 A3 3 0 0 0 35.09 32.46 L39.76 76.94 A3 3 0 0 0 44.99 78.61 L51.92 70.74 L58.75 82.25 A3 3 0 0 0 62.84 83.32 L69.77 79.30 A3 3 0 0 0 70.84 75.17 L64.32 64.23 L73.76 63.24 A3 3 0 0 0 75.32 57.91 Z"/></svg>
 <h1>Nyra</h1>
-<p class="sub">连上电脑上的 Nyra</p>
-
-<div class="card hidden" id="quickCard">
-  <h2>上次连过的电脑</h2>
-  <div id="quickText" style="font-size:15px"></div>
-  <button class="secondary" id="quickBtn">直接打开</button>
-</div>
+<p class="sub">用账号登录，连云端 Nyra</p>
 
 <div class="card">
-  <h2>连接电脑</h2>
-  <label for="host">电脑地址（局域网 IP 或主机名）</label>
-  <input id="host" type="text" inputmode="url" autocomplete="off" placeholder="例如 192.168.1.23">
-  <div class="row">
-    <div>
-      <label for="port">端口</label>
-      <input id="port" type="number" inputmode="numeric" value="8765" min="1" max="65535">
-    </div>
-    <div>
-      <label for="code">配对码（可选，6 位）</label>
-      <input id="code" type="text" inputmode="numeric" autocomplete="off" maxlength="6" placeholder="首次连接时填">
-    </div>
-  </div>
+  <h2>用账号登录</h2>
+  <label for="cloud">云端地址</label>
+  <input id="cloud" type="text" inputmode="url" autocomplete="off" placeholder="例如 https://cloud.example.com">
   <div class="err" id="err"></div>
-  <button id="connectBtn">连接</button>
+  <button class="provider" id="googleBtn">用 Google 登录</button>
+  <button class="provider" id="githubBtn">用 GitHub 登录</button>
+  <button class="provider" id="emailBtn">用邮箱登录</button>
+  <button id="openBtn">打开云端 Nyra</button>
+  <div class="err" id="hint" style="color:#9a9aa0">登同一个账号，手机和电脑看到同一份状态；不用跟电脑连同一个 Wi-Fi。</div>
 </div>
 
-<div class="card">
-  <h2>怎么用</h2>
-  <ol>
-    <li>电脑上跑 <code>nyra ui --pair</code>，终端里会打印二维码和 6 位配对码。</li>
-    <li>手机和电脑连<strong>同一个 Wi-Fi</strong>。</li>
-    <li>上面填电脑地址（终端里打印的那串 IP）和配对码，点连接。</li>
-    <li>配对成功后这台手机就记住了，下次直接打开就行；配对码 5 分钟有效、只能用一次。</li>
-  </ol>
-</div>
+<details>
+  <summary>旧版：连家里电脑（局域网）</summary>
+  <div class="card">
+    <h2>连接电脑</h2>
+    <label for="host">电脑地址（局域网 IP 或主机名）</label>
+    <input id="host" type="text" inputmode="url" autocomplete="off" placeholder="例如 192.168.1.23">
+    <div class="row">
+      <div>
+        <label for="port">端口</label>
+        <input id="port" type="number" inputmode="numeric" value="8765" min="1" max="65535">
+      </div>
+      <div>
+        <label for="code">配对码（可选，6 位）</label>
+        <input id="code" type="text" inputmode="numeric" autocomplete="off" maxlength="6" placeholder="首次连接时填">
+      </div>
+    </div>
+    <div class="err" id="lanErr"></div>
+    <button id="connectBtn">连接</button>
+    <ol style="margin-top:16px">
+      <li>电脑上跑 <code>nyra ui --pair</code>，终端里会打印二维码和 6 位配对码。</li>
+      <li>手机和电脑连<strong>同一个 Wi-Fi</strong>。</li>
+      <li>上面填电脑地址（终端里打印的那串 IP）和配对码，点连接。</li>
+      <li>配对成功后这台手机就记住了，下次直接打开就行；配对码 5 分钟有效、只能用一次。</li>
+    </ol>
+  </div>
+</details>
 
-<p class="note">Nyra 的工具仍在电脑上执行，手机只是遥控器。传输是明文 HTTP，只在自己信任的家庭 Wi-Fi 里用，绝不要把端口映射到公网。手机丢了，第一时间在电脑的设置 → 手机里撤销。</p>
+<p class="note">现在 agent 在云端跑，不在你电脑上。上面登完账号就直接用云端；下面“旧版”是云端没上线前的过渡入口，等云端走通后会去掉。旧版仍是明文 HTTP，只在自己信任的家庭 Wi-Fi 里用，绝不要把端口映射到公网。手机丢了，第一时间在电脑的设置 → 手机里撤销。</p>
 
 <script>
 (function () {
+  var cloudEl = document.getElementById('cloud');
+  var errEl = document.getElementById('err');
   var hostEl = document.getElementById('host');
   var portEl = document.getElementById('port');
   var codeEl = document.getElementById('code');
-  var errEl = document.getElementById('err');
+  var lanErrEl = document.getElementById('lanErr');
+  var savedCloud = null;
+  try { savedCloud = localStorage.getItem('nyra-cloud-url') || ''; } catch (e) {}
+  if (savedCloud) cloudEl.value = savedCloud;
+
+  function cloudUrl() {
+    var url = (cloudEl.value || '').trim().replace(/\/$/, '');
+    if (!url) { errEl.textContent = '先填云端地址（电脑上跑 nyra cloud set-url 能看到）。'; return null; }
+    if (!/^https?:\/\//i.test(url)) { errEl.textContent = '云端地址要带 http:// 或 https://。'; return null; }
+    try { localStorage.setItem('nyra-cloud-url', url); } catch (e) {}
+    errEl.textContent = '';
+    return url;
+  }
+  function login(provider) {
+    var base = cloudUrl();
+    if (!base) return;
+    window.location.href = base + '/login?provider=' + encodeURIComponent(provider);
+  }
+  document.getElementById('googleBtn').onclick = function () { login('google'); };
+  document.getElementById('githubBtn').onclick = function () { login('github'); };
+  document.getElementById('emailBtn').onclick = function () { login('email'); };
+  document.getElementById('openBtn').onclick = function () {
+    var base = cloudUrl();
+    if (!base) return;
+    window.location.href = base + '/app';
+  };
+
+  // 旧版局域网入口（过渡期保留）：填电脑地址 + 配对码，跳电脑上的 /m。
   var last = null;
   try { last = JSON.parse(localStorage.getItem('nyra-last-gateway') || 'null'); } catch (e) {}
   if (last && last.host) {
     hostEl.value = last.host;
     if (last.port) portEl.value = last.port;
-    document.getElementById('quickText').textContent = last.host + ':' + (last.port || 8765);
-    document.getElementById('quickCard').classList.remove('hidden');
-    document.getElementById('quickBtn').onclick = function () { go(last.host, last.port || 8765, ''); };
   }
-  function go(host, port, code) {
+  function goLan(host, port, code) {
     host = (host || '').trim().replace(/^https?:\/\//i, '').split('/')[0];
-    if (!host) { errEl.textContent = '先填电脑地址。'; return; }
-    if (!/^[A-Za-z0-9._-]+(:\d+)?$/.test(host)) { errEl.textContent = '电脑地址格式不对，只要 IP 或主机名，不要带 http://。'; return; }
+    if (!host) { lanErrEl.textContent = '先填电脑地址。'; return; }
+    if (!/^[A-Za-z0-9._-]+(:\d+)?$/.test(host)) { lanErrEl.textContent = '电脑地址格式不对，只要 IP 或主机名，不要带 http://。'; return; }
     port = parseInt(port, 10);
-    if (!port || port < 1 || port > 65535) { errEl.textContent = '端口不对，应在 1–65535 之间。'; return; }
+    if (!port || port < 1 || port > 65535) { lanErrEl.textContent = '端口不对，应在 1–65535 之间。'; return; }
     code = (code || '').trim();
-    if (code && !/^\d{6}$/.test(code)) { errEl.textContent = '配对码是 6 位数字，不填也可以（已配对过的手机不用填）。'; return; }
+    if (code && !/^\d{6}$/.test(code)) { lanErrEl.textContent = '配对码是 6 位数字，不填也可以（已配对过的手机不用填）。'; return; }
     try { localStorage.setItem('nyra-last-gateway', JSON.stringify({ host: host, port: port })); } catch (e) {}
     var url = 'http://' + host + ':' + port + '/m' + (code ? '#pair=' + code : '');
     window.location.href = url;
   }
   document.getElementById('connectBtn').onclick = function () {
-    errEl.textContent = '';
-    go(hostEl.value, portEl.value, codeEl.value);
+    lanErrEl.textContent = '';
+    goLan(hostEl.value, portEl.value, codeEl.value);
   };
 })();
 </script>
