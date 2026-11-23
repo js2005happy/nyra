@@ -1,3 +1,10 @@
+## 2026-11-23 — P1 HTTP POST non-2xx fail-closed (static-only)
+
+- **Source fact:** The existing HTTPError branch reports a fixed failure, but the ordinary response branch returned `HTTP <status>` as non-error text without validating the status. A custom/alternate transport can return a non-2xx response without raising HTTPError. This is a source-level gap, not evidence of a production incident.
+- **External user feedback (reviewed 2026-11-23):** [Codex #40646](https://github.com/openai/codex/issues/40646), opened 2026-08-25, reports unsupported execution-completion claims; [Codex #59305](https://github.com/openai/codex/issues/59305), opened 2026-11-04, requests separating tool success from terminal task completion. These individual reports do not establish Angel failure frequency or prove this HTTP defect.
+- **Ranked candidates (value / difficulty / security risk / dependency):** P1 non-2xx HTTP response classification **high/low/low/existing HTTP handler** (implemented, untested); P1 structured HTTP/Shell outcome **high/medium/medium/Agent contract** (open); P1 other direct-output privacy audit **high/medium/medium/tool compatibility** (open); P1 pre-model/pre-record privacy boundary **high/high/high/policy and consent** (research); P1 independent side-effect receipts **high/high/high/trusted readback** (blocked); P2 recoverable large output **medium-high/high/medium/artifact permissions** (research).
+- **Limits:** Non-2xx status is a tool-reported failure, not proof of no remote side effect; no automatic POST retry. Successful response bodies remain model-visible. No runtime or cross-platform verification.
+
 ## 2026-11-23 — P1 HTTP POST error-body privacy (static-only)
 
 - **Source fact:** HTTPError returned untrusted remote error body to the model; it might echo tokens or submitted data. Status-only failure reporting is implemented but untested. This is a source-derived risk, not a confirmed incident.
