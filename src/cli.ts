@@ -24,6 +24,7 @@ import { handleCost } from "./costCli.ts";
 import { handleStats, formatMonthLine } from "./statsCli.ts";
 import { handleTelemetry } from "./telemetryCli.ts";
 import { handleAcp } from "./acpCli.ts";
+import { handleA2a } from "./a2aCli.ts";
 import { formatModelSwitchNotice, modelSwitchSummaryLine, recordModelSwitch, switchTimeShort } from "./modelSwitch.ts";
 import { handleModels } from "./modelsCli.ts";
 import { handleMemoryGate } from "./memoryGateCli.ts";
@@ -247,6 +248,7 @@ nyra media <status|enable|disable|ingest <链接> [--out <路径>]|setup|scope .
 nyra stats [--heatmap] [--json]  本月用量与每日用量热力图（--json 给机器）
 nyra telemetry [status|spans|metrics|export|enable|disable|otlp]   可观测性：trace（span 落盘 + OTLP 导出）+ metrics（计数器与直方图）+ 运行事件 trace 关联（详见 docs/telemetry.md）
 nyra acp <serve|status|grant|revoke-grant>   ACP 服务端：编辑器经 stdio 用 JSON-RPC 驱动 Nyra（只读先行，写操作进 peer 提议门，须机主逐条批）（详见 docs/acp.md）
+nyra a2a <serve|card>   A2A 服务端：别的 agent 经 HTTP 用 JSON-RPC 2.0 调用 Nyra（只读先行，写操作进 peer 提议门，须机主逐条批）（详见 docs/a2a.md）
 nyra cost --show [--json]      定价、单次上限与月度上限（本月已花）
 nyra --plan "任务"             只读分析，生成工作目录中的 plan.md，不执行
 nyra --execute-plan --approve-plan <SHA256>   执行经校验值批准的 plan.md
@@ -393,6 +395,7 @@ nyra media <status|enable|disable|ingest <url> [--out <path>]|setup|scope ...>  
 nyra stats [--heatmap]         this month's usage and the daily usage heatmap (see docs/cost.md)
 nyra telemetry [status|spans|metrics|export|enable|disable|otlp]   observability: traces (spans on disk + OTLP export) + metrics (counters and histograms) + run-event trace correlation (see docs/telemetry.md)
 nyra acp <serve|status|grant|revoke-grant>   ACP server: editors drive Nyra over stdio JSON-RPC (read-only first, writes go to the peer proposal gate for owner approval) (see docs/acp.md)
+nyra a2a <serve|card>   A2A server: other agents call Nyra over HTTP JSON-RPC 2.0 (read-only first, writes go to the peer proposal gate for owner approval) (see docs/a2a.md)
 nyra cost --show               pricing, per-run cap and monthly cap (spent this month)
 nyra verdict [task]            one conclusion: is this run worth it (redlines + savings + recall + history)
 nyra verdict --run <id>         score one run; --recent N: trend over the last N runs; --json: machine-readable
@@ -7040,6 +7043,7 @@ export async function main(argv: string[]): Promise<number> {
   if (args.subcommand === "stats") return handleStats(args.subArgs ?? [], home);
   if (args.subcommand === "telemetry") return handleTelemetry(args.subArgs ?? [], home);
   if (args.subcommand === "acp") return handleAcp(args.subArgs ?? [], home);
+  if (args.subcommand === "a2a") return handleA2a(args.subArgs ?? [], home);
   if (args.subcommand === "models") return handleModels(args.subArgs ?? [], home);
   if (args.subcommand === "schedule") return handleSchedule(args.subArgs ?? [], resolve(args.workdir));
   if (args.subcommand === "events") return handleEvents(args.subArgs ?? [], resolve(args.workdir));

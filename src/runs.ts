@@ -449,6 +449,12 @@ acp_session_created: ["session"],
 acp_session_loaded: ["session"],
 acp_prompt_finished: ["session", "stop_reason", "text_chars", "spent_usd"],
 acp_blocked: ["session", "labels"],
+// A2A 服务端（G-P1-20 剩余部分）：任务建/跑完/取消、注入拦截。只记
+// 元数据，不记 prompt 与回答原文。
+a2a_task_created: ["task", "context"],
+a2a_task_finished: ["task", "state", "text_chars", "spent_usd"],
+a2a_task_cancelled: ["task"],
+a2a_blocked: ["task", "labels"],
 // 缺口 51：业务动作硬红线进证据链——改表（哪个连接器、哪个动作、从哪档到
 // 哪档、原因指纹）与拦截（哪个连接器、哪个动作、哪档、哪个工具）。只记
 // 元数据与 SHA-256 前 12 位指纹，不记原因原文、不记业务内容。
