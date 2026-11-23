@@ -1,3 +1,9 @@
+## 2026-11-24 — P1 web_fetch HTTP status evidence boundary (static only)
+
+- **Code fact:** read-only web_fetch accepted and could save any response returned by the HTTP adapter without checking status; non-2xx content is not reliable successful-page evidence. Guard implemented before body read/evidence save; runtime behavior not tested.
+- **External user feedback (existing repository records reviewed 2026-11-24):** [Codex #37121](https://github.com/openai/codex/issues/37121) (recorded 2026-08-05) describes lost recoverable state after truncation; [Codex #34233](https://github.com/openai/codex/issues/34233) (recorded 2026-07-19) reports sensitive tool output. These are external individual reports, not proof of this Angel defect or a frequency estimate. **Inference:** prevent error-page evidence from appearing as successful retrieval and minimize unnecessary response processing.
+- **Ranked backlog (value / implementation difficulty / safety risk / dependency; engineering estimates):** P1 non-2xx web_fetch evidence guard high / low / low / current HTTP adapter (implemented, untested); P1 other direct tool-output privacy audit high / medium / medium / output inventory (open); P1 remote shell structured reports high / high / high / trusted backend protocol (open); P1 pre-model/pre-record redaction high / high / high / consent policy (research); P1 independent side-effect acceptance high / high / high / trusted target readback (blocked); P2 recoverable large outputs medium-high / high / medium / private storage policy (research).
+
 ## 2026-11-24 — Read-only web charset fallback (static only)
 
 - **Source fact:** web_fetch and search backend decode bounded bytes using server-controlled charset. Invalid codec labels previously discarded received content. This is a source-level risk, not a confirmed incident.
