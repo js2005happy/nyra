@@ -1,3 +1,10 @@
+
+## 2026-11-23 — git_status 第二阶段超时失败关闭（静态增量）
+
+- **源码事实**：本地 `git_status` 的首个 subprocess 有超时处理，第二个 `git diff --stat` 未捕获 `TimeoutExpired`；通用分发器虽会屏蔽异常详情，但调用方无法收到明确的阶段性失败提示。此项不涉及远端 backend。
+- **外部用户反馈（需求信号，非本项目故障证据）**：2026-11-07 [Codex #60104](https://github.com/openai/codex/issues/60104) 报告长任务返工与额度浪费；2026-11-16 [Codex #61857](https://github.com/openai/codex/issues/61857) 涉及未验证即报告完成。以上日期依据既有仓库记录，未在本轮重新核验原帖；不能由个案推断总体频率。
+- **工程推断与排序（价值/难度/安全风险/依赖）**：① git_status diff 阶段超时明确失败 高/低/低/现有 subprocess（本轮）；② 其他显式 ToolError 输出审计 高/中/中/工具审计；③ 可信只读结构化适配器 高/中/中/执行报告接口；④ 预模型隐私保护 高/高/高/内容策略与兼容性；⑤ 独立副作用验收 高/高/高/外部可信读回。仅修改本地只读 git 状态错误分支，不添加自动重试。
+
 ## 2026-11-23 — P1 git_status missing-directory path privacy (static-only)
 
 - **Repository fact (source inspection):** local `_tool_git_status` interpolated caller-supplied `path` into its missing-directory error, unlike the hardened local `read_file` and `list_dir` paths. This could expose private directory names in model-visible output; no observed Angel incident is claimed. Replaced only that error with `错误：目录不存在` and defined a regression test (not executed).
