@@ -1,3 +1,10 @@
+## P1 — web_fetch evidence URL echo privacy (2026-11-23, static only)
+
+- **Source fact:** `_tool_web_fetch` appended the complete URL to its model-visible evidence marker, although `ctx.evidence.save` already receives the URL. Query parameters and URL userinfo can contain secrets; removing the redundant echo reduces one disclosure surface, but neither sanitizes the fetched page nor removes URLs from persisted evidence.
+- **External user report (fact, not Angel incidence):** [Codex #34233](https://github.com/openai/codex/issues/34233), 2026-07-19, reports secrets appearing in stored tool output; reviewed 2026-11-23. **Inference:** minimize unnecessary repetition of potentially sensitive URL values in tool messages. This issue does not establish prevalence or this specific Angel defect.
+- **Implemented (static only):** evidence marker now shows saved evidence path without repeating URL. No network behavior, approvals, retries, dependencies or storage metadata changed. Tests not run.
+- **Next ranked candidates (value / difficulty / safety risk / dependency):** P1 structured HTTP/Shell outcomes (high / medium / medium / compatible Agent-tool report contract); P1 audit remaining model-visible direct tool output (high / medium / medium / tool inventory); P1 pre-model/pre-record secret handling (high / high / high / explicit privacy policy); P1 independent side-effect receipts (high / high / high / trusted readback); P2 recoverable large-output storage (medium-high / high / medium / storage permissions). Ranking is engineering inference, not a measured popularity score.
+
 
 ## P1 — bounded search backend reads (2026-11-23, static only)
 
