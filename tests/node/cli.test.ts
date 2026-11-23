@@ -33,7 +33,7 @@ test("二进制 --help / --version 不用 Key，退出 0", () => {
   expect(run(["--help"]).code).toBe(0);
   const v = run(["--version"]);
   expect(v.code).toBe(0);
-  expect(v.out).toMatch("nyra 0.5.9");
+  expect(v.out).toMatch("nyra 0.5.10");
 });
 
 test("无 Key 跑任务：打印中文设置说明，退出码 1", () => {

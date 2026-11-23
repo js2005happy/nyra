@@ -117,7 +117,7 @@ test("I18n.test_parse_lang_command", () => {
   expect(parseLangCommand("/lang fr")).toBeNull();
 });
 
-const INFO = { version: "0.5.9", model: "deepseek / deepseek-flash", mode: "auto", cwd: "/home/sj/projects/nyra-cli", branch: "main" };
+const INFO = { version: "0.5.10", model: "deepseek / deepseek-flash", mode: "auto", cwd: "/home/sj/projects/nyra-cli", branch: "main" };
 
 /** 框线行（╭ │ ╰ 开头）的显示宽度必须一致。 */
 function expectBoxAligned(lines: string[]): void {
@@ -131,7 +131,7 @@ test("I18n.test_header_snapshot_en", () => {
   setLang("en");
   const lines = renderHeader(INFO, { width: 100, color: false, unicode: true, home: "/home/sj" });
   expect(lines.slice(4).join("\n")).toBe([
-    " █████▀▀████▀▀█████   Nyra v0.5.9",
+    " █████▀▀████▀▀█████   Nyra v0.5.10",
     " █████  ████  █████   An open-source AI agent that runs on your computer",
     " █████  ████  █████",
     " ██████████████████",
@@ -149,7 +149,7 @@ test("I18n.test_header_snapshot_en", () => {
   // 彩色版去掉 ANSI 后：标志以下逐字一致（标志行是抗锯齿画法，只比宽度）。
   const colored = renderHeader(INFO, { width: 100, color: true, unicode: true, home: "/home/sj" }).map(stripAnsi);
   expect(colored.slice(10)).toEqual(lines.slice(10));
-  expect(colored[4]).toEndWith("Nyra v0.5.9");
+  expect(colored[4]).toEndWith("Nyra v0.5.10");
   expect(textWidth(colored[4])).toBe(textWidth(lines[4]));
   expect(textWidth(colored[5])).toBe(textWidth(lines[5]));
 });
@@ -158,7 +158,7 @@ test("I18n.test_header_snapshot_zh", () => {
   setLang("zh");
   const lines = renderHeader(INFO, { width: 100, color: false, unicode: true, home: "/home/sj" });
   expect(lines.slice(4).join("\n")).toBe([
-    " █████▀▀████▀▀█████   Nyra v0.5.9",
+    " █████▀▀████▀▀█████   Nyra v0.5.10",
     " █████  ████  █████   跑在你电脑上的开源 AI Agent",
     " █████  ████  █████",
     " ██████████████████",

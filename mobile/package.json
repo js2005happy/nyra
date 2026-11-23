@@ -17,5 +17,5 @@
     "sync": "bun x cap sync android",
     "build:apk": "bun x cap sync android && cd android && ./gradlew assembleDebug --no-daemon"
   },
-  "version": "0.5.9"
+  "version": "0.5.10"
 }
