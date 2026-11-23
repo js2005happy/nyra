@@ -238,6 +238,17 @@ DSL 用自写的确定性 YAML 子集解析器（无依赖），只认 block 风
 - `nyra checkpoint list|show|history` 查；`nyra checkpoint update <运行 id> <步骤 id> --set 键=值` 改某一步的值，后面的检查点全部作废（作废的不能再改、不能再重放）。
 - `nyra checkpoint replay <运行 id> <步骤 id> [--dry-run] [--yes]` 从那一步重放：分叉新建一条运行（`replayedFrom` 记来源），已跑过的步骤不重跑；只有 fixed 形态能重放，for_each 的检查点重放时整段循环重跑；后面有调模型 / 审批的步骤时须 `--yes`，审批重放时重新问人；月度硬顶与 `--max-cost` 照常。详见 `docs/step-checkpoints.md`。
 
+## 结构化人机回环（G-P1-41）
+
+审批节点是“跑到某一步停下来问批不批”；结构化人机回环是“在指定步骤前后停住，人看一眼、回一句话或改几个参数、带着改完的值原地继续”。两者不互相替代：审批节点只认批/拒，人机回环多 accept / ignore / respond / edit 四种回法，且 edit 能改参数。
+
+- 只在工作流定义里显式配 `interrupt_before` / `interrupt_after` 的步骤前后停住，默认不停；只认 **fixed 形态的顶层步骤**（并行分支内的步骤、coordinator / dynamic 的步骤、审批节点都不认，配了直接拒绝导入）。
+- 中断单（`~/.nyra/interrupts.json`，0600）：id、运行、步骤、停在哪一点、提示词（prompt，≤500 字）、response_schema（最多 16 个字段，字段名小写字母开头）、上下文摘要（步骤输入/输出摘要，≤500 字，不记对话原文）。同一条运行、同一个步骤、同一个点，挂起的单只有一张。
+- 四种决定：`accept` 原样继续；`ignore` 跳过该步（before 点记 skipped，after 点直接继续）；`respond` 回一组值（按 response_schema 校验，值只记在单上，不改参数）；`edit` 改参数后只重跑受影响的步骤——before 点改该步输入（tool 改 args 键、llm 改 prompt/system、delegate/skill 改 task/max_turns、knowledge 改 query/base/top_k，只改已声明的键、值须是标量且类型对得上），after 点只能改该步的输出（`--set output=新值`，同步写回 scope、节点记录与步级检查点）。
+- CLI：`nyra interrupt list [--status pending|resolved] [--json]`、`show <单 id>`、`respond <单 id> --set 键=值`、`edit <单 id> --set 键=值`、`resume <单 id> [--decision accept|ignore|respond|edit] [--set ...]`（已回过的单直接 resume，没回的单 resume 时一次性回掉；`nyra workflow resume` 只接审批挂起，人工回环挂起用 `nyra interrupt resume`）。
+- 决定记运行事件与证据链（`workflow_interrupt_created` / `workflow_interrupt_resolved` / `workflow_interrupt_resumed`），只记决定与参数键，不记对话原文、不记回复内容。续跑时审批节点与成本硬顶照常（跑到审批节点仍挂起，`--max-cost` / 月度硬顶重新核）。
+- 注意：if 为假会跳过的步骤不打扰人（跑前不建单）；跑后中断只对成功跑完的步骤生效；for_each 步骤的中断只触发一次（整段循环前后各一次，循环内单步不单独停）；触发器跑到带中断的工作流时会停住等人，不会自己续跑；重放（`nyra checkpoint replay`）会重新走中断点。详见 `docs/interrupts.md`。
+
 ## 诚实边界
 
 - dry-run 只能枚举确定性节点的动作；模型节点的动作无法枚举。协调者/动态形态下计划步骤只是候选，新步骤的动作同样无法枚举。
