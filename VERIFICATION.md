@@ -1,3 +1,10 @@
+## 2026-11-23 — web_fetch evidence URL echo (static only)
+
+- Inspected README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/Tools source, recent commits, open Issues (none), PR #113 and prior commit status/workflows (none returned). Repository `js2005happy/angel` resolves to `js2005happy/nyra`.
+- Source observation: `web_fetch` appended the raw request URL to the model-visible evidence marker even though the URL is already passed to the evidence store. Removed only the redundant URL echo; evidence storage still records the URL, and the tool result can still contain sensitive page text. No new sanitizer or guarantees about persisted data.
+- External individual report: Codex #34233 (2026-07-19, https://github.com/openai/codex/issues/34233) describes secrets appearing in tool output. This is not evidence of an Angel production incident or a measured rate.
+- Static source review only. No tests, compilation, CI execution, network requests, account changes, main merge or production release. Cross-platform behavior unverified.
+
 ## 2026-11-23 — web_search response read bound (static review only)
 
 - Reviewed `_fetch_search_page` and `_tool_web_search` on `feat/eigenflux-agent-network-policy-20261116`. Search backend HTML previously used unbounded `response.read()`.
