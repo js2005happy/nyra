@@ -1120,14 +1120,14 @@ def _tool_http_post(
             headers={"Content-Type": content_type, "User-Agent": "Angel/0.2"},
         )
         with open_url(request, 30) as response:
+            # Check status before reading or decoding any untrusted body.
+            # Some transports return non-2xx responses without HTTPError.
+            # POST side effects are uncertain; never retry automatically.
+            if not 200 <= response.status < 300:
+                return f"错误：HTTP {response.status}"
             charset = response.headers.get_content_charset() or "utf-8"
             text = response.read().decode(charset, errors="replace")
-        # A transport that returns a non-2xx response without raising HTTPError
-        # must not be recorded as a successful tool report. Do not expose
-        # untrusted error bodies or retry a POST with uncertain side effects.
-        if not 200 <= response.status < 300:
-            return f"错误：HTTP {response.status}"
-        return f"HTTP {response.status}\n{_truncate(text)}"
+            return f"HTTP {response.status}\n{_truncate(text)}"
     except urllib.error.HTTPError as exc:
         # Untrusted response bodies can echo tokens or submitted data.
         # Preserve trusted status only; never retry an uncertain POST.
