@@ -47,6 +47,7 @@
 | `nyra judge <status\|enable\|disable\|set-model\|set-thresholds\|check\|verdicts>` | 意向验证 judge：敏感工具调用先打风险分（0-100 + 引用证据），高分拒绝、中段转人工；第 2 批 G-P1-12：启发式前置（critical 直接拒、high 转人工，零成本规则先扫一遍）+ verdict 落库，`verdicts` 查最近结论（详见 `docs/tool-judge.md`） |
 | `nyra verifier <status\|enable\|disable\|set-model\|rework-on\|rework-off\|add-rule\|remove-rule\|list-rules\|check>` | 验收者：并行产出合入前先验收，不通过打回重做，结论进证据链（详见 `docs/verifier.md`） |
 | `nyra account <status\|login\|logout\|list\|revoke\|link\|suspend\|reactivate>` | 用户账号登录：Google / GitHub / 邮箱 / SSO，账号身份 + 会话（详见 `docs/accounts.md`） |
+| `nyra cloud <status\|connect\|disconnect\|sync\|push\|pull\|pref\|devices\|set-url>` | 第 6 批：手机云端连接——账号登录后直连云端服务、跨端同步，不走局域网（详见 `docs/mobile-cloud.md`） |
 | `nyra sso <provider\|login\|status\|scim>` | 缺口 43 第二批：企业 SSO——OIDC 身份提供方注册与登录、SCIM 账号开通（详见 `docs/sso.md`） |
 | `nyra init [--name 名字] [--role researcher\|assistant\|shopkeeper\|custom] [--work 干什么活] [--persona 风格] [--redline 红线] [--agent default] [--yes] [--force]` | 缺口 35：对话式入职——三个问题（叫什么、干什么活、什么风格/红线）→ 生成 Soul + 按角色预装技能包 + 配置清单确认后生效，确认后发就绪简报（详见 `docs/onboarding.md`） |
 | `nyra templates <list\|show <角色>\|apply <角色>\|export <角色> <文件>\|import <文件>>` | 缺口 35：一键角色模板——研究员 / 助理 / 店小二（Soul + 技能包 + 权限规则的打包文件，可导出成本地文件分享；导入先验后装；与 `nyra template` 业务流程模板不同，详见 `docs/onboarding.md`） |

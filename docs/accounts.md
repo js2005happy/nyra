@@ -29,6 +29,7 @@
 - 邮箱 magic link 的投递端点（网关 `POST /api/account/magic-link` 兑换路由 + `nyra account login email` 的完整链）。
 - 多用户权限模型（角色只有 `owner` / `user` 两个值先占位；`user` 在本批网关接线前没有任何额外能力，不编造）。
 - 服务端组件：没有任何 Nyra 中央服务器。托管形态（多用户共用一台 Nyra 服务）需要的“账号目录”只定义接口（见 §7），不假装它已存在。
+- 云端连接（第 6 批，见 `docs/mobile-cloud.md` §13）：手机端改走账号登录 + 直连云端服务，客户端一半（地址解析、HTTP 客户端、同步协议、CLI、启动器页）已做；服务端按 API 契约另行实现，真云端未部署。
 
 ## 3. 身份模型
 
@@ -241,4 +242,14 @@ nyra account logout                  登出（撤销当前会话 + 清掉本机 
 - **Postgres 后端网关接线未做**：网关账号鉴权用文件版 store；设了 `NYRA_DATABASE_URL` 后 CLI 走 Postgres，但网关仍读文件，两者会看到不同的账号目录（同一台机器同跑 CLI 与网关时需注意）。网关常驻进程的 Postgres 连接生命周期（启动建表、退出关连接）留待后续。
 - **多用户权限模型未细化**：`user` 角色先只读（owner-only 端点 403），"user 到底能干什么"仍是占位，未定义细粒度能力。
 - `nyra account login email` 依赖网关在跑（链接指向网关兑换端点）；网关没起时用户点了链接会失败，CLI 会提示稍后查看状态。
+
+## 13. 云端连接（第 6 批）
+
+手机端改账号登录、不走局域网（用户 2026-11-23 令）：手机用 Google / GitHub / 邮箱
+登录（复用本文件的同一套账号制），登录后直连云端 Nyra 服务，agent 在云端跑，
+像 Codex 一样。客户端一半已做（`src/cloud.ts`、`src/cloudSync.ts`、`src/cloudCli.ts`、
+`nyra cloud …`、手机启动器页），服务端按 API 契约另行实现，真云端未部署。
+设计占位地址 `https://api.nyra.example`（`.example` 保留域名，解析不到真实服务），
+没配真实地址时连接直接拒绝。同步协议与冲突规则、CLI、启动器页改动，
+详见 `docs/mobile-cloud.md`。
 
