@@ -1,3 +1,11 @@
+## 2026-11-23 — bounded web_fetch input and honest partial evidence (static only)
+
+- **Source fact:** `_tool_web_fetch` read the entire HTTP body before truncating text for the model and could persist an oversized cleaned page as evidence. This is a code-level memory and evidence-integrity risk, not a confirmed production incident.
+- **External user feedback reviewed 2026-11-23:** [Codex #55684](https://github.com/openai/codex/issues/55684) reports repeated truncated rereads and context waste; [Codex #37121](https://github.com/openai/codex/issues/37121) reports recoverable tool state lost after truncation/compaction. These reports are not Angel incidence statistics or proof of this specific defect; creation dates not independently verified.
+- **Engineering inference / queue (value / difficulty / security risk / dependency):** P1 bounded `web_fetch` and partial-evidence marker **high / low / low / existing network handler** (implemented, untested); P1 structured HTTP/Shell tool results **high / medium / medium / Agent-tool contract** (open); P1 other direct-output privacy audit **high / medium / medium / compatibility review** (open); P1 pre-model/pre-record redaction **high / high / high / privacy policy** (research); P1 independent side-effect receipts **high / high / high / trusted readback** (blocked); P2 recoverable large-output artifacts **medium-high / high / medium / artifact permissions** (research).
+- **Boundary:** Read up to 32,001 bytes, decode at most 32,000 bytes, mark clipped pages in model output and evidence, retain existing HTML cleanup and display truncation. No retries, third-party dependencies or changed permissions. This does not recover the unread page, sanitize contents or guarantee HTML completeness.
+- **Verification:** Static inspection only; no tests, builds, CI, external network operations or release.
+
 ## 2026-11-23 — P2 bounded HTTP POST success-body reads (static-only)
 
 - **Source fact:** Successful `http_post` responses previously called `response.read()` without a byte cap, then truncated decoded text to 8,000 characters. The response body could be arbitrarily large before truncation. This is a source-level resource risk, not a confirmed production incident.
