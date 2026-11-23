@@ -31,7 +31,7 @@ import { RunStore } from "./runs.ts";
 import { appendPeerAudit, buildHandoffPackage, handoffPeer, peerConfig, renderHandoffPackage, resolvePeer, type HandoffField, type PeerCallDeps } from "./peer.ts";
 import { isAdmitted, OWNER_IDENTITY } from "./circles.ts";
 import { findFriend, isFriend, loadFriendBook } from "./peerCard.ts";
-import { activateContract, createContract } from "./contract.ts";
+import { activateContract, createContract, formatContractReport, getContract, markContractItem, scoreContract, verifyContract, type ContractAttempt, type DeliveryContract } from "./contract.ts";
 import { loadConfig } from "./config.ts";
 
 export const SESSIONS_FILE = "sessions.json";
@@ -610,8 +610,31 @@ export function acceptDelegation(home: string, sessionId: string, delegationId: 
 }
 
 /** 被委派方交活（只有被委派方本人或机主能交；产物摘要只记一句话，
-* 不记产物全文；验收按契约在后续批次里跑，本批只记状态）。 */
-export function completeDelegation(home: string, sessionId: string, delegationId: string, by: string, note?: string): SessionDelegation {
+* 不记产物全文）。
+*
+* 交活即验收（缺口 39 第二批）：按委派时落成的契约逐项跑验收。
+* 验收标准是 manual 检查项（a1、a2……，编号见 nyra session verify），
+* 交活的人须逐项确认：--confirm <编号> 算通过，--fail <编号> 算不
+* 通过；全部检查项都要有结论才跑验收，缺一项就拒绝交活、什么都不
+* 改。结论 accepted 时委派标 completed，rejected 时标 rejected（可
+* 以重新委派再做，不静默吞掉失败）；验收经过与结论记进证据链
+* （session_delegation_verified 事件）与 peer-audit。 */
+export interface DelegationVerificationMarks {
+  /** 通过的检查 id（a1、a2……）。 */
+  confirm?: string[];
+  /** 不通过的检查 id。 */
+  fail?: string[];
+  /** 产物摘要，同时作人工确认的证据。 */
+  note?: string;
+}
+
+export async function completeDelegation(
+  home: string,
+  sessionId: string,
+  delegationId: string,
+  by: string,
+  marks: DelegationVerificationMarks = {},
+): Promise<SessionDelegation> {
   const book = loadSessionBook(home);
   const session = findSession(book, sessionId);
   if (!session) throw new SessionError(`没有这个会话：${sessionId}`);
@@ -622,13 +645,92 @@ export function completeDelegation(home: string, sessionId: string, delegationId
     throw new SessionError(`委派 ${delegationId} 已是 ${delegation.status}，不能再交活`);
   }
   if (by !== delegation.to && by !== OWNER_IDENTITY) throw new SessionError(`只有被委派方 ${delegation.to} 或机主能交活`);
-  delegation.status = "completed";
-  delegation.note = (note ?? "").trim().slice(0, 500);
+  if (!delegation.contract_id) throw new SessionError(`委派 ${delegationId} 没有契约，交不了活（先检查契约账本）`);
+  const contract = getContract(home, delegation.contract_id);
+  if (!contract) throw new SessionError(`委派 ${delegationId} 的契约 ${delegation.contract_id} 找不到了，交不了活（先检查契约账本）`);
+  const confirm = [...new Set((marks.confirm ?? []).map((s) => s.trim()).filter(Boolean))];
+  const fail = [...new Set((marks.fail ?? []).map((s) => s.trim()).filter(Boolean))];
+  const known = new Set(contract.checks.map((c) => c.id));
+  const unknown = [...confirm, ...fail].filter((id) => !known.has(id));
+  if (unknown.length) {
+    throw new SessionError(`验收标准里没有：${unknown.join("、")}（查编号：nyra session verify ${sessionId} ${delegationId}）`);
+  }
+  const overlap = confirm.filter((id) => fail.includes(id));
+  if (overlap.length) throw new SessionError(`检查 ${overlap.join("、")} 不能既通过又不通过`);
+  const undecided = contract.checks.map((c) => c.id).filter((id) => !confirm.includes(id) && !fail.includes(id));
+  if (undecided.length) {
+    throw new SessionError(`验收标准还没确认完：${undecided.join("、")}（通过用 --confirm <编号>，不通过用 --fail <编号>；查编号：nyra session verify ${sessionId} ${delegationId}）`);
+  }
+  const note = (marks.note ?? "").trim().slice(0, 500);
+  const evidence = note || "（未附证据）";
+  for (const id of confirm) markContractItem(home, contract.id, id, true, evidence);
+  for (const id of fail) markContractItem(home, contract.id, id, false, evidence);
+  const { attempt } = await verifyContract(home, contract.id, {
+    workdir: null,
+    changedFiles: [],
+    diffStat: null,
+    title: delegation.task,
+    outputText: note,
+    summary: note,
+    trajectory: [],
+    spentUsd: null,
+  }, {});
+  if (attempt.verdict === "pending") {
+    throw new SessionError(`委派 ${delegationId} 的验收结论还是待定（不应该发生：检查项已全部确认过）`);
+  }
+  delegation.status = attempt.verdict === "accepted" ? "completed" : "rejected";
+  delegation.note = note;
   delegation.updated_at = nowIso();
   saveSessionBook(home, book);
-  appendPeerAudit(home, { action: "session_delegation_completed", session: sessionId, delegation: delegationId, by });
-  recordSessionEvent(home, "session_delegation_completed", { session: sessionId, delegation: delegationId, by });
+  appendPeerAudit(home, {
+    action: attempt.verdict === "accepted" ? "session_delegation_completed" : "session_delegation_rejected",
+    session: sessionId, delegation: delegationId, by, verdict: attempt.verdict, passed: attempt.passed, total: attempt.total,
+  });
+  recordSessionEvent(home, "session_delegation_verified", {
+    session: sessionId, delegation: delegationId, verdict: attempt.verdict, passed: attempt.passed, total: attempt.total, by,
+  });
+  if (attempt.verdict === "accepted") {
+    recordSessionEvent(home, "session_delegation_completed", { session: sessionId, delegation: delegationId, by });
+  }
   return delegation;
+}
+
+/** 只读看一条委派的验收状态（不写账本、不改状态）：按契约现场打分，
+* 返回委派、契约与本次打分结果；CLI 的 nyra session verify 用它。 */
+export async function verifyDelegation(
+  home: string,
+  sessionId: string,
+  delegationId: string,
+): Promise<{ delegation: SessionDelegation; contract: DeliveryContract; attempt: ContractAttempt }> {
+  const book = loadSessionBook(home);
+  const session = findSession(book, sessionId);
+  if (!session) throw new SessionError(`没有这个会话：${sessionId}`);
+  const delegation = session.delegations.find((d) => d.id === delegationId);
+  if (!delegation) throw new SessionError(`没有这条委派：${delegationId}`);
+  if (!delegation.contract_id) throw new SessionError(`委派 ${delegationId} 没有契约`);
+  const contract = getContract(home, delegation.contract_id);
+  if (!contract) throw new SessionError(`委派 ${delegationId} 的契约 ${delegation.contract_id} 找不到了`);
+  const attempt = await scoreContract(contract, {
+    workdir: null,
+    changedFiles: [],
+    diffStat: null,
+    title: delegation.task,
+    outputText: delegation.note,
+    summary: delegation.note,
+    trajectory: [],
+    spentUsd: null,
+  }, {});
+  return { delegation, contract, attempt };
+}
+
+/** 读一条委派的验收报告文本（verify 子命令与 show 共用）。 */
+export async function formatDelegationVerification(home: string, sessionId: string, delegationId: string): Promise<string> {
+  const { delegation, contract, attempt } = await verifyDelegation(home, sessionId, delegationId);
+  const lines = [
+    `委派 ${delegation.id}（${delegation.from} -> ${delegation.to}）[${delegation.status}]`,
+    formatContractReport(contract, attempt),
+  ];
+  return lines.join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -759,7 +861,7 @@ export function consentRecording(home: string, sessionId: string, identity: stri
 
 // ---------------------------------------------------------------------------
 // CLI：nyra session <create|join|leave|list|show|delegate|accept|
-//   complete|share|frame|record|end>
+//   verify|complete|share|frame|record|end>
 // ---------------------------------------------------------------------------
 
 const SESSION_USAGE = "用法：\n"
@@ -774,7 +876,8 @@ const SESSION_USAGE = "用法：\n"
   + " nyra session leave <会话> [--who <身份>]    离开会话（任何一方可随时单方退出；人都走光了会话自动结束）\n"
   + " nyra session delegate <会话> --to <成员> --task <任务> --accept <标准> [--accept <标准> ...] [--from <成员>]   会内委派（验收标准落成缺口 29 的交付契约；交付走缺口 12 的交接，发不出去时任务留在账本里）\n"
   + " nyra session accept <会话> <委派id> [--by <身份>]    被委派方接下任务\n"
-  + " nyra session complete <会话> <委派id> [--by <身份>] [--note <产物摘要>]   被委派方交活\n"
+  + " nyra session verify <会话> <委派id>    看一条委派的验收状态（只读：契约 + 逐项结论，不改状态）\n"
+  + " nyra session complete <会话> <委派id> [--by <身份>] [--note <产物摘要>] [--confirm <检查编号> ...] [--fail <检查编号> ...]   被委派方交活（交活即按契约跑验收：验收标准须逐项确认，通过用 --confirm、不通过用 --fail，编号见 verify；全通过才标 completed，有一项不通过就标 rejected）\n"
   + " nyra session share <会话> --kind <种> --label <标签> [--kind <种> --label <标签> ...] [--to <成员>] [--run <运行ID>] [--from <成员>]   会话内共享（只认 product / context / evidence / note；记忆、会话历史、密钥与任意本地文件一律不共享）\n"
   + " nyra session frame <会话> --hash <12位指纹> [--from <成员>]   扇出一帧（本地扇出模型：按成员表扇出，只记指纹与收件人，不记帧内容）\n"
   + " nyra session record <会话> --consent|--revoke|--status [--who <身份>]   录制同意（全体在会成员同意才允许录制；新加入的成员须另行同意）\n"
@@ -841,6 +944,11 @@ export async function handleSession(argv: string[], home: string): Promise<numbe
       for (const d of session.delegations) {
         process.stdout.write(` ${d.id} ${d.from} -> ${d.to} [${d.status}] 交付 ${d.delivery}${d.delivery_reason ? `（${d.delivery_reason}）` : ""} 契约 ${d.contract_id ?? "无"}\n`);
         process.stdout.write(`   任务：${d.task.slice(0, 120)}\n`);
+        if (d.contract_id) {
+          const contract = getContract(home, d.contract_id);
+          const latest = contract?.attempts.at(-1);
+          process.stdout.write(`   验收：${contract ? `${contract.status}，最近一次 ${latest ? `${latest.passed}/${latest.total} 通过（${latest.verdict === "accepted" ? "已接受" : latest.verdict === "rejected" ? "未接受" : "待定"}）` : "还没跑过验收"}` : "契约找不到了"}\n`);
+        }
       }
       process.stdout.write(`共享：${session.shares.length} 条\n`);
       for (const s of session.shares) {
@@ -943,20 +1051,34 @@ export async function handleSession(argv: string[], home: string): Promise<numbe
       }
       return 0;
     }
-    if (cmd === "accept" || cmd === "complete") {
+    if (cmd === "accept" || cmd === "complete" || cmd === "verify") {
       const id = argv[1];
       const delegationId = argv[2];
       if (!id || !delegationId) {
-        process.stderr.write(`用法：nyra session ${cmd} <会话> <委派id> [--by <身份>]${cmd === "complete" ? " [--note <产物摘要>]" : ""}\n`);
+        process.stderr.write(`用法：nyra session ${cmd} <会话> <委派id>${cmd === "complete" ? " [--by <身份>] [--note <产物摘要>] [--confirm <检查编号> ...] [--fail <检查编号> ...]" : cmd === "accept" ? " [--by <身份>]" : ""}\n`);
         return 2;
       }
       const by = flagValue("--by") ?? OWNER_IDENTITY;
       if (cmd === "accept") {
         acceptDelegation(home, id, delegationId, by);
         process.stdout.write(`委派 ${delegationId} 已接下（${by}）\n`);
+      } else if (cmd === "verify") {
+        const report = await formatDelegationVerification(home, id, delegationId);
+        process.stdout.write(`${report}\n`);
       } else {
-        completeDelegation(home, id, delegationId, by, flagValue("--note"));
-        process.stdout.write(`委派 ${delegationId} 已交活（${by}）\n`);
+        const done = await completeDelegation(home, id, delegationId, by, {
+          note: flagValue("--note"),
+          confirm: flagValues("--confirm"),
+          fail: flagValues("--fail"),
+        });
+        const contract = done.contract_id ? getContract(home, done.contract_id) : null;
+        const latest = contract?.attempts.at(-1);
+        if (done.status === "completed") {
+          process.stdout.write(`委派 ${delegationId} 已交活（${by}；验收通过 ${latest ? `${latest.passed}/${latest.total}` : "—"}，契约已接受）\n`);
+        } else {
+          process.stdout.write(`委派 ${delegationId} 验收未通过（${latest ? `${latest.passed}/${latest.total}` : "—"}），已标为 rejected（可重新委派再做）\n`);
+          return 1;
+        }
       }
       return 0;
     }

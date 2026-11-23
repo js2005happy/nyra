@@ -411,6 +411,7 @@ session_ended: ["session", "by"],
 session_delegated: ["session", "from", "to", "delegation", "contract", "delivery"],
 session_delegation_accepted: ["session", "delegation", "by"],
 session_delegation_completed: ["session", "delegation", "by"],
+session_delegation_verified: ["session", "delegation", "verdict", "passed", "total", "by"],
 session_shared: ["session", "from", "kind", "items"],
 session_recording_consented: ["session", "by", "consented"],
 // 缺口 40：通话账本进证据链——通话纪要只含数字与 id（时长、字节、帧数、

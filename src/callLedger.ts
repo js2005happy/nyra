@@ -690,6 +690,166 @@ export function summarizeCallLedger(home: string): CallLedgerTotals {
   return totals;
 }
 
+// ---- 按人分摊（缺口 40 第二批）----
+
+/** 一人分到的通话账。 */
+export interface CallLedgerParticipantShare {
+  participant: string;
+  calls: number;
+  byKind: Record<CallLedgerKind, number>;
+  /** 该人实际在通话里的时间（秒）。 */
+  durationSeconds: number;
+  /** 均摊的理解花费（美元；任一通未计价时为 null）。 */
+  understandingCostUsd: number | null;
+  /** 均摊的理解 token 数（prompt + completion；语音与会话本来就没有 token，按 0 计）。 */
+  understandingTokens: number;
+  /** 均摊的云端 STT 秒数。 */
+  cloudSttSeconds: number;
+  /** 该人同意且在场期间的录制秒数。 */
+  recordingSeconds: number | null;
+}
+
+function overlapSeconds(aStartMs: number, aEndMs: number, bStartMs: number, bEndMs: number): number {
+  const start = Math.max(aStartMs, bStartMs);
+  const end = Math.min(aEndMs, bEndMs);
+  return end > start ? Math.round((end - start) / 1000) : 0;
+}
+
+/** 某成员在某时刻是否已同意录制（本次加入之后的最新一次同意事件说了算）。 */
+function memberConsentedAt(events: ConsentEvent[], identity: string, joinedMs: number, atMs: number): boolean {
+  let consented = false;
+  for (const e of events) {
+    const eMs = Date.parse(e.at);
+    if (e.by !== identity || eMs < joinedMs || eMs > atMs) continue;
+    consented = e.consented;
+  }
+  return consented;
+}
+
+/**
+ * 某成员的录制秒数：录制开着的时间段（reconstructRecordingTimeline 的
+ * on 区间）里，该成员在场、且该成员当时已同意的部分。
+ */
+function memberRecordingSeconds(session: SessionRow, consentEvents: ConsentEvent[], identity: string, nowIso: string): number {
+  const timeline = reconstructRecordingTimeline(session, consentEvents, nowIso);
+  const members = session.members ?? [];
+  const member = members.find((m) => m.identity === identity);
+  if (!member) return 0;
+  const joinedMs = Date.parse(member.joined_at);
+  const sessionEndMs = session.ended_at ? Date.parse(session.ended_at) : Date.parse(nowIso);
+  const memberEndMs = member.left_at ? Date.parse(member.left_at) : sessionEndMs;
+  let seconds = 0;
+  let onStart: number | null = null;
+  for (const tr of timeline.transitions) {
+    const atMs = Date.parse(tr.at);
+    if (tr.on) {
+      onStart = atMs;
+    } else if (onStart !== null) {
+      if (memberConsentedAt(consentEvents, identity, joinedMs, onStart)) {
+        seconds += overlapSeconds(joinedMs, memberEndMs, onStart, atMs);
+      }
+      onStart = null;
+    }
+  }
+  // 会话进行中且录制还开着：从最后一次 on 算到现在。
+  if (onStart !== null && !session.ended_at) {
+    if (memberConsentedAt(consentEvents, identity, joinedMs, onStart)) {
+      seconds += overlapSeconds(joinedMs, memberEndMs, onStart, Date.parse(nowIso));
+    }
+  }
+  return seconds;
+}
+
+/**
+ * 按人拆分的通话账（均摊口径，见 docs/call-ledger.md）：
+ * - 费用与 token、云端 STT 秒：整通 ÷ 参与人数平分；费用只有在源头标了
+ *   未计价（understandingUnpriced）时分到的才是 null——会话与语音
+ *   本来就没有理解 token/费用，null 在这里是“结构上没有”不是“未知”，
+ *   按 0 计，不毒化合计；
+ * - 时长：各人实际在场的时间（语音/视频按整通；会话按 joined_at→
+ *   left_at；进行中的通话按当前时间算）；
+ * - 录制：语音 0；视频 null（时长未知）；会话按各人同意且在场的时间。
+ */
+export function summarizeCallLedgerByParticipant(home: string, nowIso?: string): CallLedgerParticipantShare[] {
+  const now = nowIso ?? new Date().toISOString();
+  const nowMs = Date.parse(now);
+  const book = loadCallLedgerBook(home);
+  const sessionRows = new Map(readSessions(home).map((s) => [s.id, s]));
+  const byParticipant = new Map<string, CallLedgerParticipantShare>();
+  const row = (participant: string): CallLedgerParticipantShare => {
+    let share = byParticipant.get(participant);
+    if (!share) {
+      share = {
+        participant, calls: 0, byKind: { voice: 0, video: 0, session: 0 },
+        durationSeconds: 0, understandingCostUsd: 0, understandingTokens: 0,
+        cloudSttSeconds: 0, recordingSeconds: 0,
+      };
+      byParticipant.set(participant, share);
+    }
+    return share;
+  };
+  for (const entry of book.calls) {
+    const participants = entry.participants;
+    if (!participants.length) continue;
+    const n = participants.length;
+    // 费用：只有源头标了未计价才分到 null；结构上的 null（会话本来就
+    // 没有理解费用）按 0 计。
+    const costShare = entry.tokens.understandingCostUsd === null && entry.tokens.understandingUnpriced
+      ? null : (entry.tokens.understandingCostUsd ?? 0) / n;
+    const tokenShare = ((entry.tokens.understandingPromptTokens ?? 0) + (entry.tokens.understandingCompletionTokens ?? 0)) / n;
+    const cloudSttShare = entry.tokens.cloudSttSeconds / n;
+    for (const participant of participants) {
+      const share = row(participant);
+      share.calls += 1;
+      share.byKind[entry.kind] += 1;
+      // 时长：各人实际在场的时间。
+      if (entry.kind === "session") {
+        const session = sessionRows.get(entry.id);
+        const member = session?.members?.find((m) => m.identity === participant);
+        if (member) {
+          const startMs = Date.parse(session!.created_at);
+          const endMs = session!.ended_at ? Date.parse(session!.ended_at) : nowMs;
+          share.durationSeconds += overlapSeconds(Date.parse(member.joined_at), member.left_at ? Date.parse(member.left_at) : endMs, startMs, endMs);
+        }
+      } else {
+        const startMs = Date.parse(entry.startedAt);
+        const endMs = entry.endedAt ? Date.parse(entry.endedAt) : nowMs;
+        share.durationSeconds += overlapSeconds(startMs, endMs, startMs, endMs);
+      }
+      // 费用与 token：均摊；任一通未计价，分到的费用就是 null。
+      if (costShare === null) share.understandingCostUsd = null;
+      else if (share.understandingCostUsd !== null) share.understandingCostUsd += costShare;
+      share.understandingTokens += tokenShare;
+      share.cloudSttSeconds += cloudSttShare;
+      // 录制：语音 0；视频 null；会话按各人同意且在场的时间。
+      if (entry.kind === "voice") {
+        // 语音不录制，分到 0。
+      } else if (entry.kind === "video") {
+        share.recordingSeconds = null;
+      } else {
+        const session = sessionRows.get(entry.id);
+        if (session && share.recordingSeconds !== null) {
+          share.recordingSeconds += memberRecordingSeconds(session, readConsentEvents(home, session.id), participant, now);
+        }
+      }
+    }
+  }
+  return [...byParticipant.values()].sort((a, b) => (a.participant < b.participant ? -1 : a.participant > b.participant ? 1 : 0));
+}
+
+export function formatLedgerSummaryByParticipant(shares: CallLedgerParticipantShare[]): string {
+  const lines = [
+    "按人分摊（均摊口径：费用与 token 按参与人数平分；时长按各人实际在场时间；录制按各人同意且在场的时间；任一通未计价，分到的就是未计价）",
+  ];
+  for (const s of shares) {
+    const money = s.understandingCostUsd === null ? "未计价" : `$${s.understandingCostUsd.toFixed(4)}`;
+    const tokens = `${Math.round(s.understandingTokens)} token`;
+    const recording = s.recordingSeconds === null ? "录制时长未知" : `录制 ${formatDuration(s.recordingSeconds)}`;
+    lines.push(`${s.participant}：${s.calls} 通（语音 ${s.byKind.voice} · 视频 ${s.byKind.video} · 联合会话 ${s.byKind.session}）· 在场 ${formatDuration(s.durationSeconds)} · 理解 ${tokens} / ${money} · 云端 STT ${formatDuration(Math.round(s.cloudSttSeconds))} · ${recording}`);
+  }
+  return lines.join("\n");
+}
+
 // ---- 展示 ----
 
 export function formatBytes(n: number | null): string {
@@ -749,12 +909,13 @@ export function formatLedgerSummary(totals: CallLedgerTotals): string {
 
 // ---- CLI ----
 
-export const CALL_LEDGER_USAGE = "用法：nyra call <ledger|show <通话 id>|summary> [--json]";
+export const CALL_LEDGER_USAGE = "用法：nyra call <ledger|show <通话 id>|summary [--by-person]> [--json]";
 
 export async function callLedgerMain(argv: string[], home: string): Promise<number> {
   const cmd = argv[0] ?? "ledger";
   const rest = argv.slice(1);
   const hasJson = rest.includes("--json");
+  const byPerson = rest.includes("--by-person");
   try {
     if (cmd === "ledger") {
       syncCallLedger(home);
@@ -785,6 +946,12 @@ export async function callLedgerMain(argv: string[], home: string): Promise<numb
     }
     if (cmd === "summary") {
       syncCallLedger(home);
+      if (byPerson) {
+        const shares = summarizeCallLedgerByParticipant(home);
+        if (hasJson) process.stdout.write(`${JSON.stringify(shares, null, 2)}\n`);
+        else process.stdout.write(`${formatLedgerSummaryByParticipant(shares)}\n`);
+        return 0;
+      }
       const totals = summarizeCallLedger(home);
       if (hasJson) process.stdout.write(`${JSON.stringify(totals, null, 2)}\n`);
       else process.stdout.write(`${formatLedgerSummary(totals)}\n`);

@@ -527,6 +527,10 @@ export function buildTimeline(store: RunStore, runId: string): Timeline {
         push(at, "event", `委派 ${str(ev.delegation) ?? "?"} 已交活（${str(ev.by) ?? "?"}）`, null, null, null);
         break;
       }
+      case "session_delegation_verified": {
+        push(at, "event", `委派 ${str(ev.delegation) ?? "?"} 验收${str(ev.verdict) === "accepted" ? "通过" : str(ev.verdict) === "rejected" ? "未通过" : "待定"}（${str(ev.passed) ?? "?"} / ${str(ev.total) ?? "?"} 项，${str(ev.by) ?? "?"}）`, null, null, null);
+        break;
+      }
       case "session_shared": {
         push(at, "event", `会内共享：${str(ev.from) ?? "?"} 共享了 ${str(ev.items) ?? "?"} 项（${str(ev.kind) ?? "?"}）`, null, null, null);
         break;
