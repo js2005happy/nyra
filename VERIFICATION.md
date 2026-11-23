@@ -1,3 +1,10 @@
+## 2026-11-24 — Read-only web charset fallback (static only)
+
+- Reviewed development-branch README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, core Agent/Tools, recent commits, open issues (none), PR #113 and available CI metadata; angel redirects to nyra.
+- **Source fact:** server-controlled charset may cause LookupError after bounded network read, discarding received evidence. Shared fallback changes decoding only; not a confirmed production incident.
+- **External feedback:** previously recorded Codex #37121 (2026-08-05) and #34233 (2026-07-19), reviewed from repository research 2026-11-24; neither establishes this specific defect.
+- **Not executed:** tests, compile, CI, real HTTP, installs, external accounts, main merge, production release. Invalid bytes remain lossy; content privacy and cross-platform behavior unverified.
+
 ## 2026-11-24 — HTTP POST unsupported charset fallback (static only)
 
 - Reviewed development branch README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/Tools, recent repository commits, open Issues (none), PR #113 and available commit status metadata (empty). Repository redirects from angel to nyra.
