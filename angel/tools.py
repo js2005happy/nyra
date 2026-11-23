@@ -1122,7 +1122,7 @@ def _tool_http_post(
         with open_url(request, 30) as response:
             charset = response.headers.get_content_charset() or "utf-8"
             text = response.read().decode(charset, errors="replace")
-        return f"HTTP {response.status}\n{_truncate(text)}"
+        # A transport that returns a non-2xx response without raising HTTPError\n        # must not be recorded as a successful tool report. Do not expose\n        # untrusted error bodies or retry a POST with uncertain side effects.\n        if not 200 <= response.status < 300:\n            return f"错误：HTTP {response.status}"\n        return f"HTTP {response.status}\n{_truncate(text)}"
     except urllib.error.HTTPError as exc:
         # Untrusted response bodies can echo tokens or submitted data.
         # Preserve trusted status only; never retry an uncertain POST.
