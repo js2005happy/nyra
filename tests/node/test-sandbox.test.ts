@@ -8,6 +8,7 @@ import { join } from "node:path";
 import {
   detectBwrap, resolveSandboxBackend, buildBwrapArgs, runSandboxed,
   getSandboxStatus, SandboxUnavailableError, toolLevelFallbackNotice,
+  describeSandboxLevel, sandboxLevelText,
 } from "../../src/sandbox.ts";
 import { seatbeltAvailable } from "../../src/seatbelt.ts";
 import { findPowerShell } from "../../src/windowsSandbox.ts";
@@ -17,6 +18,8 @@ import { newToolContext, executeTool } from "../../src/tools.ts";
 const SANDBOX_ENV_KEYS = [
   "NYRA_SANDBOX", "ANGEL_SANDBOX", "NYRA_SANDBOX_MODE", "ANGEL_SANDBOX_MODE",
   "NYRA_SANDBOX_ALLOW_NET", "ANGEL_SANDBOX_ALLOW_NET",
+  // G-P1-39：e2b 解析认 E2B_API_KEY，环境清理须一并清掉它。
+  "E2B_API_KEY",
 ] as const;
 
 function tmpDir(prefix: string): string {
@@ -182,9 +185,16 @@ test("bwrap 强制缺失时报错信息清楚：点名缺 bwrap、给安装方�
   });
 });
 
-test("e2b 保持不支持报错，文案写目标版本 0.5.2", async () => {
+test("e2b：没配 E2B_API_KEY 时解析失败；有 key 时解析为 e2b（G-P1-39）", async () => {
   await withEnv(cleanSandboxEnv(), () => {
-    expect(() => resolveSandboxBackend({}, "e2b")).toThrow("0.5.2 暂不支持");
+    expect(() => resolveSandboxBackend({}, "e2b")).toThrow("E2B_API_KEY");
+  });
+  await withEnv({ ...cleanSandboxEnv(), E2B_API_KEY: "e2b_test_key" }, () => {
+    const r = resolveSandboxBackend({}, "e2b");
+    expect(r.backend).toBe("e2b");
+    expect(r.level).toBe("e2b");
+    expect(describeSandboxLevel(r)).toMatch("E2B_API_KEY 已设");
+    expect(sandboxLevelText("e2b")).toMatch("E2B");
   });
 });
 

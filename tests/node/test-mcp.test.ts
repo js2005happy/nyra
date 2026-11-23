@@ -156,6 +156,9 @@ test("McpServersTest.test_load_servers_presets_then_user_wins", () => {
 const SANDBOX_ENV_KEYS = [
   "NYRA_SANDBOX", "ANGEL_SANDBOX", "NYRA_SANDBOX_MODE", "ANGEL_SANDBOX_MODE",
   "NYRA_SANDBOX_ALLOW_NET", "ANGEL_SANDBOX_ALLOW_NET",
+  // G-P1-39：e2b 解析认 E2B_API_KEY，环境清理须一并清掉它，否则 startAll
+  // 的“不可用后端”用例在配了 key 的机器上会解析成功。
+  "E2B_API_KEY",
 ] as const;
 
 /** 沙箱环境变量临时清空，用完原样恢复（resolveSandboxBackend 优先读 env）。 */
@@ -262,7 +265,8 @@ test("McpSandbox.test_find_on_path", () => {
 test("McpSandbox.test_manager_start_all_refuses_unavailable_backend", async () => {
   await withCleanSandboxEnv(async () => {
     const server = fakeServerPath();
-    // 后端用 e2b：它在所有平台上都解析失败（0.5.1 暂不支持），是唯一全平台
+    // 后端用 e2b：它在所有平台上都解析失败（没配 E2B_API_KEY 时；G-P1-39 起
+    // 有 key 才解析成功，控制面与执行仍是两回事），是唯一全平台
     // 都不可用的后端。不能用 seatbelt 充当“不可用后端”——macOS 上 sandbox-exec
     // 真实存在，解析会成功，startAll 就不会拒绝（Node CI #119 macOS 失败根因）。
     const manager = new MCPToolManager(
