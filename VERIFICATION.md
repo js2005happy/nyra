@@ -1,3 +1,9 @@
+## 2026-11-23 — web_search response read bound (static review only)
+
+- Reviewed `_fetch_search_page` and `_tool_web_search` on `feat/eigenflux-agent-network-policy-20261116`. Search backend HTML previously used unbounded `response.read()`.
+- Changed to `read(128 * 1024 + 1)` and raise `ToolError` when oversized; existing `except ToolError` path records fixed backend rejection and falls back to next search provider. Partial HTML is never parsed as complete search results.
+- No tests, builds, HTTP requests, CI jobs or live search were executed. Encoding behavior for within-limit responses is unchanged; network errors remain fixed-message failures. Cross-platform behavior and integration remain unverified.
+
 ## 2026-11-23 — bounded web_fetch input and partial-evidence marker (static only)
 
 - Inspected development-branch README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, core Tools/Agent, recent commits, open Issues (none), PR #113 (separate evaluation work), and previous commit CI statuses/workflow runs (none returned). Original angel URL resolves to nyra.
