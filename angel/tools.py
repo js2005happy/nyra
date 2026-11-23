@@ -1186,8 +1186,11 @@ def execute_tool(name: str, arguments: dict, ctx: ToolContext) -> str:
         return f"错误：未知工具 {name}"
     try:
         return tool(ctx, **arguments)
-    except ToolError as exc:
-        return f"错误：{exc}"
+    except ToolError:
+        # ToolError may wrap OS, backend or permission exceptions containing
+        # caller paths, URLs or credentials. Never echo its untrusted text.
+        # Keep the legacy error prefix for failure classification.
+        return "错误：工具执行被拒绝或失败"
     except TypeError:
         # Argument values may include private paths or credentials.
         return "错误：工具参数不正确"
