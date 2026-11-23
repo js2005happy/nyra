@@ -16,6 +16,12 @@ import {
   writeEvalJson,
 } from '../src/eval/runner.ts';
 import { makeLiveEvalAdapter } from '../src/eval/live.ts';
+import { resolveHome } from '../src/config.ts';
+import {
+  benchmarkTaskToEvalTask,
+  loadBenchmark,
+  loadRepoProbe,
+} from '../src/eval/benchmarks.ts';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2),
   action = args[0];
@@ -33,6 +39,9 @@ try {
     '--model',
     '--retries',
     '--provider',
+    '--scenario',
+    '--benchmark',
+    '--probe',
   ]);
   const seen = new Set<string>();
   for (let i = 1; i < args.length; i += 2) {
@@ -47,20 +56,70 @@ try {
   }
   if (!action || action === '--help') {
     console.log(
-      '用法：bun run scripts/eval.ts list | run --out <报告.json> | rerun --from <报告.json> --out <新报告.json>\n可选：--model <模型名> --retries <0–2> --provider <ollama|deepseek>（默认 ollama；deepseek 走连接器助手通道、模型默认 deepseek-flash、每尝试上限 $1）；退出码 0 全部首次通过，3 有失败或阻塞，2 用法错误。',
+      '用法：bun run scripts/eval.ts list [--scenario <code|browser|research|connector>|--benchmark <名>|--probe <名>] | run --out <报告.json> [--scenario <场景>|--benchmark <名>|--probe <名>] | rerun --from <报告.json> --out <新报告.json>\n可选：--model <模型名> --retries <0–2> --provider <ollama|deepseek>（默认 ollama；deepseek 走连接器助手通道、模型默认 deepseek-flash、每尝试上限 $1）；退出码 0 全部首次通过，3 有失败或阻塞，2 用法错误。',
     );
-  } else if (action === 'list')
-    console.log(
-      JSON.stringify(
-        {
-          conditions: DEFAULT_EVAL_CONDITIONS,
-          tasks: EVAL_TASKS.map(({ solution, testBody, ...t }) => t),
-        },
-        null,
-        2,
-      ),
-    );
-  else if (action === 'run' || action === 'rerun') {
+  } else if (action === 'list') {
+    // 场景 / 基准集 / 探针的任务清单（不含 testBody，与内置目录同款口径）。
+    const scenario = flag('--scenario');
+    const benchmark = flag('--benchmark');
+    const probe = flag('--probe');
+    if ([scenario, benchmark, probe].filter(Boolean).length > 1)
+      throw new Error('list 只能指定一个 --scenario/--benchmark/--probe');
+    if (scenario) {
+      if (!['code', 'browser', 'research', 'connector'].includes(scenario))
+        throw new Error('场景须是 code/browser/research/connector 之一');
+      console.log(
+        JSON.stringify(
+          {
+            scenario,
+            tasks: EVAL_TASKS.filter((t) => t.category === scenario).map(
+              ({ solution, testBody, ...t }) => t,
+            ),
+          },
+          null,
+          2,
+        ),
+      );
+    } else if (benchmark) {
+      const set = loadBenchmark(resolveHome(), benchmark);
+      console.log(
+        JSON.stringify(
+          {
+            benchmark: set.name,
+            version: set.version,
+            source: set.source,
+            tasks: set.tasks.map(({ testBody, ...t }) => t),
+          },
+          null,
+          2,
+        ),
+      );
+    } else if (probe) {
+      const set = loadRepoProbe(probe);
+      console.log(
+        JSON.stringify(
+          {
+            probe: set.name,
+            version: set.version,
+            source: set.source,
+            tasks: set.tasks.map(({ testBody, ...t }) => t),
+          },
+          null,
+          2,
+        ),
+      );
+    } else
+      console.log(
+        JSON.stringify(
+          {
+            conditions: DEFAULT_EVAL_CONDITIONS,
+            tasks: EVAL_TASKS.map(({ solution, testBody, ...t }) => t),
+          },
+          null,
+          2,
+        ),
+      );
+  } else if (action === 'run' || action === 'rerun') {
     const out = flag('--out');
     if (!out) throw new Error('必须指定 --out；不会覆盖旧基线');
     const { existsSync } = await import('node:fs');
@@ -115,9 +174,34 @@ try {
         maxCostUsd: 1,
       };
     }
+    // G-P1-30：按场景 / 外部基准集 / 仓内探针跑（三者互斥；rerun 不支持）。
+    const scenario = flag('--scenario');
+    const benchmark = flag('--benchmark');
+    const probe = flag('--probe');
+    if ([scenario, benchmark, probe].filter(Boolean).length > 1)
+      throw new Error('只能指定一个 --scenario/--benchmark/--probe');
+    if (action === 'rerun' && (scenario || benchmark || probe))
+      throw new Error('重跑只支持内置套件报告，不能指定 --scenario/--benchmark/--probe');
+    let tasksOverride;
+    let suiteOverride: string | undefined;
     let taskIds: string[] | undefined,
       parentReport: string | undefined,
       requiredConditionsHash: string | undefined;
+    if (scenario) {
+      if (!['code', 'browser', 'research', 'connector'].includes(scenario))
+        throw new Error('场景须是 code/browser/research/connector 之一');
+      taskIds = EVAL_TASKS.filter((t) => t.category === scenario).map((t) => t.id);
+    }
+    if (benchmark) {
+      const set = loadBenchmark(resolveHome(), benchmark);
+      tasksOverride = set.tasks.map(benchmarkTaskToEvalTask);
+      suiteOverride = 'nyra-benchmark:' + set.name;
+    }
+    if (probe) {
+      const set = loadRepoProbe(probe);
+      tasksOverride = set.tasks.map(benchmarkTaskToEvalTask);
+      suiteOverride = 'nyra-probe:' + set.name;
+    }
     if (action === 'rerun') {
       const from = flag('--from');
       if (!from) throw new Error('重跑须指定 --from');
@@ -154,6 +238,8 @@ try {
           : undefined,
       ),
       taskIds,
+      tasks: tasksOverride,
+      suite: suiteOverride,
       parentReport,
       requiredConditionsHash,
       retries: Number(flag('--retries') ?? 1),
