@@ -1,3 +1,9 @@
+## 2026-11-23 — 本地 shell 退出码状态（静态检查）
+
+- 阅读现有 `angel/tools.py` 的 `_tool_shell` 和 `angel/tool_report_status.py`：旧逻辑丢失 `CompletedProcess.returncode`，非零退出无输出时会报告「（无输出）」。
+- 静态确认新增条件仅影响本地 `subprocess.run` 返回的非零码；零退出、E2B 后端、审批和自动重试逻辑不变。输出原文仍可能含秘密；不把退出码当独立验收回执。
+- **未运行**：单元测试、编译、CI、实际 shell 命令、Windows/Linux 跨平台验证。没有测试通过的结论。
+
 ## 2026-11-23 — 未知工具名回显隐私（仅静态）
 
 - 已读取开发分支 README、DESIGN、CHANGELOG、VERIFICATION、ROADMAP、tools/agent，查询近期提交、开放 Issues（无）与 PR #113（固定任务评测）。源码事实：`execute_tool` 的未知工具分支原样插入调用者提供的 `name`；改为固定错误字符串，定义两项未运行回归测试。
