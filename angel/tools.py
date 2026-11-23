@@ -1079,10 +1079,16 @@ def _tool_git_status(ctx: ToolContext, path: str = ".") -> str:
         return "错误：git status 超时"
     if status.returncode != 0:
         return "错误：该目录不是 git 仓库（或 git 报错）"
-    diff = subprocess.run(
-        ["git", "-C", str(target), "diff", "--stat"],
-        capture_output=True, text=True, timeout=15,
-    )
+    try:
+        diff = subprocess.run(
+            ["git", "-C", str(target), "diff", "--stat"],
+            capture_output=True, text=True, timeout=15,
+        )
+    except FileNotFoundError:
+        return "错误：本机未安装 git"
+    except subprocess.TimeoutExpired:
+        # A partial status is not a complete status/diff snapshot.
+        return "错误：git diff 超时"
     out = (status.stdout or "（工作区干净）").strip()
     if diff.returncode == 0 and diff.stdout.strip():
         out += "\n\n改动统计：\n" + diff.stdout.strip()
