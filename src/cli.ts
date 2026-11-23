@@ -262,6 +262,8 @@ nyra task <add|list|show|cancel|worker|approve>   管理后台任务队列
 nyra review <list|show|approve|reject|apply|verify|enqueue>   审阅队列：并行线程与定时任务结果逐项批（详见 docs/review-queue.md）
 nyra hitl <start|takeover|handback|cancel|status|list>   对话转人工坐席：会话转给真人、真人接手、再接回 bot；转人工期间 bot 不自动回（详见 docs/hitl.md）
 nyra events <list|add|remove|enable|disable|test|poll>   事件触发任务：webhook 与新邮件触发进任务队列（详见 docs/event-triggers.md）
+nyra thread <create|list|search|show|copy|prune|state|history|runs|cron-add|cron-remove|crons|archive|unarchive|remove>   远端线程操作 API：建线程、搜线程、复制接着跑、剪历史、读写状态、给线程绑 cron（详见 docs/threads.md）
+nyra automation <list|show|install|remove|suggested>   自动化 bundle：一次装好整条自动化，自带建议触发器（详见 docs/automations.md）
 nyra mail-inbox <status|enable|disable|allowlist|set|poll>   邮件即任务入口：白名单发件人的邮件直接进任务队列，跑完回信（详见 docs/mail-inbox.md）
 nyra responsibility <list|add|set|remove|enable|disable|check|pause|resume|complete|cancel|brief|show>   持续责任语义：责任对象（归属人 + 验收标准 + 升级条件 + 过期时间）与晨间简报，无事安静（详见 docs/responsibilities.md）
 nyra bot telegram <start|stop|status>   Bot 方向 Phase 1：Telegram 渠道（长轮询收消息、会话串行、去重配额、确定性指令；外部用户强制只读，详见 docs/bot.md）
@@ -415,6 +417,8 @@ nyra task <add|list|show|cancel|worker|approve>   manage the background task que
 nyra review <list|show|approve|reject|apply|verify|enqueue>   review queue: approve parallel threads and scheduled-task results one by one (see docs/review-queue.md)
 nyra hitl <start|takeover|handback|cancel|status|list>   human handoff: hand a conversation to a human, take over, hand back to the bot; the bot stays silent while handed off (see docs/hitl.md)
 nyra events <list|add|remove|enable|disable|test|poll>   event-triggered tasks: webhooks and new mail enqueue tasks (see docs/event-triggers.md)
+nyra thread <create|list|search|show|copy|prune|state|history|runs|cron-add|cron-remove|crons|archive|unarchive|remove>   remote thread operations API: create/search/copy/prune threads, read/write state, bind crons to a thread (see docs/threads.md)
+nyra automation <list|show|install|remove|suggested>   automation bundles: install a whole automation at once, with suggested triggers included (see docs/automations.md)
 nyra mail-inbox <status|enable|disable|allowlist|set|poll>   mail as task entry: allowlisted senders' mail enqueues tasks, results mailed back (see docs/mail-inbox.md)
 nyra responsibility <list|add|set|remove|enable|disable|check|pause|resume|complete|cancel|brief|show>   standing responsibilities: responsibility objects (owner + acceptance criteria + escalation conditions + expiry) and the morning briefing, quiet when nothing is wrong (see docs/responsibilities.md)
 nyra bot telegram <start|stop|status>   bot direction phase 1: Telegram channel (long polling, per-session serial queue, dedup + quotas, deterministic commands; external users forced read-only, see docs/bot.md)
@@ -1345,6 +1349,17 @@ async function handleSchedule(argv: string[], workdir: string): Promise<number> 
           const report = await runDueWorkflowTriggers(home, { workdir });
           for (const f of report.fired) {
             process.stdout.write(`[触发器] 工作流 ${f.workflow} 已触发（${f.status === "ok" ? `运行 ${f.runId}` : `失败：${f.error ?? ""}`}）。\n`);
+          }
+        });
+      // G-P1-37：线程 cron 执行（与工作流触发器共用总开关，默认关）。
+      // 每轮跑一次到点的线程 cron，到点跑工作流、结果记回线程；开关关着
+      // 直接跳过；失败只记 stderr，不破坏定时任务。
+      pollers.push(async () => {
+          const { fireDueThreadCrons } = await import("./threads.ts");
+          const report = await fireDueThreadCrons(home, { workdir });
+          for (const f of report.fired) {
+            if (f.status === "skipped") continue;
+            process.stdout.write(`[线程 cron] 线程 ${f.threadId.slice(0, 8)} 的工作流 ${f.workflow} 已触发（${f.status === "ok" ? `运行 ${f.runId}` : `失败：${f.error ?? ""}`}）。\n`);
           }
         });
       // Pi Bot 借鉴第 3 条：卡住步骤看门狗（只扫任务板、只标记/重排/停下，
@@ -7131,6 +7146,14 @@ export async function main(argv: string[]): Promise<number> {
   if (args.subcommand === "hitl") {
     const { handleHitl } = await import("./hitlCli.ts");
     return handleHitl(args.subArgs ?? [], home);
+  }
+  if (args.subcommand === "thread") {
+    const { handleThread } = await import("./threadsCli.ts");
+    return handleThread(args.subArgs ?? [], home);
+  }
+  if (args.subcommand === "automation") {
+    const { handleAutomation } = await import("./automationCli.ts");
+    return handleAutomation(args.subArgs ?? [], home);
   }
   if (args.subcommand === "kb" || args.subcommand === "knowledge") return knowledgeMain(args.subArgs ?? []);
   if (args.subcommand === "plugin") return handlePlugin(args.subArgs ?? [], home);

@@ -558,6 +558,7 @@ voice_call_confirmed: ["call_id", "segment_id", "reason"],
 // G-P1-36 第二批：通话钩子失败（哪个通话、哪个钩子、哪种事件、报错，
 // 只记报错前 200 字）与通话笔记（哪个通话、哪条笔记、几字，不记正文）。
 voice_call_hook_failed: ["call_id", "hook", "kind", "error"],
+thread_cron_fired: ["thread_id", "workflow", "status"],
 voice_call_noted: ["call_id", "note_id", "chars"],
 // 第 1 批 G-P0-1：语音通话的传输层接通/失败（与 video_call_transport_*
 // 同款字段；transport 字段已在 voice_call_started 里，失败时再记原因）。

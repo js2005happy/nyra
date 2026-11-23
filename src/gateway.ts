@@ -34,6 +34,11 @@ import {
 } from "./eventTriggers.ts";
 import { listMailInboxPublic } from "./mailInbox.ts";
 import { listResponsibilitiesPublic } from "./responsibilities.ts";
+import {
+  ThreadError, createThread, getThread, listThreads, searchThreads,
+  copyThread, pruneThread, getThreadState, updateThreadState,
+  getThreadHistory, listThreadRuns, setThreadStatus, threadPublic,
+} from "./threads.ts";
   // 缺口 30：网关入口此前完全不接成本硬顶与用量账本——Web UI 一跑等于绕过 --max-cost。
 import { resolvePricing, resolveMonthlyLimit } from "./cost.ts";
 import { recordModelSwitch, switchTimeShort } from "./modelSwitch.ts";
@@ -2052,6 +2057,82 @@ export class Gateway {
       return;
     }
     if (method === "GET" && path === "/api/sessions") { this.sendJson(res, 200, this.sessionsView()); return; }
+    // G-P1-37：远端线程操作 API（LangGraph threads.py 借鉴）。读接口认任何
+    // 已鉴权调用方；写接口只认机主（owner）与设备 token，账号 user 角色只读
+    // （fail-closed：user 角色调写接口直接 403）。
+    if (path === "/api/threads" || path.startsWith("/api/threads/")) {
+      const match = /^\/api\/threads(?:\/([0-9a-f]{16})(?:\/(copy|prune|state|history|runs|archive|unarchive))?)?$/.exec(path);
+      if (!match) { this.sendError(res, 404, "未找到"); return; }
+      const threadId = match[1] ?? null;
+      const action = match[2] ?? null;
+      const isWrite = method === "POST" || method === "PUT";
+      if (isWrite && who === "account") { this.sendError(res, 403, "账号 user 角色只读，写线程须用机主或设备 token"); return; }
+      try {
+        if (method === "GET" && !threadId) {
+          const q = query.get("q") ?? "";
+          const status = query.get("status") ?? "";
+          const list = q
+            ? searchThreads(this.home, q, status === "active" || status === "archived" ? status : undefined)
+            : listThreads(this.home).filter((t) => !status || t.status === status);
+          this.sendJson(res, 200, { threads: list.map((t) => threadPublic(t)) });
+          return;
+        }
+        if (method === "POST" && !threadId) {
+          const body = await this.readBody(req);
+          const title = typeof body.title === "string" ? body.title : "";
+          const state = body.state !== undefined && body.state !== null
+            ? (body.state as Record<string, unknown>) : undefined;
+          const t = createThread(this.home, title, state ? { state } : undefined);
+          this.sendJson(res, 201, { thread: t });
+          return;
+        }
+        if (!threadId) { this.sendError(res, 404, "未找到"); return; }
+        if (method === "GET" && !action) { this.sendJson(res, 200, { thread: getThread(this.home, threadId) }); return; }
+        if (method === "POST" && action === "copy") {
+          this.sendJson(res, 201, { thread: copyThread(this.home, threadId) });
+          return;
+        }
+        if (method === "POST" && action === "prune") {
+          const body = await this.readBody(req);
+          const keep = body.keep === undefined ? 50 : Number(body.keep);
+          this.sendJson(res, 200, pruneThread(this.home, threadId, keep));
+          return;
+        }
+        if (method === "GET" && action === "state") {
+          this.sendJson(res, 200, { state: getThreadState(this.home, threadId) });
+          return;
+        }
+        if (method === "PUT" && action === "state") {
+          const body = await this.readBody(req);
+          const patch = (body.patch ?? {}) as Record<string, unknown>;
+          this.sendJson(res, 200, { state: updateThreadState(this.home, threadId, patch) });
+          return;
+        }
+        if (method === "GET" && action === "history") {
+          const limit = query.get("limit") ? Number(query.get("limit")) : 50;
+          this.sendJson(res, 200, { history: getThreadHistory(this.home, threadId, limit) });
+          return;
+        }
+        if (method === "POST" && (action === "archive" || action === "unarchive")) {
+          const t = setThreadStatus(this.home, threadId, action === "archive" ? "archived" : "active");
+          this.sendJson(res, 200, { thread: threadPublic(t) });
+          return;
+        }
+        if (method === "GET" && action === "runs") {
+          this.sendJson(res, 200, { runs: listThreadRuns(this.home, threadId) });
+          return;
+        }
+      } catch (err) {
+        if (err instanceof ThreadError) {
+          this.sendError(res, /不存在/.test(err.message) ? 404 : 400, err.message);
+        } else {
+          this.sendError(res, 400, err instanceof Error ? err.message : String(err));
+        }
+        return;
+      }
+      this.sendError(res, 404, "未找到");
+      return;
+    }
     // 设计稿 v8 pc-03：项目记忆卡（只读）。三个文件在不在、多大，MEMORY.md 最近 3 条带来源会话与时间。
     if (method === "GET" && path === "/api/project-memory") {
       try { this.sendJson(res, 200, projectMemoryView(this.home, this.workdir, 3)); }

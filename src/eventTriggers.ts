@@ -85,6 +85,8 @@ export interface EventTrigger {
   task: string;
   mode: "readonly" | "auto";
   enabled: boolean;
+  /** 建议触发器（G-P1-37 自动化 bundle 自带）：装好但默认关闭，机主看过再开。 */
+  suggested?: boolean;
   workdir?: string | null;
   max_turns: number;
 }
@@ -153,6 +155,7 @@ export function validateEventTrigger(trigger: Record<string, unknown>): EventTri
     task: trigger.task,
     mode: mode as "readonly" | "auto",
     enabled: trigger.enabled !== false,
+    ...(trigger.suggested === true ? { suggested: true as const } : {}),
     workdir: (trigger.workdir as string | null) ?? null,
     max_turns: maxTurns,
   };
@@ -219,9 +222,10 @@ export function listEventTriggers(home?: string): EventTrigger[] {
 }
 
 /** 供网关 GET /api/event-triggers 消费：不含任务提示词（提示词只在终端看）。 */
-export function listEventTriggersPublic(home?: string): Array<Pick<EventTrigger, "id" | "name" | "source" | "event" | "mode" | "enabled">> {
+export function listEventTriggersPublic(home?: string): Array<Pick<EventTrigger, "id" | "name" | "source" | "event" | "mode" | "enabled" | "suggested">> {
   return listEventTriggers(home).map((t) => ({
     id: t.id, name: t.name, source: t.source, event: t.event, mode: t.mode, enabled: t.enabled,
+    ...(t.suggested === true ? { suggested: true as const } : {}),
   }));
 }
 

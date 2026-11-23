@@ -2473,14 +2473,21 @@ export async function handleWorkflow(argv: string[], home: string): Promise<numb
           process.stdout.write(`触发器执行跳过：${report.skipped}\n`);
           return 0;
         }
-        if (!report.fired.length) {
+        // G-P1-37：顺带跑到点的线程 cron（与工作流触发器共用总开关）。
+        const { fireDueThreadCrons } = await import("./threads.ts");
+        const threadReport = await fireDueThreadCrons(resolvedHome, { workdir: req.workdir, now: new Date() });
+        const threadFired = threadReport.fired.filter((f) => f.status !== "skipped");
+        if (!report.fired.length && !threadFired.length) {
           process.stdout.write("本轮没有到点的触发器。\n");
           return 0;
         }
         for (const f of report.fired) {
           process.stdout.write(`工作流 ${f.workflow} 已触发（${f.status === "ok" ? `运行 ${f.runId}` : `失败：${f.error ?? ""}`}）\n`);
         }
-        return report.fired.every((f) => f.status === "ok") ? 0 : 1;
+        for (const f of threadFired) {
+          process.stdout.write(`线程 ${f.threadId.slice(0, 8)} 的工作流 ${f.workflow} 已触发（${f.status === "ok" ? `运行 ${f.runId}` : `失败：${f.error ?? ""}`}）\n`);
+        }
+        return report.fired.every((f) => f.status === "ok") && threadFired.every((f) => f.status !== "failed") ? 0 : 1;
       }
       process.stderr.write(`错误：未知动作 triggers ${sub}（应为 status|enable|disable|run）\n${WORKFLOW_USAGE}\n`);
       return 2;
