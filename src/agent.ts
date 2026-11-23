@@ -814,6 +814,9 @@ export class Agent {
       memoryPath: this.memoryPath,
       // 缺口 28：Soul invariant 拦截要知道当前用哪个 Soul（checkApproval 里按它读规则）。
       soulAgent: this.soulAgent,
+      // Kooyu 记忆证据门：委派深度进 ToolContext（0 = 主对话，≥1 = 子 agent）；
+      // 只有主对话能写全局记忆，子 agent 的 memory_append 直接拒绝。
+      delegateDepth: this.delegateDepth,
       // GROK-1：团队审批门（GROK-3）要知道当前 Agent 在哪个团队、扮演谁。
       teamId: this.teamId,
       // 第 2 批 G-P1-9/G-P1-10/G-P1-11：任务来源、对方身份、委派审批回调与
@@ -1919,6 +1922,15 @@ export class Agent {
       this.voiceInputs = [];
     }
     this.lastTask = task;
+    // Kooyu 记忆证据门：本轮用户原文进 ToolContext，memory_append 校验引用
+    // 依据就对照它。resume 时没有新用户消息，用本会话最近一条用户消息原文
+    // （模型只能引用用户确实说过的话）；都没有时填续跑提示。
+    if (!resume) {
+      this.ctx.currentUserText = task;
+    } else {
+      const lastUser = [...this.messages].reverse().find((m) => m.role === "user" && typeof m.content === "string");
+      this.ctx.currentUserText = (lastUser?.content as string | undefined) ?? "（续跑）请继续完成原任务；先核实当前状态。";
+    }
     if (this.delegateDepth === 0) {
       this.delegateBudget.reset();
       this.checkpoints?.beginTurn();

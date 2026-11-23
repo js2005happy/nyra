@@ -30,6 +30,9 @@ import { reviewToolCall, reviewerConfig, type ReviewerLike } from "./reviewer.ts
 import { judgeToolCall, buildJudgeRunner, judgeConfig } from "./toolJudge.ts";
 import { redlineNeverBlock, appendBusinessRedlineAudit } from "./businessRedlines.ts";
 import { appendSoulAudit, resolveSoulAgentId, soulInvariantBlock } from "./soul.ts";
+import {
+  detectSecretKind, evidenceReasonText, recordGateRejection, verifyEvidenceQuotes,
+} from "./memoryGate.ts";
 import { checkScriptFastPath } from "./scriptPreauth.ts";
 // scriptPreauth 只依赖 scriptPurity 与 node 内置模块，是叶子模块，
 // 静态导入不会形成循环（与 team.ts 的动态导入不同，见上面注释）。
@@ -208,6 +211,19 @@ export interface ToolContext {
   /** 当前会话 id：memory_forget / memory_delete 用它做进行中会话保护
    * （本会话正在跑时，其记忆拒绝删除）；memory_append 用它记来源会话。 */
   sessionId?: string | null;
+  /**
+   * Kooyu 记忆证据门：本轮用户消息原文（Agent.runLoopInner 每轮填，
+   * resume 时填续跑提示）。memory_append 校验引用依据就对照它；
+   * 为空 = 没有当前用户回合，写记忆直接拒绝（自动化任务与子 agent
+   * 的调用方没有用户原话可对照）。
+   */
+  currentUserText?: string | null;
+  /**
+   * Kooyu 记忆证据门：当前 Agent 的委派深度（0 = 主对话，≥1 = 子 agent）。
+   * 只有主对话能写全局记忆；子 agent 想记东西须交回主对话。
+   * 未传时按主对话算（老测试 ctx 没这个字段，行为不变）。
+   */
+  delegateDepth?: number;
   /** 额外可写根（--add-dir / config.extra_writable_dirs）：这些目录下的写入同样放行。 */
   extraWriteDirs?: string[] | null;
   /** Nyra 家目录（~/.nyra）：钩子从这里读 <home>/hooks/ 与 config.json；未传时钩子直接跳过。 */
@@ -443,7 +459,8 @@ export const TOOL_SCHEMAS: Record<string, unknown>[] = [
   schema("multi_model_research", "一次向多个模型问同一个问题，并行跑，再汇总成一份报告。models 是模型列表（\"provider\" 或 \"provider:model\"，最多 5 个），synthesizer 可选（由它把各家回答合成共识/分歧/独特观点三节）。挂掉或超时的模型只记录、不兜底、不拖垮其他模型；返回内容是各模型的原话，按模型署名。",
     { models: { type: "array", items: { type: "string" }, description: "模型列表，如 [\"deepseek\", \"xai:grok-4\"]" }, prompt: { type: "string" }, system: { type: "string" }, synthesizer: { type: "string" }, timeout: { type: "number", default: 120.0 } },
     ["models", "prompt"]),
-  schema("memory_append", "把一条重要信息写入长期记忆", { text: { type: "string" } }, ["text"]),
+  schema("memory_append", "把一条重要信息写入长期记忆。须附 evidenceQuotes（1–8 条当前用户消息的逐字原话）作依据：缺依据、引用不是逐字原文、或正文含密钥时拒绝写入；无人值守巡查与子 agent 不能写全局记忆",
+    { text: { type: "string" }, evidenceQuotes: { type: "array", items: { type: "string" }, description: "引用依据：1–8 条当前用户消息的逐字原话（逐字摘抄，转述不算）；每条 2–500 字" } }, ["text"]),
   // 缺口 1：按需检索长期记忆（BM25 + 作用域过滤）。只读，不需审批；
   // 每条结果附来源（记忆 id、来源会话、时间戳、文件行号）。向量检索另算。
   schema("memory_search", "按需检索长期记忆：按查询词 BM25 检索 MEMORY.md，返回最相关的几条，每条附记忆 id、来源会话、时间戳与文件行号；session_id 有值时只查该会话写的记忆",
@@ -2357,7 +2374,30 @@ async function toolMultiModelResearch(ctx: ToolContext, models: string[], prompt
   return parts.join("\n\n");
 }
 
-async function toolMemoryAppend(ctx: ToolContext, text: string): Promise<string> {
+async function toolMemoryAppend(ctx: ToolContext, text: string, evidenceQuotes?: unknown): Promise<string> {
+  // Kooyu 记忆证据门（防记忆污染）：门在审批之前——注定写不进去的调用
+  // 不打扰用户弹审批卡。每次拒绝都记进拒绝账本，不静默跳过。
+  const reject = (reason: string, detail: string): string => {
+    recordGateRejection(ctx.home, { action: "memory_append", reason, detail, subject: text.slice(0, 40) || null, scope: "user" });
+    try {
+      ctx.evidence?.save("memory_gate_rejected", "memory://global", `memory_append 被证据门拦下：${detail}（${reason}）`);
+    } catch { /* 证据落盘失败不破坏拒绝结果 */ }
+    return `错误：${detail}`;
+  };
+  if (ctx.unattended) {
+    return reject("automation-write", "无人值守巡查（自动化任务）不能写全局长期记忆");
+  }
+  if (ctx.delegateDepth !== undefined && ctx.delegateDepth >= 1) {
+    return reject("subagent-write", "子 agent 不能直接写全局长期记忆：请把要记的内容交回主对话，由主对话写");
+  }
+  const v = verifyEvidenceQuotes(ctx.currentUserText, evidenceQuotes);
+  if (!v.ok) {
+    return reject(v.reason, evidenceReasonText(v.reason));
+  }
+  const secretKind = detectSecretKind(text);
+  if (secretKind) {
+    return reject(`secret:${secretKind}`, `要记的内容里含疑似密钥（${secretKind === "sk-key" ? "sk- 开头的密钥" : secretKind === "private-key" ? "私钥" : "Bearer token"}），不能写入记忆`);
+  }
   await checkApproval(ctx, "memory_append", tr("sum.memory", { text: text.slice(0, 60) }));
   // 来源会话记进 sidecar 索引：以后按会话删（memory_forget session_id）就靠它。
   appendMemory(text, ctx.memoryPath, undefined, undefined, ctx.sessionId ?? null);
@@ -3289,7 +3329,7 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
       case "export_office": return await toolExportOffice(ctx, args);
       case "media_ingest": return await toolMediaIngest(ctx, args);
       case "multi_model_research": return await toolMultiModelResearch(ctx, args.models as string[], String(args.prompt), args.system as string | null ?? null, args.synthesizer as string | null ?? null, args.timeout === undefined ? 120 : Number(args.timeout));
-      case "memory_append": return await toolMemoryAppend(ctx, String(args.text));
+      case "memory_append": return await toolMemoryAppend(ctx, String(args.text), args.evidenceQuotes);
       case "memory_search": return await toolMemorySearch(ctx, String(args.query), args.limit === undefined ? 5 : Number(args.limit), typeof args.session_id === "string" ? args.session_id : null, typeof args.owner === "string" ? args.owner : null);
       case "knowledge_search": return await toolKnowledgeSearch(ctx, args);
       case "session_search": return await toolSessionSearch(ctx, args);
