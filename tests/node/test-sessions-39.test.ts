@@ -376,10 +376,10 @@ test("Sessions39Test.test_accept_and_complete_lifecycle", async () => {
     const accepted = acceptDelegation(home, session.id, delegation.id, "self");
     expect(accepted.status).toBe("accepted");
     expect(() => acceptDelegation(home, session.id, delegation.id, "self")).toThrow("不用再接");
-    const done = completeDelegation(home, session.id, delegation.id, "self", "清单已出，共 3 单");
+    const done = await completeDelegation(home, session.id, delegation.id, "self", { note: "清单已出，共 3 单", confirm: ["a1"] });
     expect(done.status).toBe("completed");
     expect(done.note).toBe("清单已出，共 3 单");
-    expect(() => completeDelegation(home, session.id, delegation.id, "self")).toThrow("不能再交活");
+    await expect(completeDelegation(home, session.id, delegation.id, "self", { confirm: ["a1"] })).rejects.toThrow("不能再交活");
   } finally {
     cleanup(home);
   }
@@ -500,7 +500,7 @@ test("Sessions39Test.test_cli_smoke", async () => {
     const delegation = findSession(book, id)!.delegations[0];
     expect(delegation.delivery).toBe("pending");
     expect(await handleSession(["accept", id, delegation.id, "--by", "pilot"], home)).toBe(0);
-    expect(await handleSession(["complete", id, delegation.id, "--by", "pilot", "--note", "已出清单"], home)).toBe(0);
+    expect(await handleSession(["complete", id, delegation.id, "--by", "pilot", "--note", "已出清单", "--confirm", "a1"], home)).toBe(0);
     expect(await handleSession(["share", id, "--kind", "note", "--label", "本周重点是物流"], home)).toBe(0);
     expect(await handleSession(["share", id, "--kind", "memory", "--label", "全部记忆"], home)).toBe(1);
     expect(await handleSession(["frame", id, "--hash", "abcdef123456"], home)).toBe(0);
