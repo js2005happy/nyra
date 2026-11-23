@@ -119,6 +119,7 @@
 | `nyra creator "<一句话需求>"` | 创造模式：一句话搓出插件（先验证、经确认才安装） |
 | `nyra kb <create\|list\|add\|search\|ask\|remove\|test>` | 本地知识库：外部文档（文本/Markdown/PDF/网页）收录、分块、BM25 检索 + 检索测试台（详见 `docs/knowledge.md`） |
 | `nyra knowledge test <库名> --file <问题文件>` | 检索测试台：批量典型问题看召回片段与分数，调参对比（详见 `docs/knowledge.md`） |
+| `nyra search <关键词> [--scope project\|all] [--session <会话 id>] [--after <日期>] [--before <日期>] [--limit <n>] [--export <路径>] [--json]` | 会话全文搜索：搜自己过去的对话，按会话分组回命中消息与上文下文；不给关键词列出最近会话；`--export` 把会话全文导出为 Markdown（详见 `docs/session-search.md`） |
 | `nyra hooks list` | 列出已安装的钩子 |
 | `nyra permissions` | Poppy 站点授权意向（本地账本，只记录不授权） |
 | `nyra eigenflux` | EigenFlux 接入检测与本地网络限制 |
