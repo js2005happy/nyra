@@ -821,6 +821,11 @@ def _tool_web_fetch(ctx: ToolContext, url: str) -> str:
     try:
         request = urllib.request.Request(url, headers={"User-Agent": "Angel/0.2"})
         with open_url(request, 30) as response:
+            # A transport returning non-2xx without HTTPError must not
+            # turn an error page into successful research evidence.
+            # Reject before reading untrusted error content.
+            if not 200 <= response.status < 300:
+                return "错误：抓取失败"
             charset = response.headers.get_content_charset() or "utf-8"
             byte_limit = MAX_OUTPUT_CHARS * 4
             payload = response.read(byte_limit + 1)
