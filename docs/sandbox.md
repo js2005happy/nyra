@@ -42,16 +42,18 @@
 | `bwrap` | 强制要求 bwrap：找不到 bwrap、或非 Linux 平台、或启动失败 → 直接报错退出（fail-closed），绝不静默降级裸奔。 | 想确保“没有 OS 沙箱就宁可不跑”时用。 |
 | `seatbelt` | macOS `sandbox-exec`（SBPL profile）：强制要求 macOS 与 sandbox-exec，缺失即 fail-closed。 | macOS 上想用 OS 级沙箱时用（见“macOS：Seatbelt 后端”一节）。 |
 | `jobobject` | Windows Job Object（PowerShell + kernel32）：强制要求 Windows 与 PowerShell，缺失即 fail-closed。进程级沙箱：随作业死、进程数上限；**文件靠工具级规则，网络在断网时靠工具级拦截**（见“Windows：Job Object 后端”一节）。 | Windows 上想用进程级沙箱时用。 |
-| `e2b` | 暂不支持，会直接报错（评估见下节“e2b 接线评估”）。 | 现在别用。 |
+| `e2b` | 命令后端（G-P1-39）：控制面已接（`nyra backend e2b list\|create\|kill`，须 `E2B_API_KEY`）；沙箱内跑命令须 SDK，未接线，执行时直接报错、不回落本机。 | 控制面用 `nyra backend e2b`；执行先用 local 或 docker。 |
 
 默认行为对普通用户无感：工作目录内读写、跑命令都不受影响。
 只有“出工作区写”与“联网”这两类在 bwrap 下会被挡住；挡住时报错会写清楚
 是哪条规则拦的（例如 `EPERM` / 网络不可达），以及怎么放开（见下节）。
 
-## e2b 接线评估（0.5.2，结论：暂不接线）
+## e2b 接线评估（0.5.2 结论：暂不接线 → G-P1-39 更新：控制面已接，执行仍未接）
 
 E2B 云沙箱原型已跑通（Muse 连接器 `custom.e2b`，项目
-`angels-project-2c22`），但接成正式沙箱后端本批不做，原因如下：
+`angels-project-2c22`），G-P1-39 把控制面接进了 Nyra（注册表 + 配置 +
+`nyra backend e2b list|create|kill`，凭据只读 `E2B_API_KEY` 环境变量）。
+但沙箱内跑命令本批仍不做，原因如下：
 
 1. **Node 侧没有执行路径**：连接器的 REST API 只有控制面
    （list/create/get/kill），没有“在沙箱里跑命令”的接口；沙箱内执行
@@ -71,12 +73,12 @@ E2B 云沙箱原型已跑通（Muse 连接器 `custom.e2b`，项目
    本地进程；测试要求 mock-only，真实路径不拿真 Key 跑不通，等于发出去
    一个本地验不了的后端。
 
-前置条件（以后要接时缺一不可）：① 引入 `@e2b/sdk`（或等价 Node 客户端）
-并锁定版本；② 定 `E2B_API_KEY` 的落点与读取方式；③ 定生命周期形态
-（每次命令新建 vs 长驻复用，含超时、续期、退出清理）；④ 用真 Key 在
-有网环境跑通一次端到端（含断网/超时/沙箱超时的 fail-closed 行为）。
-在那之前显式 `--sandbox e2b` 继续直接报错（`resolveSandboxBackend`
-里已写明），不静默降级。
+前置条件（以后要接执行时缺一不可）：① 引入 `@e2b/sdk`（或等价 Node 客户端）
+并锁定版本；② 定 `E2B_API_KEY` 的落点与读取方式（G-P1-39 已定：只读环境
+变量）；③ 定生命周期形态（每次命令新建 vs 长驻复用，含超时、续期、退出清理）；
+④ 用真 Key 在有网环境跑通一次端到端（含断网/超时/沙箱超时的 fail-closed 行为）。
+在那之前显式 `--sandbox e2b` 有 key 时解析成功、执行时直接报错（不回落本机），
+没 key 时解析就失败。
 
 ## 默认断网与怎么放开网络
 
@@ -121,7 +123,7 @@ Job Object 三个后端的可用性，auto 会选谁一眼可见）。
 
 - `auto`（默认）：Linux 且装了 bwrap 就进 OS 沙箱，macOS 且有 sandbox-exec
   就进 Seatbelt，否则回落工具级，在该会话首次执行 shell 时提示一次；
-- 显式 `bwrap` 但本机无 bwrap、`e2b`、`danger-full-access` + `bwrap`：
+- 显式 `bwrap` 但本机无 bwrap、`e2b` 没配 key、`danger-full-access` + `bwrap`：
   fail-closed，会话启动失败（`send` 返回 error 状态），命令不跑；
 - 默认断网（`sandbox_allow_net` 未开时沙箱内 `--unshare-net`）。
 
@@ -149,7 +151,7 @@ Job Object 三个后端的可用性，auto 会选谁一眼可见）。
   追加只读绑定（服务器可执行文件本身常在工作区外，不绑就读不到）；
   `seatbelt` 走 `sandbox-exec -p <profile>`（profile 与 shell 同款）；
   `jobobject` 装不下长驻 stdio 进程、显式指定时直接拒绝；
-  `e2b` 未接线、显式指定时直接拒绝。服务器启动失败时沿用已有语义：
+  `e2b` 沙箱内跑命令须 SDK、未接线，显式指定时直接拒绝。服务器启动失败时沿用已有语义：
   该服务器跳过并在 stderr 警告，不影响其他服务器——但沙箱原因导致的
   失败绝不会让服务器裸奔启动。
 
