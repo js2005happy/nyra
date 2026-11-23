@@ -56,6 +56,7 @@ import { READONLY_TOOLS, TOOL_SCHEMAS } from "./tools.ts";
 import { resolveMonthlyLimit, resolvePricing } from "./cost.ts";
 import { UsageLedger, monthKeyString } from "./usageLedger.ts";
 import { McpCostTracker } from "./mcpCost.ts";
+import { applyInterventions, newBusMessageId } from "./interventions.ts";
 
 export const AGUI_SERVER_FILE = "agui-server.json";
 export const AGUI_SERVER_DEFAULT_HOST = "127.0.0.1";
@@ -531,7 +532,8 @@ export async function serveAguiServerRun(
   sink: AguiServerSink,
   deps?: AguiServerDeps,
 ): Promise<AguiServerRunResult> {
-  const { threadId, runId, task } = input;
+  const { threadId, runId } = input;
+  let task = input.task;
   sink({ type: "RUN_STARTED", threadId, runId });
   recordServerEvent(home, "agui_server_run_started", { thread: threadId, run: runId, token: token.name });
   if (isSuspiciousSegment(task)) {
@@ -542,6 +544,21 @@ export async function serveAguiServerRun(
     return { threadId, runId, status: "blocked", text: "", textChars: 0, toolCalls: [], proposals: [], spentUsd: null, error };
   }
   const runner = deps?.agentRunner ?? runAguiServerAgent;
+  // G-P2-1：对端发来的消息是总线上的 send 消息，先过拦截器再跑 agent。
+  // 丢弃与注入扫描同款处理（RUN_ERROR + status blocked）；改写用改写后的任务继续。
+  const intercepted = await applyInterventions(home, {
+    id: newBusMessageId(), bus: "agui", room: threadId,
+    sender: `agui:${token.name}`, senderKind: "peer", kind: "send", text: task,
+  }, {
+    emit: (type, fields) => { recordServerEvent(home, type, fields); },
+  });
+  if (intercepted.verdict === "drop") {
+    const error = `对方发来的消息被拦截器丢弃（规则 ${intercepted.matched.join("、")}），本轮已停下`;
+    recordServerEvent(home, "agui_server_blocked", { thread: threadId, run: runId, labels: `拦截器丢弃：${intercepted.matched.join("、")}` });
+    sink({ type: "RUN_ERROR", message: error });
+    return { threadId, runId, status: "blocked", text: "", textChars: 0, toolCalls: [], proposals: [], spentUsd: null, error };
+  }
+  if (intercepted.verdict === "rewrite") task = intercepted.text;
   let result: AguiServerRunResult;
   try {
     result = await runner(home, task, { threadId, runId, tokenName: token.name, writeGranted: token.write_granted, sink });

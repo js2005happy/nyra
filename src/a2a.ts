@@ -49,6 +49,7 @@ import { UsageLedger, monthKeyString } from "./usageLedger.ts";
 import { McpCostTracker } from "./mcpCost.ts";
 import { buildAgentCard } from "./peerCard.ts";
 import { loadSigningKey, signAgentCard } from "./cardSignature.ts";
+import { applyInterventions, newBusMessageId } from "./interventions.ts";
 
 export const A2A_PROTOCOL_VERSION = "0.3";
 export const A2A_AGENT_NAME = "nyra";
@@ -769,13 +770,26 @@ export async function dispatchA2aRpc(
       case "message/stream": {
         if (!ctx.token) return rpcError(id, -32000, "缺少有效的 Bearer token（先跑 nyra a2a serve token new 建一个）");
         const message = params.message;
-        const text = extractA2aMessageText(message);
+        let text = extractA2aMessageText(message);
         checkA2aConfiguration(params);
         const historyLength = historyLengthParam(params);
         const rawTaskId = typeof params.taskId === "string" && params.taskId ? params.taskId : null;
         const rawContextId = typeof message === "object" && message !== null && typeof (message as Record<string, unknown>).contextId === "string"
           ? (message as Record<string, unknown>).contextId as string
           : null;
+        // G-P2-1：对端发来的消息是总线上的 send 消息，先过拦截器再建任务。
+        // 丢弃直接回 JSON-RPC 错误（不建任务、不跑模型）；改写用改写后的文本继续。
+        const intercepted = await applyInterventions(home, {
+          id: newBusMessageId(), bus: "a2a",
+          ...(rawContextId && rawContextId.trim() ? { room: rawContextId.trim() } : {}),
+          sender: `a2a:${ctx.token.name}`, senderKind: "peer", kind: "send", text,
+        }, {
+          emit: (type, fields) => { recordA2aEvent(home, type, fields); },
+        });
+        if (intercepted.verdict === "drop") {
+          return rpcError(id, -32000, `消息被拦截器丢弃（规则 ${intercepted.matched.join("、")}）`);
+        }
+        if (intercepted.verdict === "rewrite") text = intercepted.text;
         let task: A2aTask;
         if (rawTaskId) {
           const existing = getA2aTask(home, rawTaskId);

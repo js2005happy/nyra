@@ -61,6 +61,8 @@ export interface SwarmResult {
   tokensEstimate: number;
   terminatedBy: string;
   reason: string;
+  /** G-P2-1：被拦截器丢弃的轮次（没进群记录，不计入 messages）。 */
+  droppedTurns?: number;
 }
 
 export class GroupChatError extends Error {
@@ -252,6 +254,7 @@ export async function runGroupChat(
     state.tokensEstimate += estimateTokens(kickoff.content);
   }
   const turns: SwarmTurn[] = [];
+  let droppedTurns = 0;
   let nextIndex = 0;
   let lastMessage = room.messages.length ? room.messages[room.messages.length - 1].content : "";
   // 开场就命中终止条件时一轮都不跑（比如 max-messages 比已有消息还小）。
@@ -278,25 +281,37 @@ export async function runGroupChat(
       // 被点名/被交接的人说完后，轮询从他后面继续（不重复点同一个人）。
       nextIndex = botIds.indexOf(speaker) + 1;
     }
-    const message = await store.runOneBot(roomId, speaker);
-    turns.push({ speaker, message });
-    state.messages += 1;
-    state.tokensEstimate += estimateTokens(message.content);
-    if (typeof termination === "object" && termination.kind === "mention-text") {
-      if (message.content.includes(termination.text)) state.lastMentionHit = termination.text;
-    } else if (termination.kind === "or" || termination.kind === "and") {
-      // 组合条件里含 mention-text 时同样要盯着每条新消息。
-      const checkMention = (c: TerminationCondition): void => {
-        if (c.kind === "mention-text" && message.content.includes(c.text)) state.lastMentionHit = c.text;
-        if (c.kind === "and" || c.kind === "or") c.conditions.forEach(checkMention);
-      };
-      checkMention(termination);
+    // G-P2-1：runOneBot 里 bot 的回复已过拦截器（publish）；被丢弃时返回
+    // 空 error 条目（runBot 的失败条目总有正文，空 error 只可能是被丢弃）。
+    // 丢弃的轮次不进 turns、不计 messages、不参与点名/交接，但计入硬顶。
+    const message = await store.runOneBot(roomId, speaker, {
+      emit: (type, fields) => emit(type, fields),
+    });
+    const dropped = message.error === true && !String(message.content ?? "").trim();
+    if (dropped) {
+      droppedTurns += 1;
+      emit("group_chat_turn_dropped", { room: roomId, speaker });
+      lastMessage = "";
+    } else {
+      turns.push({ speaker, message });
+      state.messages += 1;
+      state.tokensEstimate += estimateTokens(message.content);
+      if (typeof termination === "object" && termination.kind === "mention-text") {
+        if (message.content.includes(termination.text)) state.lastMentionHit = termination.text;
+      } else if (termination.kind === "or" || termination.kind === "and") {
+        // 组合条件里含 mention-text 时同样要盯着每条新消息。
+        const checkMention = (c: TerminationCondition): void => {
+          if (c.kind === "mention-text" && message.content.includes(c.text)) state.lastMentionHit = c.text;
+          if (c.kind === "and" || c.kind === "or") c.conditions.forEach(checkMention);
+        };
+        checkMention(termination);
+      }
+      emit("group_chat_turn", { room: roomId, speaker, turn: turns.length });
+      lastMessage = message.content;
     }
-    emit("group_chat_turn", { room: roomId, speaker, turn: turns.length });
-    lastMessage = message.content;
     end = evaluateTermination(termination, state, { now: nowFn(), externalStop: opts.shouldStop?.() === true });
-    // 硬顶：不管条件怎么写，最多 1000 轮（防条件配错导致无限跑）。
-    if (turns.length >= 1000) {
+    // 硬顶：不管条件怎么写，最多 1000 轮（防条件配错导致无限跑；丢弃的轮次也计入）。
+    if (turns.length + droppedTurns >= 1000) {
       end = { terminated: true, reason: "硬顶：已到 1000 轮" };
       break;
     }
@@ -309,6 +324,7 @@ export async function runGroupChat(
     tokensEstimate: state.tokensEstimate,
     terminatedBy: end.reason ?? "未知",
     reason: end.reason ?? "未知",
+    ...(droppedTurns ? { droppedTurns } : {}),
   };
   emit("group_chat_terminated", { room: roomId, reason: result.reason, turns: turns.length });
   return result;

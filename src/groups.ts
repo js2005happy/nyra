@@ -35,7 +35,14 @@ import {
   validateMode,
 } from "./config.ts";
 import { resolvePresetFallbackChain } from "./modelPresets.ts";
-import { loadSession } from "./memory.ts";
+import {
+  applyInterventions,
+  newBusMessageId,
+  type ApplyInterventionsResult,
+  type BusMessage,
+  type BusSenderKind,
+} from "./interventions.ts";
+import { loadSession, resolveNyraHome } from "./memory.ts";
 import {
   buildProviderChain,
   FallbackProvider,
@@ -49,6 +56,21 @@ import {
 import { formatModelSwitchNotice, recordModelSwitch, switchTimeShort } from "./modelSwitch.ts";
 import { decryptEntry, encryptEntry, Vault } from "./vault.ts";
 import type { SandboxMode } from "./sandbox.ts";
+import { RunStore } from "./runs.ts";
+
+/**
+ * G-P2-1：拦截事件进证据链（改写 / 丢弃才发，log 只记审计）。
+ * 调用方没传 emit 时走这里——与 groupChat 的 recordChatEvent 同款：
+ * 证据写失败不破坏群聊本身。
+ */
+function recordBusInterventionEvent(home: string, type: string, fields: Record<string, unknown>): void {
+  try {
+    const store = new RunStore(join(resolveNyraHome(home), "runs"));
+    const state = store.create(`群聊总线：${type}`, "group-bus", process.cwd(), "readonly", 1, "running");
+    store.appendEvent(state.run_id, type, fields);
+    store.setStatus(state.run_id, "completed_unverified");
+  } catch { /* ignore */ }
+}
 
 export const MAX_BOTS = 6;
 export const MAX_API_KEYS = 5;
@@ -1080,6 +1102,25 @@ export class GroupStore {
    * 第 2 批 G-P1-2：往群记录里追加消息（swarm/handoff 引擎用：先把用户
    * 的开场白记进去，再逐轮记每个说话者的发言）。调用方负责内容合法。
    */
+  /**
+   * G-P2-1：一条总线消息过拦截器。调用方没传 emit 时，改写 / 丢弃事件
+   * 写 RunStore（recordBusInterventionEvent）；log 只记审计、不发事件。
+   * 拦截本身抛错时当放行（fail-open——总线不能因为拦截器坏了就全停；
+   * 规则校验与配置损坏在 interventions.ts 里已先行处理）。
+   */
+  private async interceptBusMessage(
+    msg: BusMessage,
+    emit?: (type: string, fields: Record<string, unknown>) => void,
+  ): Promise<ApplyInterventionsResult> {
+    try {
+      return await applyInterventions(this.home, msg, {
+        emit: emit ?? ((type, fields) => recordBusInterventionEvent(this.home, type, fields)),
+      });
+    } catch {
+      return { verdict: "pass", text: msg.text, matched: [], actions: [] };
+    }
+  }
+
   async appendTranscript(roomId: string, entries: RoomMessage[]): Promise<number> {
     return this.runSerialized(roomId, async () => {
       const room = this.readRoom(roomId);
@@ -1094,15 +1135,28 @@ export class GroupStore {
    * send 的并行轮不同：一次只跑一个 bot，看到的是当前最新记录）。
    * 返回它刚发的那条消息。
    */
-  async runOneBot(roomId: string, botId: string): Promise<RoomMessage> {
+  async runOneBot(
+    roomId: string,
+    botId: string,
+    opts: { emit?: (type: string, fields: Record<string, unknown>) => void } = {},
+  ): Promise<RoomMessage> {
     return this.runSerialized(roomId, async () => {
       const room = this.readRoom(roomId);
       const bot = room.bots.map((raw) => parseBot(raw)).find((b) => b.id === botId);
       if (!bot) throw new GroupError(`机器人不存在：${botId}`);
       const entry = await this.runBot(room, bot, [...room.messages]);
-      room.messages.push(entry);
+      // G-P2-1：bot 的回复是总线上的 publish 消息，先过拦截器再进群记录。
+      // 丢弃时不进群记录，返回空 error 条目——chiefGroup 按失败计、groupChat
+      // 按丢弃计（runBot 的失败条目总有正文，空 error 条目只可能是被丢弃）。
+      const out = await this.interceptBusMessage({
+        id: newBusMessageId(), bus: "group", room: roomId,
+        sender: entry.sender, senderKind: "bot", kind: "publish", text: entry.content,
+      }, opts.emit);
+      if (out.verdict === "drop") return { ...entry, content: "", error: true };
+      const finalEntry = out.verdict === "rewrite" ? { ...entry, content: out.text } : entry;
+      room.messages.push(finalEntry);
       this.writeRoom(room);
-      return entry;
+      return finalEntry;
     });
   }
 
@@ -1110,7 +1164,19 @@ export class GroupStore {
    * opts.onEntry：每条新记录写进群里后回调一次（网关把它转成群事件流，手机群聊页实时看到谁回了）；
    * 不改 send 本身的语义——仍然等本轮所有成员回答完才返回。
    */
-  async send(roomId: string, message: string, rounds = 1, opts: { onEntry?: (entry: RoomMessage) => void } = {}): Promise<SendResult> {
+  async send(
+    roomId: string,
+    message: string,
+    rounds = 1,
+    opts: {
+      onEntry?: (entry: RoomMessage) => void;
+      /** 入口消息是谁发的（默认 owner——机主消息永远不拦截；peer 才过拦截器）。 */
+      senderKind?: BusSenderKind;
+      sender?: string;
+      /** 拦截事件回调（不传时写 RunStore）。 */
+      emit?: (type: string, fields: Record<string, unknown>) => void;
+    } = {},
+  ): Promise<SendResult> {
     const text = validateText(message, "群消息", MAX_INPUT_CHARS);
     if (
       typeof rounds !== "number" ||
@@ -1120,10 +1186,21 @@ export class GroupStore {
     ) {
       throw new GroupError(`每条消息最多允许 ${MAX_ROUNDS} 轮讨论`);
     }
+    // G-P2-1：入口消息是总线上的 send 消息，先过拦截器。丢弃直接报错
+    // （调用方看得到是谁拦的）；改写用改写后的文本继续跑。
+    const incoming = await this.interceptBusMessage({
+      id: newBusMessageId(), bus: "group", room: roomId,
+      sender: opts.sender ?? "user", senderKind: opts.senderKind ?? "owner",
+      kind: "send", text,
+    }, opts.emit);
+    if (incoming.verdict === "drop") {
+      throw new GroupError(`消息被拦截器丢弃（规则 ${incoming.matched.join("、")}）`);
+    }
+    const incomingText = incoming.verdict === "rewrite" ? incoming.text : text;
     return this.runSerialized(roomId, async () => {
       const room = this.readRoom(roomId);
       const bots = room.bots.map((raw) => parseBot(raw));
-      const mentions = new Set([...text.matchAll(MENTION_RE)].map((m) => m[1]));
+      const mentions = new Set([...incomingText.matchAll(MENTION_RE)].map((m) => m[1]));
       const known = new Set(bots.map((b) => b.id));
       const unknown = [...mentions].filter((id) => !known.has(id)).sort();
       if (unknown.length > 0) {
@@ -1134,7 +1211,7 @@ export class GroupStore {
       const newEntries: RoomMessage[] = [];
       const userEntry: RoomMessage = {
         sender: "user",
-        content: text,
+        content: incomingText,
         time: stamp(),
       };
       room.messages.push(userEntry);
@@ -1147,9 +1224,17 @@ export class GroupStore {
           selected.map((bot) => this.runBot(room, bot, transcript)),
         );
         for (const entry of results) {
-          room.messages.push(entry);
-          newEntries.push(entry);
-          try { opts.onEntry?.(entry); } catch { /* 观察器故障不影响群聊 */ }
+          // G-P2-1：bot 的回复是总线上的 publish 消息，先过拦截器再进群记录；
+          // 丢弃的不进群记录、也不触发 onEntry。
+          const out = await this.interceptBusMessage({
+            id: newBusMessageId(), bus: "group", room: roomId,
+            sender: entry.sender, senderKind: "bot", kind: "publish", text: entry.content,
+          }, opts.emit);
+          if (out.verdict === "drop") continue;
+          const finalEntry = out.verdict === "rewrite" ? { ...entry, content: out.text } : entry;
+          room.messages.push(finalEntry);
+          newEntries.push(finalEntry);
+          try { opts.onEntry?.(finalEntry); } catch { /* 观察器故障不影响群聊 */ }
         }
         this.writeRoom(room);
       }

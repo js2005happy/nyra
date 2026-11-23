@@ -319,6 +319,10 @@ step_checkpoint_replayed: ["workflow_run_id", "from_run_id", "step_id", "steps_r
 workflow_interrupt_created: ["workflow_run_id", "interrupt_id", "step_id", "point"],
 workflow_interrupt_resolved: ["workflow_run_id", "interrupt_id", "decision"],
 workflow_interrupt_resumed: ["workflow_run_id", "interrupt_id", "decision"],
+// G-P2-1：运行时消息拦截——改写（哪条总线、谁发的、命中哪些规则、消息指纹）、
+// 丢弃（同上）。只记元数据与文本指纹，不记消息原文。log 只记审计，不发事件。
+bus_message_rewritten: ["bus", "sender", "sender_kind", "rules", "message_id", "text_fingerprint"],
+bus_message_dropped: ["bus", "sender", "sender_kind", "rule", "message_id", "text_fingerprint"],
 // 缺口 25 其余形态：协调者每轮的决定（第几轮、什么动作、哪个步骤、这次决定
 // 花了多少）、动态生成的新步骤（哪个步骤、什么类型）、协调者停下来问人
 // （第几轮、哪个审阅项）。只记元数据与 id，不记提示词原文、不记决定全文、
