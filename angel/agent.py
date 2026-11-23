@@ -518,10 +518,14 @@ class Agent:
         )
         try:
             return child.run(task)
-        except AgentError as exc:
-            return f"子任务失败：{exc}"
-        except Exception as exc:
-            return f"子任务异常：{type(exc).__name__}: {exc}"
+        except AgentError:
+            # Child errors may contain credentials, private paths or URLs.
+            # Do not forward exception details into the parent model context.
+            return "错误：子任务失败；执行状态未知，请人工核查"
+        except Exception:
+            # An exception does not prove external side effects were undone.
+            # Never expose arbitrary exception types or messages to the model.
+            return "错误：子任务异常；执行状态未知，请人工核查"
 
 
 def build_mcp_manager(
