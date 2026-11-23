@@ -1,3 +1,10 @@
+## 2026-11-23 — 本地 edit_file 缺失路径隐私（仅静态）
+
+- 已读取开发分支 README、DESIGN、CHANGELOG、VERIFICATION、ROADMAP、核心 tools/agent，查询近期提交、开放 Issues（无）、PR #113（评测）及前次提交 CI 状态/关联工作流（均无记录，不能视为通过）。
+- 源码事实：`_tool_edit_file` 在本地目标不存在时返回包含调用方 `path` 的字符串；本轮替换为固定 `错误：文件不存在`，定义一项未执行的绝对私人路径回归测试。
+- 外部事实（2026-11-23 复核）：[Codex #31015](https://github.com/openai/codex/issues/31015) 报告后置脱敏无法阻止原始工具输出进入会话；[Codex #34233](https://github.com/openai/codex/issues/34233) 报告敏感配置进入工具输出。外部个案不证明 Angel 事故或普遍性。
+- 工程推断：固定错误文本降低此路径泄露可能；正常编辑预览、成功内容、远端返回和其他工具仍未全局脱敏。未运行测试、编译、CI 或真实编辑；未安装、修改业务账户、合并 main 或发布。
+
 ## 2026-11-23 — 通用 ToolError 异常隐私（仅静态）
 
 - 已读取开发分支 README、DESIGN、CHANGELOG、VERIFICATION、ROADMAP、tools/agent、既有回归定义；查询近期仓库提交、开放 Issues（无）、开放 PR #113（真实任务评测）及 CI 可用元数据。
