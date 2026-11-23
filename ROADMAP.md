@@ -1,3 +1,10 @@
+## 2026-11-23 — P1 HTTP POST error-body privacy (static-only)
+
+- **Source fact:** HTTPError returned untrusted remote error body to the model; it might echo tokens or submitted data. Status-only failure reporting is implemented but untested. This is a source-derived risk, not a confirmed incident.
+- **External user feedback (checked 2026-11-23):** [Codex #31015](https://github.com/openai/codex/issues/31015), opened 2026-07-03, reports redaction timing concerns; [Codex #34233](https://github.com/openai/codex/issues/34233), opened 2026-07-19, reports credential-bearing tool output. Neither establishes Angel incident frequency.
+- **Ranked (value / difficulty / safety risk / dependency):** P1 error-body suppression **high/low/low/existing HTTP handler** (done, untested); P1 structured HTTP/Shell outcome **high/medium/medium/Agent contract** (open); P1 other direct-output privacy audit **high/medium/medium/tool compatibility** (open); P1 pre-model/pre-record privacy boundary **high/high/high/policy and consent** (research); P1 independent side-effect receipts **high/high/high/trusted readback** (blocked); P2 recoverable large output **medium-high/high/medium/artifact permissions** (research).
+- **Limitations:** success response bodies and other tools remain unfiltered. No automatic POST retry, runtime verification or release.
+
 ## 2026-11-23 — P1 HTTP POST error response classification (static-only)
 
 - **Source fact**: `_tool_http_post` returned `HTTP <code>` for `urllib.error.HTTPError`; `classify_tool_report` only treats `错误：` or `执行失败：` as legacy failure prefixes. A 4xx/5xx HTTP error could therefore be journaled as reported success. The patch adds a fixed `错误：` prefix to the HTTPError path while preserving status and truncated response body. This is an HTTP failure report, not proof that remote side effects did not occur; no automatic retry.
