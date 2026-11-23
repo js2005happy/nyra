@@ -1,10 +1,14 @@
 # 手机端（Capacitor 壳 + 启动器页）
 
-手机 App 是个“启动器壳”，不是把 Nyra 搬进手机：Nyra 的 agent、工具与
-数据仍在电脑上跑，手机只是遥控器。壳里只装一张静态启动页（`www/index.html`），
-用户填电脑的局域网地址与配对码后，WebView 跳到电脑上 `nyra ui` 的手机页
-（`/m`，见 `docs/mobile-pwa.md`）。所以不需要任何 Capacitor 插件，也没有
-`server.url`（电脑地址每次都可能不一样，写死在配置里没有意义）。
+手机 App 是个“启动器壳”，不是把 Nyra 搬进手机：agent 在云端跑
+（第 6 批，见 `docs/mobile-cloud.md`），手机用账号登录后直连云端服务。
+壳里只装一张静态启动页（`www/index.html`），用户填云端地址、点
+Google / GitHub / 邮箱任一按钮打开云端登录页，登完进云端手机页。
+局域网表单（电脑 IP + 8765 端口 + 配对码，跳电脑上 `nyra ui` 的手机页
+`/m`）退到了启动器页底部的“旧版”折叠区——真云端没上线前它是唯一
+能走通的手机路，保留；云端上线走通后，旧版入口再删。所以不需要任何
+Capacitor 插件，也没有 `server.url`（云端地址由用户在启动器页里填一次、
+存在 localStorage，下次直接用）。
 
 ## 路线决定（为什么是 Capacitor、为什么先只做安卓）
 
@@ -24,7 +28,7 @@
 
 | 路径 | 说明 |
 | --- | --- |
-| `www/index.html` | 启动器页：静态单文件，不发任何外部请求；填地址与配对码后跳 `/m`，上次连过的电脑记在 localStorage |
+| `www/index.html` | 启动器页：静态单文件，不发任何外部请求；主入口是账号登录（填云端地址 → 打开云端登录页 /app），局域网表单退到“旧版”折叠区；云端地址与上次连过的电脑各记在 localStorage |
 | `assets/` | 图标与启动图源文件（已提交进仓库）：`icon.png` / `icon-foreground.png` / `icon-background.png` / `splash.png` / `splash-dark.png`，由 `scripts/make-assets.ts` 从正式标志生成 |
 | `scripts/make-assets.ts` | 生成 `assets/`：`bun scripts/make-assets.ts`（改标志时才跑，零依赖，复用 `src/brandMark.ts`） |
 | `scripts/patch-android-manifest.sh` | 给生成的 Android 清单加 `android:usesCleartextTraffic="true"`：启动器要跳明文 HTTP 的局域网地址，Android 9+ 默认会拦；Capacitor 8 的 `cap sync` 不会自己加 |
@@ -56,8 +60,11 @@ APK 的 `versionName` / `versionCode` 在 CI 里从 tag 写进
 - APK 是 **debug 签名**（Gradle 自动生成的 debug keystore）：能装、能跑，
   但不是正式签名；正式 keystore 是后续待办，需要用户自己的 keystore 进
   CI secrets，与 OV 证书同一类待办。
-- **没在真机上装过**：APK 只在 CI 里编出来；真机安装、局域网跳转、配对
+- **没在真机上装过**：APK 只在 CI 里编出来；真机安装、云端登录跳转、局域网跳转、配对
   流程都还没亲手试过，第一次装时如有出入以手机上实际出现的为准。
+- **真云端还没上线**：启动器页的账号登录按钮打开的是云端登录页，
+  但云端服务本身未部署（见 `docs/mobile-cloud.md` §3）；云端地址没配好时
+  按钮会先提示配地址，不会链向设计占位地址。
 - iOS 没有安装包（原因见上文“路线决定”）；iPhone 继续用 PWA（见
   `docs/mobile-pwa.md`）。
 - 跳到 `/m` 后 WebView 就离开了 Capacitor 上下文：页面是电脑直接提供的，
