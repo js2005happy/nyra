@@ -141,6 +141,7 @@
 | `nyra budget <list\|show\|reserve\|settle\|release\|strict>` | 并发预算预留：模型调用前先预留额度、超上限不发请求；金额未知默认暂停等人工处理（详见 `docs/budget.md`） |
 | `nyra agui <register\|list\|show\|link\|connect\|disconnect\|send\|exec\|accept-write\|revoke-write\|a2a\|serve>` | 协议中立接入：接任意 AG-UI endpoint 当 Bot（只读先行，写操作须机主显式接受），A2A 复用名片 + 交接；`serve` 把 Nyra 对外暴露成 AG-UI endpoint（详见 `docs/agui.md`） |
 | `nyra acp <serve\|status\|grant\|revoke-grant>` | ACP 服务端：编辑器经 stdio 用 JSON-RPC 驱动 Nyra（只读先行，写操作进 peer 提议门，须机主逐条批）（详见 `docs/acp.md`） |
+| `nyra a2a <serve\|card>` | A2A 服务端：别的 agent 经 HTTP 用 JSON-RPC 2.0 调用 Nyra（只读先行，写操作进 peer 提议门，须机主逐条批）（详见 `docs/a2a.md`） |
 | `nyra screen <watch\|activity\|status\|takeover\|handover> <电脑 id>` | 缺口 50：只读看屏（实时画面 + 活动列表，帧指纹不记帧内容）与接管（take the wheel，须确认；接管期间 Bot 暂停、交还后从挂起点继续，全程记审计）；画面里密码/验证码/卡号自动打码（详见 `docs/bot-screen.md`） |
 | `nyra voice <status\|speak <文字>\|enable-tts\|disable-tts\|transcribe <音频>\|realtime <list\|use\|status>>` | 语音指挥：看配置与可用性、读一段文字、开关自动回读；只转写不跑任务；实时语音服务商切换（默认 local，详见 `docs/realtime-voice.md`；详见 `docs/voice.md`） |
 | `nyra voice call <start\|answer\|decline\|end\|status\|list\|segment\|confirm\|connect>` | 实时语音通话：建通话、喂音频段落转写、可选回读（本地 whisper 优先，云端默认关；`--transport webrtc` 走真 WebRTC 1:1 语音，`connect` 主动拨通；转写文字先审后发见 `docs/voice.md`） |
