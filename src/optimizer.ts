@@ -21,13 +21,14 @@ import { resolveHome } from "./config.ts";
 import { RunStore } from "./runs.ts";
 import { loadRegressionStore, type RegressionKind } from "./regression.ts";
 import { appendGovernanceAudit } from "./governance.ts";
+import { recordArmReward } from "./optimizerArms.ts";
 
 export class OptimizerError extends Error {}
 
 const STORE_FILE = "optimization-proposals.json";
 
 export type ProposalStatus = "draft" | "approved" | "rejected" | "applied" | "released" | "failed";
-export type ProposalSourceKind = "regression-case" | "manual";
+export type ProposalSourceKind = "regression-case" | "manual" | "eval-report";
 
 export interface ProposalDatasets {
   train: string[];
@@ -51,6 +52,8 @@ export interface ProposalHistoryEntry {
 export interface OptimizationProposal {
   id: string;
   source: { kind: ProposalSourceKind; ref: string };
+  /** G-P1-29：所属 UCB 臂（评测失败簇键，如 code:artifact-json），无则不填。 */
+  armKey?: string;
   target: string;
   oldText: string;
   newText: string;
@@ -224,6 +227,9 @@ export function proposeOptimization(
     newText?: string;
     rationale?: string;
     fromRegression?: string;
+    sourceKind?: "eval-report";
+    sourceRef?: string;
+    armKey?: string;
     trainCases?: string[];
     validationCases?: string[];
     holdoutCases?: string[];
@@ -267,16 +273,24 @@ export function proposeOptimization(
     if (!newText) newText = draftFromRegressionCase(c.kind, c.title);
     if (!rationale) rationale = `回归用例 ${c.id}（${c.kind}：${c.title}）的教训，起草为指令文档追加行。`;
     if (trainCases.length === 0) trainCases.push(c.id);
+  } else if (opts.sourceKind === "eval-report") {
+    source = { kind: "eval-report", ref: (opts.sourceRef ?? "").trim().slice(0, 200) };
+    if (!newText) throw new OptimizerError("评测提议须写 --new-text（loop 自动起草时由模板生成）");
   } else {
     source = { kind: "manual", ref: "" };
     if (!newText) throw new OptimizerError("人工提议须写 --new-text（要换成的新文本；oldText 为空表示追加到文件末尾）");
   }
   if (!rationale) rationale = "人工提议（未写理由）";
   if (rationale.length > 500) throw new OptimizerError("理由过长（超过 500 字符）");
+  const armKey = (opts.armKey ?? "").trim();
+  if (armKey && (!/^[A-Za-z0-9_:.\-]+$/.test(armKey) || armKey.length > 120)) {
+    throw new OptimizerError("armKey 格式不对（只限字母、数字与 _ : . -，不超过 120 字符）");
+  }
 
   const proposal: OptimizationProposal = {
     id: newProposalId(),
     source,
+    armKey: armKey || undefined,
     target,
     oldText,
     newText,
@@ -499,6 +513,10 @@ export function verifyProposal(
       mirrorEvent(home, opts?.runId ?? null, "proposal_reverted", { proposal_id: id, target: proposal.target });
     }
   }
+  if (proposal.armKey) {
+    // G-P1-29：verify 结果回填 UCB 臂账本（放行记 1、失败记 0），下一轮 loop 重排。
+    recordArmReward(home, proposal.armKey, proposal.status === "released" ? 1 : 0);
+  }
   return { proposal, validation, holdout, reverted, revertError };
 }
 
@@ -547,6 +565,7 @@ function printJson(value: unknown): void {
 function printProposal(p: OptimizationProposal): void {
   console.log(`提议 ${p.id}（${p.status}）`);
   console.log(`  来源：${p.source.kind}${p.source.ref ? ` ${p.source.ref}` : ""}`);
+  if (p.armKey) console.log(`  UCB 臂：${p.armKey}`);
   console.log(`  目标：${p.target}`);
   console.log(`  理由：${p.rationale}`);
   console.log(`  旧文本：${p.oldText ? p.oldText.slice(0, 200) : "（空 = 追加到文件末尾）"}`);
@@ -562,7 +581,7 @@ export function handleOptimize(args: string[], home: string, workdir: string): n
   const [sub, ...rest] = args;
   const json = hasFlag(args, "--json");
   if (!sub) {
-    console.log("用法：nyra optimize <propose|list|show|edit|approve|reject|apply|verify|revert> ...（详见 docs/governance.md）");
+    console.log("用法：nyra optimize <propose|list|show|edit|approve|reject|apply|verify|revert|loop|arms> ...（loop/arms 详见 docs/governance.md）");
     return 0;
   }
   if (sub === "propose") {
@@ -669,5 +688,5 @@ export function handleOptimize(args: string[], home: string, workdir: string): n
     console.log(`提议 ${proposal.id} 已回滚，回到 draft，可修订再批`);
     return 0;
   }
-  throw new OptimizerError("用法：nyra optimize <propose|list|show|edit|approve|reject|apply|verify|revert> ...（详见 docs/governance.md）");
+  throw new OptimizerError("用法：nyra optimize <propose|list|show|edit|approve|reject|apply|verify|revert|loop|arms> ...（loop/arms 详见 docs/governance.md）");
 }
