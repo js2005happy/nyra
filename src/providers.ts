@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { plaintextHttpError, resolveProvider, type ResolvedProvider } from "./config.ts";
 import { cancelErrorFromSignal, combineSignals } from "./cancel.ts";
+import { buildQuotaHandoff, type QuotaHandoff } from "./quotaHandoff.ts";
 
 export const RECOVERABLE_KINDS = ["quota", "rate_limit", "server", "timeout", "network"] as const;
 export type ProviderErrorKind =
@@ -89,10 +90,29 @@ export function parseRetryAfter(value: string | null | undefined, nowMs = Date.n
 export const QUOTA_MESSAGE_PATTERNS = [
   "weekly limit", "monthly limit", "daily limit", "usage limit",
   "out of usage credits", "out of credits", "credits exhausted",
-  "quota exceeded", "insufficient quota", "exceeded your quota",
+  "quota exceeded", "quota_exceeded", "insufficient quota", "insufficient_quota",
+  "exceeded your quota",
   "you've hit your", "you have hit your", "hit your limit",
-  "billing limit", "insufficient balance",
+  "billing limit", "insufficient balance", "credit balance",
   "用量上限", "用量已用完", "额度已用完", "余额不足", "免费额度已用完",
+  "配额不足", "配额已用完", "配额耗尽", "额度不足", "额度耗尽", "额度用尽",
+];
+
+/**
+ * Kooyu 429 接力：限流类消息文本（英文原样 + 中文，见 quotaHandoff.ts 的
+ * RATE_LIMIT_MESSAGE_PATTERNS 同款表）。命中即“这次失败与限流/配额有关”，
+ * 但不分 quota 还是 rate_limit——分档仍由 QUOTA_MESSAGE_PATTERNS 先判
+ * （终结：用量上限），本表只用来把“状态码不是 429、但文案明说限流”的
+ * 错误（例如 503 + "capacity exhausted"、500 + "overloaded"）也认成
+ * rate_limit，而不是笼统的 server：前者重试同一家、切换时配接力摘要，
+ * 后者没有这个待遇。
+ */
+export const RATE_LIMIT_MESSAGE_PATTERNS = [
+  "429", "rate limit", "rate_limit", "too many requests",
+  "quota exceeded", "quota_exceeded", "usage limit",
+  "capacity exhausted", "overloaded", "credit balance",
+  "insufficient_quota", "insufficient quota",
+  "限流", "配额", "过于频繁", "额度用尽", "额度不足", "额度耗尽", "额度已用完",
 ];
 
 /** 安全拦截类消息文本：provider 安全拦截绝不重放。 */
@@ -126,12 +146,18 @@ export function matchesSafetyBlock(text: string): boolean {
   return matchesAnyPattern(text, SAFETY_BLOCK_PATTERNS);
 }
 
+/** 这段报错文本是不是限流/配额类（Kooyu 正则的 Nyra 版）。 */
+export function matchesRateLimitMessage(text: string): boolean {
+  return matchesAnyPattern(text, RATE_LIMIT_MESSAGE_PATTERNS);
+}
+
 /**
- * HTTP 错误分类：先看消息文本里的用量上限模式，再按状态码。
+ * HTTP 错误分类：先看消息文本里的用量上限模式，再看限流模式，最后按状态码。
  * kindForStatus 本身不动（只按状态码），供只需要状态码的调用方用。
  */
 export function classifyHttpError(code: number, body: string): ProviderErrorKind {
   if (matchesQuotaMessage(body)) return "quota";
+  if (matchesRateLimitMessage(body)) return "rate_limit";
   return kindForStatus(code);
 }
 
@@ -740,6 +766,13 @@ export interface SwitchRecord {
    * 用户从错误原文里猜“为什么换了模型”。
    */
   trigger: SwitchTrigger;
+  /**
+   * Kooyu 429 接力：限流/配额触发时才有的接力摘要（最近任务 + 最近进展 +
+   * 已做修改，勿重复）。可选字段、只在有摘要时才带——旧测试的精确比对
+   * 不受影响（见 G-P0-6 的 cancelledAt 教训）。非限流切换没有它。
+   * 落盘由 recordModelSwitch 顺带做；通知里只引用它的 id，不塞全文。
+   */
+  handoff?: QuotaHandoff;
 }
 
 /** 模型切换的触发原因（SwitchRecord.trigger 的取值）。 */
@@ -902,7 +935,12 @@ export class FallbackProvider implements ProviderLike {
           if (!exc.recoverable) throw exc;
           if (index + 1 >= this.providers.length) break providerLoop;
           const nxt = this.providers[index + 1];
-          const record: SwitchRecord = { from: provider.name, to: nxt.name, error: String(exc.message), kind: exc.kind, status: exc.status, trigger: switchTriggerFor(exc.kind) };
+          // Kooyu 429 接力：限流/配额触发时配一份接力摘要（最近任务 + 最近进展 +
+          // 已做修改），挂在切换记录上；落盘与通知引用由 recordModelSwitch /
+          // formatModelSwitchNotice 做。非限流切换没有摘要。
+          const trigger = switchTriggerFor(exc.kind);
+          const handoff = buildQuotaHandoff({ from: provider.name, to: nxt.name, error: String(exc.message), trigger, messages });
+          const record: SwitchRecord = { from: provider.name, to: nxt.name, error: String(exc.message), kind: exc.kind, status: exc.status, trigger, ...(handoff ? { handoff } : {}) };
           this.switches.push(record);
           this.activeIndex = index + 1;
           this.onSwitch?.(record);
@@ -1045,9 +1083,12 @@ export class KeyRotatingProvider implements ProviderLike {
           // （test_key_rotation_on_401 钉住这一行为）。只有瞬时错误才先重试
           // 同一把 Key，其余错误直接换 Key。
           if (index + 1 >= this.providers.length) break keyLoop;
+          const trigger = switchTriggerFor(exc.kind);
+          const handoff = buildQuotaHandoff({ from: this.label(index), to: this.label(index + 1), error: safe, trigger, messages });
           const record: SwitchRecord = {
             from: this.label(index), to: this.label(index + 1),
-            error: safe, kind: exc.kind, status: exc.status, trigger: switchTriggerFor(exc.kind),
+            error: safe, kind: exc.kind, status: exc.status, trigger,
+            ...(handoff ? { handoff } : {}),
           };
           this.switches.push(record);
           this.activeIndex = index + 1;

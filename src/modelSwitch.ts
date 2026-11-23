@@ -20,6 +20,7 @@ import { dirname, join } from "node:path";
 import { resolveHome } from "./config.ts";
 import { t, type MsgKey } from "./i18n.ts";
 import { switchTriggerFor, type SwitchRecord, type SwitchTrigger } from "./providers.ts";
+import { recordQuotaHandoff } from "./quotaHandoff.ts";
 import { monthKeyString } from "./usageLedger.ts";
 
 /** 模型切换审计文件（SIEM 导出第 7 个来源，见 costCaps.ts 的 AUDIT_SOURCES）。 */
@@ -44,6 +45,11 @@ export interface ModelSwitchAuditEntry {
   status: number | null;
   /** 已脱敏、截断的真实报错原文。 */
   error: string;
+  /**
+   * Kooyu 429 接力：限流/配额切换时配的接力摘要 id（quota-handoffs.jsonl
+   * 里的那条）。可选字段、只在有摘要时才带——旧审计行的精确比对不受影响。
+   */
+  handoff_id?: string;
 }
 
 /**
@@ -77,6 +83,19 @@ export function recordModelSwitch(
   try {
     const resolved = resolveHome(home);
     const at = opts?.at ?? new Date();
+    // Kooyu 429 接力：切换记录上挂了接力摘要时，顺带把摘要存进
+    // quota-handoffs.jsonl（幂等：同 id 只存一次）。存失败不拦审计——
+    // 审计本身还要照常记，接力记录丢了只影响“续跑时查摘要”，不影响
+    // “切换留痕”这条主线。
+    let handoffId: string | undefined;
+    if (record.handoff) {
+      handoffId = record.handoff.id;
+      try {
+        recordQuotaHandoff(home, record.handoff);
+      } catch {
+        // 落盘失败不抛错，审计继续记。
+      }
+    }
     const entry: ModelSwitchAuditEntry = {
       at: at.toISOString(),
       run_id: opts?.runId ?? null,
@@ -87,6 +106,7 @@ export function recordModelSwitch(
       kind: record.kind,
       status: record.status ?? null,
       error: scrubSwitchError(record.error, resolved),
+      ...(handoffId ? { handoff_id: handoffId } : {}),
     };
     const path = join(resolved, MODEL_SWITCH_AUDIT_FILE);
     mkdirSync(dirname(path), { recursive: true });
@@ -125,6 +145,7 @@ export function readModelSwitchAudit(home: string): ModelSwitchAuditEntry[] {
           kind: typeof row.kind === "string" ? row.kind : "unknown",
           status: typeof row.status === "number" ? row.status : null,
           error: typeof row.error === "string" ? row.error : "",
+          ...(typeof row.handoff_id === "string" ? { handoff_id: row.handoff_id } : {}),
         });
       } catch {
         continue;
@@ -188,5 +209,10 @@ export function formatModelSwitchNotice(record: SwitchRecord): string {
   const reason = record.error.length > 120 ? record.error.slice(0, 117) + "…" : record.error;
   const trigger = record.trigger ?? switchTriggerFor(record.kind);
   const label = t(`fallback.trigger.${trigger}` as MsgKey);
-  return t("fallback.notice", { from: record.from, reason, to: record.to, trigger: label });
+  const base = t("fallback.notice", { from: record.from, reason, to: record.to, trigger: label });
+  // Kooyu 429 接力：通知里只引用接力摘要的 id 与查看办法，不塞全文——
+  // 全文在 quota-handoffs.jsonl 里，`nyra models handoff <id>` 可看。
+  // 没摘要的切换通知原样不动。
+  if (!record.handoff) return base;
+  return base + t("fallback.handoffRef", { id: record.handoff.id });
 }

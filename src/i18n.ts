@@ -125,6 +125,8 @@ const zh = {
   "fallback.trigger.timeout": "请求超时",
   "fallback.trigger.network": "网络错误",
   "fallback.trigger.other": "调用失败",
+  // Kooyu 429 接力：通知里引用接力摘要的 id 与查看办法（不塞全文；句首带句号，接在 fallback.notice 后面）。
+  "fallback.handoffRef": "。接力摘要已存证（{id}，运行 `nyra models handoff {id}` 查看）",
   "inbox.title": "未读任务通知（{n}）：",
   // /context
   "ctx.empty": "上下文为空，无需优化。",
@@ -851,6 +853,8 @@ const en: Record<MsgKey, string> = {
   "fallback.trigger.timeout": "request timed out",
   "fallback.trigger.network": "network error",
   "fallback.trigger.other": "call failed",
+  // Kooyu 429 handoff: the notice cites the handoff summary id and how to view it (not the full text; leading period joins it to fallback.notice).
+  "fallback.handoffRef": ". Handoff summary saved ({id}; run `nyra models handoff {id}` to view)",
   "inbox.title": "Unread task notifications ({n}):",
   "ctx.empty": "Context is empty; nothing to optimize.",
   "ctx.sysTop": "System prompt is the largest part: check whether AGENTS.md / long-term memory is too long, or trim the resident skill index.",

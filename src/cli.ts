@@ -280,7 +280,7 @@ nyra memory <export|export-prompt|import|local|import-zip|search|forget>  记忆
 nyra soul <show|status|list|init|add|remove|enable|disable|edit|export|import>  Soul 身份层：每 agent 的身份与 Tenets（不变量进规则层、代码拦截；Charter 角色契约见 nyra soul charter <set|show|clear>，详见 docs/soul.md 与 docs/team.md）
 nyra style <learn|show|list|delete|export|import>  分应用文风学习（详见 docs/style.md）
 nyra doctor [--provider 名字]  中文自检：运行时、配置文件、配置目录、Key、网络、磁盘、写权限、密码箱权限
-nyra models [list|show <模型名>|refresh|fallback]   查模型上下文窗口、刷新模型数据、看备用链与本月切换统计（见 docs/model-catalog.md）
+nyra models [list|show <模型名>|refresh|fallback|handoff]   查模型上下文窗口、刷新模型数据、看备用链与本月切换统计、查限流接力摘要（见 docs/model-catalog.md）
 nyra setup                     首次启动向导
 nyra init [--name 名字] [--role researcher|assistant|shopkeeper|custom] [--work 干什么活] [--persona 风格] [--redline 红线] [--agent default] [--yes] [--force]   对话式入职：三个问题（叫什么、干什么活、什么风格/红线）→ 生成 Soul + 按角色预装技能包 + 配置清单确认后生效，确认后发就绪简报（详见 docs/onboarding.md）
 nyra templates <list|show <角色>|apply <角色>|export <角色> <文件>|import <文件>>   一键角色模板：研究员 / 助理 / 店小二（Soul + 技能包 + 权限规则的打包文件，可导出成本地文件分享；导入先验后装；与 nyra template 业务流程模板不同，详见 docs/onboarding.md）
@@ -426,7 +426,7 @@ nyra memory <export|export-prompt|import|local|import-zip|search|forget>  memory
 nyra soul <show|status|list|init|add|remove|enable|disable|edit|export|import>  Soul identity layer: per-agent identity and Tenets (invariants compile into the rule layer and are enforced by code; role Charter via nyra soul charter <set|show|clear>, see docs/soul.md and docs/team.md)
 nyra style <learn|show|list|delete|export|import>  per-channel writing style profiles (see docs/style.md)
 nyra doctor [--provider name]  self-check: runtime, config, home dir, key, network, disk, write access, vault permissions
-nyra models [list|show <model>|refresh|fallback]   look up model context windows, refresh model data, show fallback chain and this month's switches (see docs/model-catalog.md)
+nyra models [list|show <model>|refresh|fallback|handoff]   look up model context windows, refresh model data, show fallback chain and this month's switches, view rate-limit handoff summaries (see docs/model-catalog.md)
 nyra setup                     first-run wizard
 nyra init [--name name] [--role researcher|assistant|shopkeeper|custom] [--work job] [--persona style] [--redline redline] [--agent default] [--yes] [--force]   guided onboarding: three questions (name, job, style/redlines) -> Soul + role skill pack + a reviewable checklist, applied only after you confirm; then a ready briefing (see docs/onboarding.md)
 nyra templates <list|show <role>|apply <role>|export <role> <file>|import <file>>   one-click role templates: researcher / assistant / shopkeeper (Soul + skill pack + permission rules in one pack, shareable as local files; imports are validated first; different from nyra template business-process templates, see docs/onboarding.md)

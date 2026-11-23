@@ -4,11 +4,13 @@
 //   nyra models show <模型名>             看一个模型的窗口、输出上限、计价与来源
 //   nyra models refresh                  从 OpenRouter 公开列表拉取最新数据进缓存
 //   nyra models fallback                 看备用链开关、顺序与本月切换统计
+//   nyra models handoff [id]             列最近的限流接力摘要，或看一条的全文
 //
 // 日常运行不联网；只有 refresh 会发一次公网请求（15 秒超时），失败时旧缓存原样保留。
 import { listCatalog, loadModelCache, lookupBuiltin, lookupCache, refreshModelCache, MODEL_CATALOG_UPDATED, OPENROUTER_MODELS_URL } from "./modelCatalog.ts";
 import { getProviderPresets, loadConfig, resolveFallbackChain, resolveProvider } from "./config.ts";
 import { modelSwitchSummaryLine, summarizeModelSwitches } from "./modelSwitch.ts";
+import { getQuotaHandoff, readQuotaHandoffs, summarizeQuotaHandoffs } from "./quotaHandoff.ts";
 
 function fmtMoney(v: number | null | undefined): string {
   if (typeof v !== "number") return "—";
@@ -57,7 +59,41 @@ export async function handleModels(argv: string[], home: string): Promise<number
     if (summary.count > 0 && summary.last) {
       process.stdout.write(`最近一次报错：${summary.last.error || "（无）"}\n`);
     }
+    // Kooyu 429 接力：本月有接力摘要时露一行（只计数 + 最近一次的 id，
+    // 全文用 `nyra models handoff` 看）；0 次时不打印。
+    const handoffSummary = summarizeQuotaHandoffs(home);
+    if (handoffSummary.count > 0 && handoffSummary.last) {
+      process.stdout.write(`本月限流接力 ${handoffSummary.count} 次（最近一次：${handoffSummary.last.from} → ${handoffSummary.last.to}，接力摘要 ${handoffSummary.last.id}；运行 nyra models handoff 查看）。\n`);
+    }
     process.stdout.write("说明：每次真切换都会立刻通知（终端 stderr、网关事件流、群聊回复内附），并记进模型切换审计（nyra governance audit export 可导出）。\n");
+    return 0;
+  }
+  if (sub === "handoff") {
+    // Kooyu 429 接力：只读查看接力摘要。`nyra models handoff` 列最近 10 条，
+    // `nyra models handoff <id>` 看一条的全文。半自动到此为止——这里只查
+    // 不续跑，续跑是主控或用户手动做的事。
+    const id = rest[0];
+    if (id) {
+      const h = getQuotaHandoff(home, id);
+      if (!h) {
+        process.stderr.write(`没有这条接力摘要：${id}\n`);
+        return 1;
+      }
+      process.stdout.write(`${h.summary}\n`);
+      process.stdout.write(`接力记录：${h.id}（${h.at.slice(0, 16).replace("T", " ")}，${h.from} → ${h.to}，${h.trigger === "quota" ? "用量触顶" : "请求过于频繁"}${h.run_id ? `，运行 ${h.run_id}` : ""}）。\n`);
+      return 0;
+    }
+    const all = readQuotaHandoffs(home).slice(-10).reverse();
+    if (all.length === 0) {
+      process.stdout.write("还没有限流接力摘要。\n");
+      process.stdout.write("说明：限流/配额触发切换时才会生成接力摘要（最近任务 + 最近进展 + 已做修改）；非限流切换没有摘要。\n");
+      return 0;
+    }
+    process.stdout.write("限流接力摘要（最近 10 条，新的在前）：\n");
+    for (const h of all) {
+      process.stdout.write(`${h.id} | ${h.at.slice(0, 16).replace("T", " ")} | ${h.from} → ${h.to} | ${h.trigger === "quota" ? "用量触顶" : "请求过于频繁"} | ${h.lastRequest ? h.lastRequest.slice(0, 40) : "（无最近任务）"}\n`);
+    }
+    process.stdout.write("看一条的全文：nyra models handoff <id>。\n");
     return 0;
   }
   if (sub === "show") {
@@ -91,7 +127,7 @@ export async function handleModels(argv: string[], home: string): Promise<number
     return 0;
   }
   if (sub !== "list") {
-    process.stderr.write("用法：nyra models [list] [--provider 名字]；nyra models show <模型名>；nyra models refresh；nyra models fallback\n");
+    process.stderr.write("用法：nyra models [list] [--provider 名字]；nyra models show <模型名>；nyra models refresh；nyra models fallback；nyra models handoff [id]\n");
     return 2;
   }
   const providerFlag = rest.indexOf("--provider");
