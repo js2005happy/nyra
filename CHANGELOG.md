@@ -1,3 +1,7 @@
+## Unreleased — 2026-11-23 bounded web_fetch network read (static only)
+
+- Cap `web_fetch` response reads at 32,001 bytes and decode at most 32,000 bytes before HTML cleanup. Mark truncated content in both model-visible output and saved evidence so partial pages are not mistaken for complete evidence. No new dependencies or retries. Static review only; tests not run.
+
 ## Unreleased — 2026-11-23 bounded HTTP POST success body (static only)
 
 - Cap successful POST response reads at 32,001 bytes (32,000 decoded maximum), with an explicit marker when remaining bytes were not read. Preserve the existing 8,000-character display truncation, HTTP status reporting, approvals and no-retry semantics. No new dependencies. Static inspection only; tests not run.
