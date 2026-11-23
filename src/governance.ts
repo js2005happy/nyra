@@ -31,6 +31,8 @@ import { businessActionForTool, resolveRedlineTier } from "./businessRedlines.ts
 import { listKanbanTasks } from "./kanban.ts";
 import { appendInbox } from "./tasks.ts";
 import { evaluateTieredCaps, handleCaps, handleAudit } from "./costCaps.ts";
+// G-P2-2：准入账本（admission.ts 是叶模块，只引 node 内置，无循环）。
+import { recordAdmission } from "./admission.ts";
 
 export class GovernanceError extends Error {}
 
@@ -339,6 +341,12 @@ export function publishPolicy(
   });
   mirrorEvent(home, opts.runId ?? null, "policy_changed", {
     policy_version: version, hash: policy.hash.slice(0, 12), reason_hash: shortHash(reason),
+  });
+  // G-P2-2：策略变更记进统一准入账本（只记版本、哈希与范围，不记原因原文）。
+  recordAdmission(home, {
+    kind: "policy_changed", actor: policy.createdBy, subject: scope,
+    policy_version: version, old_policy_version: oldVersion, policy_hash: policy.hash.slice(0, 12),
+    detail: `v${oldVersion} → v${version}`,
   });
 
   // 通知受影响的工单：仍在 active、绑定旧版本 Policy 的授权所覆盖的任务。

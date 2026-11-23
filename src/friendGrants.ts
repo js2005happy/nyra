@@ -16,6 +16,7 @@ import { dirname, join } from "node:path";
 import { resolveNyraHome } from "./memory.ts";
 import { RunStore } from "./runs.ts";
 import { appendPeerAudit } from "./peer.ts";
+import { recordAdmission } from "./admission.ts";
 import { findFriend, isFriend, loadFriendBook } from "./peerCard.ts";
 
 export const FRIEND_GRANTS_FILE = "friend-grants.json";
@@ -153,6 +154,8 @@ export function issueFriendGrant(home: string, peer: string, scope: unknown, ttl
   saveFriendGrants(home, store);
   appendPeerAudit(home, { action: "friend_grant_issued", peer, grant: grant.id, scope: scopes.join(",") });
   recordGrantEvent(home, "friend_grant_issued", { peer, grant_id: grant.id, scope: scopes.join(",") });
+  // G-P2-2：grant 发放记进统一准入账本（只记 token 指纹，不记原文）。
+  recordAdmission(home, { kind: "token_issued", actor: "owner", subject: peer, scope: scopes, token_fingerprint: grant.token_hash.slice(0, 12), detail: `grant ${grant.id}` });
   return { grant, token };
 }
 
@@ -197,6 +200,8 @@ export function revokeFriendGrant(home: string, grantId: string, by = "owner"): 
   saveFriendGrants(home, store);
   appendPeerAudit(home, { action: "friend_grant_revoked", peer: grant.peer, grant: grant.id, by });
   recordGrantEvent(home, "friend_grant_revoked", { peer: grant.peer, grant_id: grant.id });
+  // G-P2-2：grant 吊销记进统一准入账本（吊销本身照样立即生效）。
+  recordAdmission(home, { kind: "token_revoked", actor: by, subject: grant.peer, token_fingerprint: grant.token_hash.slice(0, 12), detail: `grant ${grant.id}` });
   return grant;
 }
 

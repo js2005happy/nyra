@@ -32,6 +32,7 @@ import { randomBytes } from "node:crypto";
 import { resolveNyraHome } from "./memory.ts";
 import { RunStore } from "./runs.ts";
 import { appendPeerAudit } from "./peer.ts";
+import { recordAdmission } from "./admission.ts";
 import { CIRCLE_NAME_RE, findFriend, isFriend, loadFriendBook } from "./peerCard.ts";
 
 export const CIRCLES_FILE = "circles.json";
@@ -244,6 +245,8 @@ export function inviteToCircle(home: string, opts: { circle: string; identity: s
   saveCircleBook(home, book);
   appendPeerAudit(home, { action: "circle_invited", circle: opts.circle, peer: opts.identity, by, channel });
   recordCircleEvent(home, "circle_invited", { circle: opts.circle, peer: opts.identity, by, channel });
+  // G-P2-2：进圈记进统一准入账本（写失败不破坏入圈本身）。
+  recordAdmission(home, { kind: "member_joined", actor: by, subject: opts.identity, circle: opts.circle, role: "friend", detail: `channel ${channel}` });
   return member;
 }
 
@@ -259,6 +262,8 @@ export function revokeFromCircle(home: string, circleName: string, identity: str
   saveCircleBook(home, book);
   appendPeerAudit(home, { action: "circle_revoked", circle: circleName, peer: identity, by: who });
   recordCircleEvent(home, "circle_revoked", { circle: circleName, peer: identity, by: who });
+  // G-P2-2：离圈记进统一准入账本（写失败不破坏撤销本身）。
+  recordAdmission(home, { kind: "member_left", actor: who, subject: identity, circle: circleName });
 }
 
 /** 该身份在哪些圈里（机主不在任何圈里也照样准入，见 isAdmitted）。 */

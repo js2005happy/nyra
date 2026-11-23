@@ -37,6 +37,8 @@ import { RunStore} from "./runs.ts";
 import { loadSoul, resolveSoulAgentId} from "./soul.ts";
 // 第 3 批 G-P1-7：名片签名（cardSignature 不静态 import peerCard，无循环）。
 import { loadSigningKey, signAgentCard, generateSigningKeypair, saveSigningKey, jwkThumbprint, pinCardKey, cardKeyStatus } from "./cardSignature.ts";
+// G-P2-2：准入账本（admission.ts 是叶模块，只引 node 内置，无循环）。
+import { recordAdmission } from "./admission.ts";
 
 export const PEER_CARD_PATH = "/.well-known/agent-card.json";
 export const FRIENDS_FILE = "friends.json";
@@ -634,6 +636,8 @@ export function acceptFriend(home: string, opts: { name: string; circle?: string
   saveFriendBook(home, book);
   appendPeerAudit(home, { action: "friend_accepted", peer: opts.name, circle, tier });
   recordFriendEvent(home, "friend_accepted", { peer: opts.name, circle, tier });
+  // G-P2-2：好友批准记进统一准入账本（写失败不破坏批准本身）。
+  recordAdmission(home, { kind: "friend_approved", actor: "owner", subject: opts.name, circle, role: tier, detail: `tier ${tier}` });
   return entry;
 }
 
@@ -648,6 +652,8 @@ export function declineFriend(home: string, name: string): FriendEntry {
   saveFriendBook(home, book);
   appendPeerAudit(home, { action: "friend_declined", peer: name });
   recordFriendEvent(home, "friend_declined", { peer: name });
+  // G-P2-2：好友拒绝同样记进统一准入账本（审计缺了拒绝就不完整）。
+  recordAdmission(home, { kind: "friend_declined", actor: "owner", subject: name });
   return entry;
 }
 

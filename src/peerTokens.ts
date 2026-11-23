@@ -17,6 +17,7 @@
 import { Vault, getCredential, vaultPath } from "./vault.ts";
 import { fetchAgentCard, type AgentCard, type CardFetchDeps } from "./peerCard.ts";
 import { RunStore } from "./runs.ts";
+import { admissionFingerprint, recordAdmission } from "./admission.ts";
 import { join } from "node:path";
 import { resolveNyraHome } from "./memory.ts";
 
@@ -67,6 +68,8 @@ export function setPeerToken(home: string, peer: string, token: string, password
   const vault = openVault(home, password);
   vault.add(entryName(peer), t, true);
   recordTokenEvent(home, "peer_token_set", { peer });
+  // G-P2-2：出站 token 存入记进统一准入账本（只记 token 指纹，不记原文）。
+  recordAdmission(home, { kind: "token_issued", actor: "owner", subject: peer, token_fingerprint: admissionFingerprint(t) });
 }
 
 /** 静默读一条出站 token：没密码箱、没密码、密码错、没条目时一律返回 null。 */
@@ -82,6 +85,8 @@ export function revokePeerToken(home: string, peer: string, password: string): b
   const had = vault.get(entryName(peer)) !== null;
   if (had) vault.remove(entryName(peer));
   if (had) recordTokenEvent(home, "peer_token_revoked", { peer });
+  // G-P2-2：出站 token 吊销记进统一准入账本（只在真删掉一条时记）。
+  if (had) recordAdmission(home, { kind: "token_revoked", actor: "owner", subject: peer });
   return had;
 }
 
