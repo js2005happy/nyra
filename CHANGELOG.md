@@ -1,3 +1,7 @@
+## Unreleased — 2026-11-24 HTTP POST structured outcome (static only)
+
+- HTTP POST now reports trusted in-process transport status independently of remote response text. 2xx is `reported_ok` (not side-effect verification), non-2xx/HTTPError is `reported_error`, and transport exceptions are `unknown`. Legacy string dispatch and approval-once behavior remain; no automatic retries, new dependencies or account actions. Static inspection only; tests and CI not run.
+
 ## Unreleased — 2026-11-24 local shell structured outcome (static only)
 
 - Local shell tool reports now derive success/failure from subprocess return codes rather than model-visible stdout/stderr text. Timeout remains unknown, not successful. Remote execution, approvals, output and no-retry semantics remain unchanged. Static source review only; tests and CI not run.
