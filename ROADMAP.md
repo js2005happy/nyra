@@ -1,3 +1,10 @@
+## 2026-11-24 — HTTP POST 结构化报告（静态审查）
+
+- **源码事实**：现有 HTTP POST 已有非 2xx 文本失败提示，但 Agent 仍使用字符串前缀判断结果。此次只将 POST 的进程内 HTTP 状态独立交给 `StructuredToolReport`；2xx 是 reported_ok（不是业务验收），非 2xx/HTTPError 为 reported_error，传输异常为 unknown；不自动重试。保留旧字符串接口和审批。
+- **公开用户反馈（2026-11-24 核对）**：[Codex #58569](https://github.com/openai/codex/issues/58569)（2026-11 月报告）记录本地操作完成后模型继续请求 HTTP 400 中断；[Codex #59305](https://github.com/openai/codex/issues/59305)（2026-11-04）提出工具终态与后续模型请求解耦。均为外部个案，不代表 Angel 故障率，亦不证明 Angel 发生同样故障。
+- **工程推断及排序（价值/实现难度/安全风险/依赖）**：① P1 HTTP POST 结构化状态 高/低/中/现有 Agent 与工具契约（本轮静态完成）；② P1 远端 Shell 结构化状态 高/高/高/可信远端执行协议（待做）；③ P1 其他工具输出隐私审查 高/中/中/工具兼容（待做）；④ P1 预模型、预记录隐私保护 高/高/高/脱敏与同意策略（研究）；⑤ P1 独立副作用验收回执 高/高/高/可信读回（阻塞）；⑥ P2 大型输出可恢复存储 中高/高/中/私有产物权限（研究）。
+- **限制**：不验证远端业务成功、不对未知结果重试；未运行测试或 CI，跨平台行为未验证。
+
 ## P1 — structured local shell reports (2026-11-24; static only)
 
 - **Observed source fact:** local shell returned text only, and the Agent classified the result by `错误：` prefixes. A zero-exit command printing that prefix could be logged as a failure. **Engineering inference:** in-process exit metadata is more reliable than text heuristics; it is not external side-effect verification.
