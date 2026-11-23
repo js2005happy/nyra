@@ -92,7 +92,39 @@ Nyra 的三层存储正好对得上，写清分工、不要混用：
   升级）与 `active_memory_escalated`（档位、命中数），只记数字与档位，
   不记召回内容原文。
 - **不在本批**：模型 agent 深挖（deep 是更宽的确定性搜索，不是模型
-  agent）；对话里自动提炼记忆（G-P1-34，另排）；向量检索（另算）。
+  agent）；对话里自动提炼记忆见下节（G-P1-34）；向量检索（另算）。
+
+## 对话里自动提炼记忆（G-P1-34，Pi memory-extraction 借鉴）
+
+- Pi 的做法：模型一次最多提 5 条候选（add/update、scope 分 user/bot/
+  group、category 分 about_you/work/how_to、正文最多 300 字），zod
+  全量校验；组织结果只以“用户确认的提议”落盘。Nyra 的确定性版本
+  （`src/memoryProposals.ts`）：**不调模型、不花 token**，只认用户消息
+  里的显式表态——“记住……”（显式让记）、“我是/我叫/我喜欢/我不喜欢/
+  我的……是”（身份与偏好）、“以后/今后/下次/每次……”开头的长期指令；
+  任务里的临时要求、闲聊、转述一律不提。一次提炼最多 5 条新候选，
+  单条正文最多 300 字，category 分 about_you/work/how_to（work 由
+  “工作/项目/客户/公司/老板/同事/会议”这些词判定）。
+- **待确认队列**：候选先进 `~/.nyra/memory-proposals.json`（0600 原子
+  写，损坏先备份再回空账本），绝不直接写进 MEMORY.md 或结构化记忆库；
+  同一规范化正文在队列里已有（无论 pending/confirmed/rejected）或已进
+  结构化记忆库的，不再重复提。
+- **对话结束自动提炼**：`src/agent.ts` 的 runLoopInner 在回复结束时跑一
+  次抽取（只主对话——子 agent 与无人值守巡查不提炼，提炼失败绝不破坏
+  本次回复）；新运行事件 `memory_proposal_extracted`（会话、新增几条、
+  队列共几条）只记数字，不记候选内容原文。
+- **人工确认**：`nyra memory extract <会话 id>` 从指定会话的对话记录里
+  手动提炼一次；`nyra memory review` 列出待确认的候选（`--status` 可看
+  confirmed/rejected 的）；`nyra memory review approve <id>
+  [--content <改后正文>]` 确认进库，`nyra memory review reject <id>
+  [--reason <原因>]` 拒绝。确认进库时过记忆证据门（逐字依据对照提炼
+  时的用户原话 + 秘密拦截），没过的留在队列里（status 仍是 pending，
+  decisionReason 记原因码），拒绝记进拒绝账本；拒绝的决定同样记进拒绝
+  账本（action `proposal_reject`）与证据文件 `evidence/memory/`；决定
+  的运行事件 `memory_proposal_decided`（候选 id、决定、进库条目 id）
+  已注册进 EVENT_FIELDS。
+- **不在本批**：模型提炼（Pi 的模型一次提 5 条本批没做，确定性规则先行）；
+  向量检索（另算）；组织记忆（scope 只认 user，org 走证据门的老路）。
 
 ## 缺口 2：删除与控制
 
