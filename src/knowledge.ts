@@ -1,5 +1,7 @@
 // src/knowledge.ts — 本地 AI 知识库，与 Python 版 nyra/knowledge.py 同语义。
-// kb.json + notes.jsonl；分块 ≤1500 字；BM25（英文词 + 中文单字与二元组）；
+// kb.json + notes.jsonl；父块 ≤1500 字、子块 ≤300 字（parent-child：子块
+// 精确匹配、命中后返回父块）；BM25（英文词 + 中文单字与二元组）+ 确定性
+// rerank（覆盖率 + 标题命中）；PDF 抽取支持 ToUnicode CMap 中文；
 // ask 只按库内笔记回答，库内没有就直说不知道，不编造。
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeSync, fsyncSync } from "node:fs";
 import { join, basename, extname } from "node:path";
@@ -10,6 +12,14 @@ import { EvidenceStore } from "./evidence.ts";
 
 export const MAX_NOTE_CHARS = 1500;
 export const MIN_NOTE_CHARS = 200;
+/** 缺口 33 第二批：parent-child 分块——父块仍 ≤1500 字，子块 ≤300 字
+ *（子块精确匹配、命中后返回父块补上下文）。 */
+export const MAX_CHILD_CHARS = 300;
+/** rerank 候选数：先取 topK 的该倍数个 BM25 候选再重排。 */
+export const RERANK_CANDIDATES_MULT = 3;
+/** 确定性 rerank 权重（见 rerankCandidates）：覆盖率加成与标题命中加成。 */
+export const COVERAGE_BOOST = 0.3;
+export const TITLE_BOOST = 0.2;
 /** 单个 PDF 超过该大小不收录（最小抽取不值得为超大文件扛内存）。 */
 export const MAX_PDF_BYTES = 20 * 1024 * 1024;
 /** 笔记数达到该值时 searchAsync 把评分挪到 worker 池（低于则同步算）。 */
@@ -33,6 +43,12 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export interface Note {
   id: string; title: string; source: string; date: string; text: string; created_at: string;
+  /** 缺口 33 第二批 parent-child：子块才有，指向父块 id。 */
+  parentId?: string;
+  /** 缺口 33 第二批：子块为 "child"，父块不填（老库笔记同样不填，视为父块）。 */
+  kind?: "child";
+  /** 检索时填：命中该父块的子块原文（只活在内存里，不落盘）。 */
+  matchExcerpt?: string;
 }
 
 function today(): string { return new Date().toISOString().slice(0, 10); }
@@ -138,6 +154,31 @@ export function chunkText(text: string, fallbackTitle: string): [string, string]
   return numbered;
 }
 
+/** 缺口 33 第二批：把父块切成子块（≤300 字，句末优先断开）。
+ * 子块只用于精确匹配，命中后返回父块；父块太短（≤300 字）时不另切，
+ * 检索直接按父块走，行为与第一批一致。 */
+export function chunkChildren(parentText: string): string[] {
+  if (parentText.length <= MAX_CHILD_CHARS) return [];
+  const sentences: string[] = [];
+  let buf = "";
+  for (const ch of parentText) {
+    buf += ch;
+    if ("。！？；\n.!?;".includes(ch)) { if (buf.trim()) sentences.push(buf.trim()); buf = ""; }
+  }
+  if (buf.trim()) sentences.push(buf.trim());
+  if (!sentences.length) return [parentText];
+  const children: string[] = [];
+  let cur = "";
+  for (const s of sentences) {
+    for (const piece of splitLong(s, MAX_CHILD_CHARS)) {
+      if (cur && cur.length + piece.length > MAX_CHILD_CHARS) { children.push(cur); cur = piece; }
+      else cur = cur ? cur + piece : piece;
+    }
+  }
+  if (cur) children.push(cur);
+  return children.filter(Boolean);
+}
+
 export function extractPageText(rawHtml: string): [string, string] {
   const titleMatch = /<title[^>]*>(.*?)<\/title>/is.exec(rawHtml);
   const title = titleMatch ? decodeEntities(titleMatch[1].replace(/\s+/g, " ").trim()) : "";
@@ -161,12 +202,234 @@ function decodeEntities(s: string): string {
     .replace(/&#x([0-9a-fA-F]+);/g, (_m, n) => String.fromCodePoint(parseInt(n, 16)));
 }
 
-/** 缺口 33：最小可用的 PDF 文本抽取——只处理 FlateDecode 压缩与未压缩的
- * 内容流，取括号字面量字符串（Tj / TJ 运算符的参数）。不处理 ToUnicode
- * 映射、十六进制字符串、加密与扫描件：抽不出来的返回空串，调用方直接报错，
- * 不假装读到了。图片流（DCT/JPX/CCITT/JBIG2）直接跳过，不把二进制垃圾当正文。 */
+/** 缺口 33 第二批：ToUnicode CMap 解析（bfchar / bfrange，含数组式
+ * bfrange）。目标串按 UTF-16BE 解（代理对拼成一个码点）。返回映射与
+ * 码长（由 codespacerange 推断：<00>-<FF> 为 1 字节，<0000>-<FFFF> 为 2 字节）。 */
+export function parseToUnicodeCMap(cmapText: string): { map: Map<number, string>; codeSize: number } {
+  const map = new Map<number, string>();
+  let codeSize = 2;
+  const spacer = /begincodespacerange([\s\S]*?)endcodespacerange/.exec(cmapText);
+  if (spacer) {
+    const m = /<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>/.exec(spacer[1]);
+    if (m) codeSize = m[1].length / 2;
+  }
+  const decodeTarget = (hex: string): string => {
+    const bytes: number[] = [];
+    for (let i = 0; i + 1 < hex.length; i += 2) bytes.push(parseInt(hex.slice(i, i + 2), 16));
+    let out = "";
+    for (let i = 0; i + 1 < bytes.length; i += 2) {
+      const unit = (bytes[i] << 8) | bytes[i + 1];
+      if (unit >= 0xd800 && unit <= 0xdbff && i + 3 < bytes.length) {
+        const lo = (bytes[i + 2] << 8) | bytes[i + 3];
+        if (lo >= 0xdc00 && lo <= 0xdfff) {
+          out += String.fromCodePoint(0x10000 + ((unit - 0xd800) << 10) + (lo - 0xdc00));
+          i += 2;
+          continue;
+        }
+      }
+      out += String.fromCodePoint(unit);
+    }
+    return out;
+  };
+  const charRe = /beginbfchar([\s\S]*?)endbfchar/g;
+  let block: RegExpExecArray | null;
+  while ((block = charRe.exec(cmapText)) !== null) {
+    const lineRe = /<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>/g;
+    let line: RegExpExecArray | null;
+    while ((line = lineRe.exec(block[1])) !== null) map.set(parseInt(line[1], 16), decodeTarget(line[2]));
+  }
+  const rangeRe = /beginbfrange([\s\S]*?)endbfrange/g;
+  while ((block = rangeRe.exec(cmapText)) !== null) {
+    const itemRe = /<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*(?:<([0-9A-Fa-f]+)>|\[([^\]]*)\])/g;
+    let item: RegExpExecArray | null;
+    while ((item = itemRe.exec(block[1])) !== null) {
+      const lo = parseInt(item[1], 16);
+      const hi = parseInt(item[2], 16);
+      if (item[3] !== undefined) {
+        const baseCode = decodeTarget(item[3]).codePointAt(0) ?? 0;
+        for (let c = lo; c <= hi; c++) map.set(c, String.fromCodePoint(baseCode + (c - lo)));
+      } else if (item[4] !== undefined) {
+        const parts = [...item[4].matchAll(/<([0-9A-Fa-f]+)>/g)];
+        parts.forEach((p, i) => map.set(lo + i, decodeTarget(p[1])));
+      }
+    }
+  }
+  return { map, codeSize };
+}
+
+/** 按 CMap 把一串字形编号字节解成文字。先按 CMap 的码长试，不行再试
+ * 另一码长；映射率低于一半返回 null（调用方直接跳过该串，不返回乱码）。 */
+function decodeWithCmap(bytes: number[], cmap: { map: Map<number, string>; codeSize: number }): string | null {
+  const steps = cmap.codeSize === 2 ? [2, 1] : [1, 2];
+  for (const step of steps) {
+    let out = "";
+    let mapped = 0;
+    let total = 0;
+    for (let i = 0; i + step <= bytes.length; i += step) {
+      total++;
+      let code = 0;
+      for (let j = 0; j < step; j++) code = (code << 8) | bytes[i + j];
+      const ch = cmap.map.get(code);
+      if (ch !== undefined) { out += ch; mapped++; }
+    }
+    if (total && mapped / total >= 0.5) return out;
+  }
+  return null;
+}
+
+function decodeUtf16Be(bytes: number[]): string {
+  let out = "";
+  for (let i = 0; i + 1 < bytes.length; i += 2) {
+    const unit = (bytes[i] << 8) | bytes[i + 1];
+    if (unit >= 0xd800 && unit <= 0xdbff && i + 3 < bytes.length) {
+      const lo = (bytes[i + 2] << 8) | bytes[i + 3];
+      if (lo >= 0xdc00 && lo <= 0xdfff) {
+        out += String.fromCodePoint(0x10000 + ((unit - 0xd800) << 10) + (lo - 0xdc00));
+        i += 2;
+        continue;
+      }
+    }
+    out += String.fromCodePoint(unit);
+  }
+  return out;
+}
+
+/** 括号字面量里的转义还原成字节（\( \) \\ \n \r \t 与 \ddd 八进制）。 */
+function unescapePdfBytes(inner: string): number[] {
+  const bytes: number[] = [];
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i];
+    if (ch === "\\" && i + 1 < inner.length) {
+      const next = inner[i + 1];
+      if (next === "n") { bytes.push(0x0a); i++; }
+      else if (next === "r") { bytes.push(0x0d); i++; }
+      else if (next === "t") { bytes.push(0x09); i++; }
+      else if (next === "(" || next === ")" || next === "\\") { bytes.push(next.charCodeAt(0)); i++; }
+      else if (next >= "0" && next <= "7") {
+        let oct = next;
+        let j = i + 2;
+        while (j < inner.length && j < i + 4 && inner[j] >= "0" && inner[j] <= "7") { oct += inner[j]; j++; }
+        bytes.push(parseInt(oct, 8) & 0xff);
+        i = j - 1;
+      } else { bytes.push(next.charCodeAt(0)); i++; }
+    } else bytes.push(ch.charCodeAt(0) & 0xff);
+  }
+  return bytes;
+}
+
+function inflateStream(raw: Buffer, dict: string): string | null {
+  if (dict.includes("/FlateDecode")) {
+    try { return inflateSync(raw).toString("latin1"); }
+    catch { return null; }
+  }
+  return raw.toString("latin1");
+}
+
+/** 缺口 33 第二批：PDF 文本抽取 v2——第一批只取括号字面量字符串，
+ * 中文 PDF 通常进不了。本批加：十六进制字符串 + ToUnicode CMap
+ *（bfchar / bfrange）+ 内容流里的当前字体跟踪（Tf）。
+ * 仍不支持：无 ToUnicode 且非 ASCII 的十六进制串（那是字形编号，
+ * 宁可不返回也不返回乱码）、/Differences 自定义编码、加密与扫描件。
+ * 图片流（DCT/JPX/CCITT/JBIG2）直接跳过，不把二进制垃圾当正文。 */
 export function extractPdfText(buf: Buffer): string {
   const latin1 = buf.toString("latin1");
+  interface PdfObj { dict: string; stream: Buffer | null }
+  const objects = new Map<number, PdfObj>();
+  const objRe = /(\d+)\s+\d+\s+obj\b/g;
+  let om: RegExpExecArray | null;
+  while ((om = objRe.exec(latin1)) !== null) {
+    const num = parseInt(om[1], 10);
+    const bodyStart = om.index + om[0].length;
+    const endObj = latin1.indexOf("endobj", bodyStart);
+    const bodyEnd = endObj < 0 ? latin1.length : endObj;
+    const streamIdx = latin1.indexOf("stream", bodyStart);
+    let dict = "";
+    let stream: Buffer | null = null;
+    if (streamIdx >= 0 && streamIdx < bodyEnd) {
+      dict = latin1.slice(bodyStart, streamIdx);
+      let dataStart = streamIdx + 6;
+      if (latin1[dataStart] === "\r" && latin1[dataStart + 1] === "\n") dataStart += 2;
+      else if (latin1[dataStart] === "\n" || latin1[dataStart] === "\r") dataStart += 1;
+      const dataEnd = latin1.indexOf("endstream", dataStart);
+      if (dataEnd >= 0) stream = Buffer.from(latin1.slice(dataStart, dataEnd), "latin1");
+    } else dict = latin1.slice(bodyStart, bodyEnd);
+    objects.set(num, { dict, stream });
+  }
+  if (!objects.size) return extractPdfTextLegacy(latin1);
+  // 字体 → ToUnicode CMap 对象号；CMap 对象号 → 解析后的映射。
+  const fontCmapObj = new Map<number, number>();
+  for (const [num, obj] of objects) {
+    const m = /\/ToUnicode\s+(\d+)\s+\d+\s+R/.exec(obj.dict);
+    if (m) fontCmapObj.set(num, parseInt(m[1], 10));
+  }
+  const cmapByObj = new Map<number, { map: Map<number, string>; codeSize: number }>();
+  for (const cmapNum of new Set(fontCmapObj.values())) {
+    const obj = objects.get(cmapNum);
+    if (!obj || !obj.stream) continue;
+    const text = inflateStream(obj.stream, obj.dict);
+    if (text !== null) cmapByObj.set(cmapNum, parseToUnicodeCMap(text));
+  }
+  // 页面 Resources 里的字体名 → CMap。
+  const fontNameToCmap = new Map<string, { map: Map<number, string>; codeSize: number }>();
+  for (const obj of objects.values()) {
+    const fontDict = /\/Font\s*<<([\s\S]*?)>>/.exec(obj.dict);
+    if (!fontDict) continue;
+    const entryRe = /\/([A-Za-z0-9_]+)\s+(\d+)\s+\d+\s+R/g;
+    let e: RegExpExecArray | null;
+    while ((e = entryRe.exec(fontDict[1])) !== null) {
+      const cmapNum = fontCmapObj.get(parseInt(e[2], 10));
+      if (cmapNum !== undefined) {
+        const cmap = cmapByObj.get(cmapNum);
+        if (cmap) fontNameToCmap.set(e[1], cmap);
+      }
+    }
+  }
+  const texts: string[] = [];
+  const IMAGE_RE = /\/(Image|DCTDecode|JPXDecode|CCITTFaxDecode|JBIG2Decode|Crypt)\b/;
+  for (const [num, obj] of objects) {
+    if (!obj.stream) continue;
+    if (cmapByObj.has(num)) continue;
+    if (IMAGE_RE.test(obj.dict)) continue;
+    if (/\/Type\s*\/Metadata\b/.test(obj.dict)) continue;
+    const content = inflateStream(obj.stream, obj.dict);
+    if (content === null || content.includes("/CIDInit")) continue;
+    let currentFont: string | null = null;
+    const tokenRe = /\/([A-Za-z0-9_]+)\s+[+-]?[\d.]+\s+Tf|\((?:\\.|[^\\()])*\)|<([0-9A-Fa-f\s]+)>/g;
+    let tok: RegExpExecArray | null;
+    while ((tok = tokenRe.exec(content)) !== null) {
+      const m0 = tok[0];
+      if (tok[1] !== undefined) { currentFont = tok[1]; continue; }
+      const cmap = currentFont ? fontNameToCmap.get(currentFont) : undefined;
+      if (m0.startsWith("(")) {
+        const bytes = unescapePdfBytes(m0.slice(1, -1));
+        let text: string | null = null;
+        if (cmap) text = decodeWithCmap(bytes, cmap);
+        // 有 CMap 却解不出来、且全是可打印 ASCII 时才回退 latin1（同一内容流
+        // 里十六进制中文串与括号 ASCII 串混用的情况）；含非 ASCII 字节时直接
+        // 跳过，不回退成乱码。无 CMap 时按老口径当 latin1 文本。
+        if (text === null && bytes.every((b) => (b >= 0x20 && b <= 0x7e) || b === 0x0a || b === 0x0d || b === 0x09)) text = Buffer.from(bytes).toString("latin1");
+        if (text === null && !cmap) text = Buffer.from(bytes).toString("latin1");
+        if (text !== null && text.trim()) texts.push(text);
+      } else {
+        const hex = (tok[2] ?? "").replace(/\s+/g, "");
+        if (!hex) continue;
+        const bytes: number[] = [];
+        for (let i = 0; i + 1 < hex.length; i += 2) bytes.push(parseInt(hex.slice(i, i + 2), 16));
+        if (hex.length % 2 === 1) bytes.push(parseInt(hex.slice(-1) + "0", 16));
+        let text: string | null = null;
+        if (cmap) text = decodeWithCmap(bytes, cmap);
+        else if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) text = decodeUtf16Be(bytes.slice(2));
+        else if (bytes.every((b) => b < 0x80)) text = Buffer.from(bytes).toString("latin1");
+        if (text !== null && text.trim()) texts.push(text);
+      }
+    }
+  }
+  return texts.join("\n").replace(/[ \t]+/g, " ").replace(/\n\s*\n+/g, "\n\n").trim();
+}
+
+/** 结构损坏到解析不出任何对象时的兜底：按第一批的老口径，只扫内容流
+ * 里的括号字面量字符串（图片流跳过）。 */
+function extractPdfTextLegacy(latin1: string): string {
   const texts: string[] = [];
   const streamRe = /stream\r?\n/g;
   let m: RegExpExecArray | null;
@@ -180,19 +443,11 @@ export function extractPdfText(buf: Buffer): string {
       continue;
     }
     const raw = Buffer.from(latin1.slice(start, end), "latin1");
-    let content: string;
-    if (dict.includes("/FlateDecode")) {
-      try { content = inflateSync(raw).toString("latin1"); }
-      catch { streamRe.lastIndex = end; continue; }
-    } else {
-      content = raw.toString("latin1");
-    }
+    const content = inflateStream(raw, dict);
+    if (content === null) { streamRe.lastIndex = end; continue; }
     for (const lit of content.match(/\((?:\\.|[^\\()])*\)/g) ?? []) {
-      const inner = lit.slice(1, -1)
-        .replace(/\\([()\\])/g, "$1")
-        .replace(/\\n/g, "\n").replace(/\\r/g, "\r").replace(/\\t/g, "\t")
-        .replace(/\\([0-7]{1,3})/g, (_x, oct) => String.fromCharCode(parseInt(oct, 8)));
-      if (inner.trim()) texts.push(inner);
+      const text = Buffer.from(unescapePdfBytes(lit.slice(1, -1))).toString("latin1");
+      if (text.trim()) texts.push(text);
     }
     streamRe.lastIndex = end;
   }
@@ -282,6 +537,26 @@ export interface KnowledgeSearchOptions {
   source?: string;
   dateFrom?: string;
   dateTo?: string;
+  /** 缺口 33 第二批：默认开确定性 rerank；false 时只按 BM25 排序（测试台调参对比用）。 */
+  rerank?: boolean;
+}
+
+/** 缺口 33 第二批：确定性 rerank——BM25 分数 ×（1 + 覆盖率加成 + 标题命中加成）。
+ * 覆盖率 = 查询词在命中文本里的去重覆盖比例；标题命中 = 标题含任一查询词。
+ * 只调顺序、不改 BM25 本身；权重见 COVERAGE_BOOST / TITLE_BOOST。 */
+export function rerankCandidates(
+  queryTokens: string[],
+  candidates: { bm25: number; title: string; text: string }[],
+): number[] {
+  const distinct = [...new Set(queryTokens)];
+  return candidates.map((c) => {
+    const textTokens = new Set(tokenize(c.text));
+    const covered = distinct.filter((t) => textTokens.has(t)).length;
+    const coverage = distinct.length ? covered / distinct.length : 0;
+    const titleTokens = new Set(tokenize(c.title));
+    const titleHit = distinct.some((t) => titleTokens.has(t)) ? 1 : 0;
+    return c.bm25 * (1 + COVERAGE_BOOST * coverage + TITLE_BOOST * titleHit);
+  });
 }
 
 export class KnowledgeBase {
@@ -342,7 +617,8 @@ export class KnowledgeBase {
         const meta = JSON.parse(readFileSync(metaPath, "utf-8")) as Record<string, unknown>;
         const name = (meta.name as string) || entry;
         let count = 0;
-        try { count = this.loadNotes(name).length; } catch { count = 0; }
+        // 缺口 33 第二批：只计父块，子块不占条数。
+        try { count = this.loadNotes(name).filter((n) => n.kind !== "child").length; } catch { count = 0; }
         out.push({ ...meta, notes: count });
       } catch { continue; }
     }
@@ -365,12 +641,22 @@ export class KnowledgeBase {
     const notes = this.loadNotes(name);
     const added: Note[] = [];
     for (const [chunkTitle, chunkBody] of chunkText(text, title)) {
-      added.push({
+      const parent: Note = {
         id: randomBytes(6).toString("hex"), title: chunkTitle, source,
         date: noteDate, text: chunkBody, created_at: created,
-      });
+      };
+      added.push(parent);
+      notes.push(parent);
+      // 缺口 33 第二批 parent-child：父块再切子块（≤300 字），子块只用于
+      // 精确匹配，命中后返回父块全文；返回给调用方仍是父块。
+      for (const childText of chunkChildren(chunkBody)) {
+        notes.push({
+          id: randomBytes(6).toString("hex"), title: chunkTitle, source,
+          date: noteDate, text: childText, created_at: created,
+          parentId: parent.id, kind: "child",
+        });
+      }
     }
-    notes.push(...added);
     this.saveNotes(name, notes);
     return added;
   }
@@ -440,7 +726,10 @@ export class KnowledgeBase {
   }
 
   /** 缺口 33：检索参数面（Dify 已验证的三样）——TopK、最低分阈值、
-   * 元数据过滤（来源子串、日期范围）。非法参数直接抛错，不静默回默认。 */
+   * 元数据过滤（来源子串、日期范围）。非法参数直接抛错，不静默回默认。
+   * 缺口 33 第二批：评分单元是子块（有子块的库）或父块（老库/短块）；
+   * 先取 topK×3 个 BM25 候选做确定性 rerank，再按父块归并（同一父块
+   * 只留最高分的那块，返回父块全文 + matchExcerpt 命中子块）。 */
   searchWithOptions(name: string, query: string, opts: KnowledgeSearchOptions = {}): [number, Note][] {
     const notes = this.loadNotes(name);
     const queryTokens = tokenize(query || "");
@@ -449,6 +738,7 @@ export class KnowledgeBase {
     const topK = opts.topK === undefined ? 5 : opts.topK;
     if (opts.minScore !== undefined && (typeof opts.minScore !== "number" || Number.isNaN(opts.minScore) || opts.minScore < 0)) throw new KnowledgeError("最低分须是不小于 0 的数字");
     const minScore = opts.minScore === undefined ? 0 : opts.minScore;
+    if (opts.rerank !== undefined && typeof opts.rerank !== "boolean") throw new KnowledgeError("rerank 须是 true 或 false");
     const dateFrom = opts.dateFrom === undefined ? null : checkDate(opts.dateFrom);
     const dateTo = opts.dateTo === undefined ? null : checkDate(opts.dateTo);
     if (dateFrom && dateTo && dateFrom > dateTo) throw new KnowledgeError("开始日期不能晚于结束日期");
@@ -457,10 +747,50 @@ export class KnowledgeBase {
       (dateFrom === null || (n.date ?? "") >= dateFrom) &&
       (dateTo === null || (n.date ?? "") <= dateTo));
     if (!filtered.length) return [];
-    const docTokens = filtered.map((n) => tokenize(n.text ?? ""));
-    return scoreBm25(queryTokens, docTokens, topK)
-      .filter(([score]) => score >= minScore)
-      .map(([score, i]) => [score, filtered[i]] as [number, Note]);
+    const units = this.scoringUnits(filtered);
+    const docTokens = units.map((n) => tokenize(n.text ?? ""));
+    const scored = scoreBm25(queryTokens, docTokens, Math.max(topK * RERANK_CANDIDATES_MULT, topK));
+    return this.rankNotes(filtered, queryTokens, scored, units, { topK, minScore, rerank: opts.rerank !== false });
+  }
+
+  /** 评分单元：子块 + 没有子块的父块（短父块本身就是评分单元，不丢内容）。 */
+  private scoringUnits(filtered: Note[]): Note[] {
+    const childParentIds = new Set(filtered.filter((n) => n.kind === "child").map((n) => n.parentId));
+    return filtered.filter((n) => n.kind === "child" || !childParentIds.has(n.id));
+  }
+
+  /** 把 BM25 候选排成最终结果：rerank（默认开）→ 子块按父块归并
+   *（同一父块只留最高分那块，父块上挂 matchExcerpt）→ 取前 topK → 过最低分。 */
+  private rankNotes(
+    filtered: Note[],
+    queryTokens: string[],
+    scored: [number, number][],
+    units: Note[],
+    opts: { topK: number; minScore: number; rerank: boolean },
+  ): [number, Note][] {
+    const finalScores = opts.rerank
+      ? rerankCandidates(queryTokens, scored.map(([s, i]) => ({ bm25: s, title: units[i].title ?? "", text: units[i].text ?? "" })))
+      : scored.map(([s]) => s);
+    const parents = new Map(filtered.filter((n) => n.kind !== "child").map((n) => [n.id, n] as [string, Note]));
+    const byParent = new Map<string, [number, Note]>();
+    const singles: [number, Note][] = [];
+    scored.forEach(([, i], k) => {
+      const note = units[i];
+      const score = finalScores[k];
+      if (note.kind === "child" && note.parentId) {
+        const parent = parents.get(note.parentId);
+        if (parent) {
+          const prev = byParent.get(note.parentId);
+          if (!prev || score > prev[0]) {
+            byParent.set(note.parentId, [score, { ...parent, matchExcerpt: (note.text ?? "").replace(/\s+/g, " ").slice(0, 300) }]);
+          }
+          return;
+        }
+      }
+      singles.push([score, note]);
+    });
+    const merged = [...byParent.values(), ...singles].sort((a, b) => b[0] - a[0]);
+    return merged.slice(0, opts.topK).filter(([score]) => score >= opts.minScore);
   }
 
   search(name: string, query: string, topK = 5): [number, Note][] {
@@ -468,16 +798,18 @@ export class KnowledgeBase {
   }
 
   /** 笔记数达到阈值时把评分挪到 worker 池，主线程不被 BM25 拖住；
-   * 小库直接走同步 search，不付 worker 启动开销。结果与 search() 一致。 */
+   * 小库直接走同步 search，不付 worker 启动开销。结果与 search() 一致
+   *（同一套子块评分 + rerank + 父块归并，只是 BM25 在 worker 里算）。 */
   async searchAsync(name: string, query: string, topK = 5): Promise<[number, Note][]> {
     const notes = this.loadNotes(name);
     const queryTokens = tokenize(query || "");
     if (!notes.length || !queryTokens.length) return [];
     if (notes.length < POOL_MIN_NOTES) return this.search(name, query, topK);
+    const units = this.scoringUnits(notes);
     const pool = this.pool ?? (this.pool = new ToolPool());
-    const docTokens = notes.map((n) => tokenize(n.text ?? ""));
-    const result = (await pool.run("bm25", { queryTokens, docTokens, topK } satisfies Bm25Payload)) as [number, number][];
-    return result.map(([score, i]) => [score, notes[i]] as [number, Note]);
+    const docTokens = units.map((n) => tokenize(n.text ?? ""));
+    const scored = (await pool.run("bm25", { queryTokens, docTokens, topK: Math.max(topK * RERANK_CANDIDATES_MULT, topK) } satisfies Bm25Payload)) as [number, number][];
+    return this.rankNotes(notes, queryTokens, scored, units, { topK, minScore: 0, rerank: true });
   }
 
   /** 关闭本实例的 worker 池（CLI 进程退出时不需要调，worker 已 unref）。 */
@@ -583,11 +915,13 @@ export async function knowledgeMain(argv: string[], base?: string | null, chatFn
         ...(srcIdx >= 0 ? { source: argv[srcIdx + 1] } : {}),
         ...(fromIdx >= 0 ? { dateFrom: argv[fromIdx + 1] } : {}),
         ...(toIdx >= 0 ? { dateTo: argv[toIdx + 1] } : {}),
+        ...(argv.includes("--no-rerank") ? { rerank: false } : {}),
       };
       const results = store.searchWithOptions(name, argv[2], opts);
       if (!results.length) process.stdout.write("没有找到相关笔记。\n");
       for (const [score, note] of results) {
         process.stdout.write(`${score.toFixed(2)}\t${note.title ?? ""}\t来源：${note.source ?? ""}\t日期：${note.date ?? ""}\n`);
+        if (note.matchExcerpt) process.stdout.write(`  命中片段：${note.matchExcerpt}\n`);
       }
     } else if (cmd === "test") {
       // 缺口 33：检索测试台——输一批典型问题，看召回片段与分数，调参对比，
@@ -607,6 +941,7 @@ export async function knowledgeMain(argv: string[], base?: string | null, chatFn
         ...(srcIdx >= 0 ? { source: argv[srcIdx + 1] } : {}),
         ...(fromIdx >= 0 ? { dateFrom: argv[fromIdx + 1] } : {}),
         ...(toIdx >= 0 ? { dateTo: argv[toIdx + 1] } : {}),
+        ...(argv.includes("--no-rerank") ? { rerank: false } : {}),
       };
       let questions: string[];
       try {
@@ -620,7 +955,7 @@ export async function knowledgeMain(argv: string[], base?: string | null, chatFn
           params: { topK: opts.topK ?? 5, ...(opts.minScore !== undefined ? { minScore: opts.minScore } : {}), ...(opts.source ? { source: opts.source } : {}), ...(opts.dateFrom ? { dateFrom: opts.dateFrom } : {}), ...(opts.dateTo ? { dateTo: opts.dateTo } : {}) },
           questions: results.map((r) => ({
             question: r.question,
-            hits: r.hits.map(([score, n]) => ({ score: Number(score.toFixed(2)), title: n.title, source: n.source, date: n.date, excerpt: (n.text ?? "").replace(/\s+/g, " ").slice(0, 200) })),
+            hits: r.hits.map(([score, n]) => ({ score: Number(score.toFixed(2)), title: n.title, source: n.source, date: n.date, excerpt: ((n.matchExcerpt ?? n.text ?? "").replace(/\s+/g, " ").slice(0, 200)) })),
           })),
           summary: { total: questions.length, hit: hitCount, avgTopScore: avgTopScore === null ? null : Number(avgTopScore.toFixed(2)) },
         }, null, 2) + "\n");
@@ -630,6 +965,7 @@ export async function knowledgeMain(argv: string[], base?: string | null, chatFn
           if (!r.hits.length) process.stdout.write("  （无命中）\n");
           for (const [score, n] of r.hits) {
             process.stdout.write(`  ${score.toFixed(2)}\t${n.title ?? ""}\t来源：${n.source ?? ""}\t日期：${n.date ?? ""}\n`);
+            if (n.matchExcerpt) process.stdout.write(`    命中片段：${n.matchExcerpt}\n`);
           }
         }
         process.stdout.write(`汇总：共 ${questions.length} 个问题，${hitCount} 个有命中，命中问题的平均最高分 ${avgTopScore === null ? "—" : avgTopScore.toFixed(2)}（topK=${opts.topK ?? 5}${opts.minScore !== undefined ? `，最低分 ${opts.minScore}` : ""}）\n`);

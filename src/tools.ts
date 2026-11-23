@@ -468,9 +468,10 @@ export const TOOL_SCHEMAS: Record<string, unknown>[] = [
     ["query"]),
   // 缺口 33：外部文档知识库 RAG 管道——检索用户自己的外部文档（文本、
   // Markdown、PDF、网页收录进来的笔记），不是长期记忆。只读，不需审批；
-  // 每条结果附出处（文档名、章节、分数与 200 字摘录），出处随检索记录进
-  // 证据链；向量检索与 parent-child 分块是第二批，本批只有 BM25 + 全文检索。
-  schema("knowledge_search", "检索外部文档知识库：按查询词 BM25 检索指定知识库里收录的外部文档（文本、Markdown、PDF、网页），返回最相关的几条，每条附出处（文档名、章节、分数与 200 字摘录）；min_score 过滤低分、source 只查某来源、date_from/date_to 只查某段时间内的文档",
+  // 每条结果附出处（文档名、章节、分数与命中片段摘录），出处随检索记录进
+  // 证据链；第二批已做 parent-child 分块 + 确定性 rerank；向量检索未做
+  //（src/providers.ts 没有 embeddings 通道，见 docs/knowledge.md）。
+  schema("knowledge_search", "检索外部文档知识库：按查询词 BM25 + 确定性 rerank 检索指定知识库里收录的外部文档（文本、Markdown、PDF、网页），返回最相关的几条父块全文，每条附出处（文档名、章节、分数与命中片段摘录）；min_score 过滤低分、source 只查某来源、date_from/date_to 只查某段时间内的文档",
     { base: { type: "string", description: "知识库名（nyra kb list 可看）" }, query: { type: "string" }, top_k: { type: "integer", default: 5, description: "最多返回几条（默认 5）" }, min_score: { type: "number", description: "最低分，低于的不返回（默认 0）" }, source: { type: "string", description: "只查来源含该子串的文档（如某个文件名）" }, date_from: { type: "string", description: "只查该日期及之后的文档（YYYY-MM-DD）" }, date_to: { type: "string", description: "只查该日期及之前的文档（YYYY-MM-DD）" } },
     ["base", "query"]),
   // G-P1-14：会话全文搜索做成模型工具（学 OpenCode 的 session.search）——
@@ -2443,7 +2444,7 @@ async function toolKnowledgeSearch(ctx: ToolContext, args: Record<string, unknow
   }
   if (!results.length) return "知识库里没有找到相关内容。";
   const lines = results.map(([score, n], i) => {
-    const excerpt = (n.text ?? "").replace(/\s+/g, " ").slice(0, 200);
+    const excerpt = ((n.matchExcerpt ?? n.text ?? "").replace(/\s+/g, " ").slice(0, 200));
     return `[${i + 1}] 分数 ${score.toFixed(2)}｜${n.title ?? ""}｜来源：${n.source ?? ""}｜日期：${n.date ?? ""}\n${excerpt}`;
   });
   const body = lines.join("\n\n");
