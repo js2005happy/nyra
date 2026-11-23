@@ -17,11 +17,21 @@
 //   - 事件 payload 是不可信外部数据：不注进工作流输入（输入只走定义里的
 //     inputs 默认值），触发记录（工作流名、触发器、事件 id）写证据链
 //     evidence/workflow-triggers/<日期>.jsonl，事件 id 过长只记指纹。
+//
+// G-P1-38 cron 成熟语义：漏跑补跑（catch_up once/skip + 窗口）与配额 hold
+// （quota_hold_until）与事故账（cron-incidents.jsonl）见 src/cronMaturity.ts；
+// 本文件只负责把这三件接进触发器执行（状态字段、每轮判定、CLI 读数）。
 import { closeSync, copyFileSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createHash, randomBytes } from "node:crypto";
 import { loadWorkflowDefinitionFile, loadWorkflowRegistry, runWorkflowByName } from "./workflow.ts";
 import type { IncomingEvent } from "./eventTriggers.ts";
+import {
+  appendCronIncident, cronMatches, findActiveCostPause, missedCronMinutes, minuteKey, parseMinuteKey,
+} from "./cronMaturity.ts";
+
+/** cron 匹配仍从这里导出（threads.ts 与旧测试的 import 不用改）。 */
+export { cronMatches } from "./cronMaturity.ts";
 
 export class WorkflowTriggerError extends Error {
   constructor(message: string) { super(message); this.name = "WorkflowTriggerError"; }
@@ -30,6 +40,36 @@ export class WorkflowTriggerError extends Error {
 export const WORKFLOW_TRIGGERS_FILE = "workflow-triggers.json";
 export const MAX_RUNS_PER_ROUND = 5;
 const FIRED_EVENTS_KEEP = 500;
+/** 漏跑补跑默认：只补跑一次。 */
+export const DEFAULT_CATCH_UP: "once" | "skip" = "once";
+/** 漏跑统计窗口默认 120 分钟（上限 1440）。 */
+export const DEFAULT_CATCH_UP_WINDOW_MINUTES = 120;
+export const MAX_CATCH_UP_WINDOW_MINUTES = 1440;
+/** 配额 hold 戳默认 60 分钟（下限 5，上限 1440）。 */
+export const DEFAULT_QUOTA_HOLD_MINUTES = 60;
+export const MIN_QUOTA_HOLD_MINUTES = 5;
+export const MAX_QUOTA_HOLD_MINUTES = 1440;
+
+export type CatchUpPolicy = "once" | "skip";
+
+export interface CronPolicy {
+  catchUp: CatchUpPolicy;
+  catchUpWindowMinutes: number;
+  quotaHoldMinutes: number;
+}
+
+export function resolveCronPolicy(state: Partial<WorkflowTriggerState>): CronPolicy {
+  const catchUp = state.catch_up === "skip" ? "skip" : DEFAULT_CATCH_UP;
+  const windowRaw = typeof state.catch_up_window_minutes === "number" && Number.isFinite(state.catch_up_window_minutes)
+    ? Math.floor(state.catch_up_window_minutes) : DEFAULT_CATCH_UP_WINDOW_MINUTES;
+  const holdRaw = typeof state.quota_hold_minutes === "number" && Number.isFinite(state.quota_hold_minutes)
+    ? Math.floor(state.quota_hold_minutes) : DEFAULT_QUOTA_HOLD_MINUTES;
+  return {
+    catchUp,
+    catchUpWindowMinutes: Math.min(Math.max(windowRaw, 0), MAX_CATCH_UP_WINDOW_MINUTES),
+    quotaHoldMinutes: Math.min(Math.max(holdRaw, MIN_QUOTA_HOLD_MINUTES), MAX_QUOTA_HOLD_MINUTES),
+  };
+}
 
 export interface WorkflowTriggerState {
   version: 1;
@@ -39,6 +79,14 @@ export interface WorkflowTriggerState {
   lastFired: Record<string, string>;
   /** `${工作流名}\n${触发器下标}\n${事件 id}` → 触发时间（去重用）。 */
   firedEvents: Record<string, string>;
+  /** G-P1-38 漏跑补跑策略：缺省 "once"（只补跑一次），"skip" 直接跳到下一档。 */
+  catch_up?: CatchUpPolicy;
+  /** G-P1-38 漏跑统计窗口（分钟），缺省 120，上限 1440；0 = 不统计漏跑。 */
+  catch_up_window_minutes?: number;
+  /** G-P1-38 配额 hold 戳有效期（分钟），缺省 60，下限 5，上限 1440。 */
+  quota_hold_minutes?: number;
+  /** G-P1-38 配额 hold 到期时间（ISO）；未到时间前触发全部挂起。 */
+  quota_hold_until?: string | null;
 }
 
 export function workflowTriggersPath(home: string): string {
@@ -71,12 +119,21 @@ export function loadWorkflowTriggerState(home: string): WorkflowTriggerState {
     throw new WorkflowTriggerError("触发器状态文件格式无效，已备份");
   }
   const r = raw as Partial<WorkflowTriggerState>;
-  return {
+  const out: WorkflowTriggerState = {
     version: 1,
     enabled: r.enabled === true,
     lastFired: r.lastFired && typeof r.lastFired === "object" ? r.lastFired as Record<string, string> : {},
     firedEvents: r.firedEvents && typeof r.firedEvents === "object" ? r.firedEvents as Record<string, string> : {},
   };
+  if (r.catch_up === "once" || r.catch_up === "skip") out.catch_up = r.catch_up;
+  if (typeof r.catch_up_window_minutes === "number" && Number.isFinite(r.catch_up_window_minutes)) {
+    out.catch_up_window_minutes = Math.floor(r.catch_up_window_minutes);
+  }
+  if (typeof r.quota_hold_minutes === "number" && Number.isFinite(r.quota_hold_minutes)) {
+    out.quota_hold_minutes = Math.floor(r.quota_hold_minutes);
+  }
+  if (typeof r.quota_hold_until === "string" && r.quota_hold_until) out.quota_hold_until = r.quota_hold_until;
+  return out;
 }
 
 export function saveWorkflowTriggerState(home: string, state: WorkflowTriggerState): void {
@@ -105,67 +162,115 @@ export function setWorkflowTriggersEnabled(home: string, enabled: boolean): Work
   return state;
 }
 
-// ---- cron：5 字段（分 时 日 月 周），只认数字、*、,、-、/ ----
-
-const CRON_FIELD_RE = /^[0-9*,/-]+$/;
-
-function parseCronField(field: string, min: number, max: number): Set<number> | null {
-  const out = new Set<number>();
-  for (const part of field.split(",")) {
-    let range = part;
-    let step = 1;
-    const slash = part.indexOf("/");
-    if (slash >= 0) {
-      range = part.slice(0, slash);
-      const n = Number(part.slice(slash + 1));
-      if (!Number.isInteger(n) || n < 1) return null;
-      step = n;
-    }
-    let lo: number; let hi: number;
-    if (range === "" || range === "*") { lo = min; hi = max; }
-    else if (/^\d+$/.test(range)) { lo = Number(range); hi = lo; }
-    else {
-      const m = /^(\d+)-(\d+)$/.exec(range);
-      if (!m) return null;
-      lo = Number(m[1]); hi = Number(m[2]);
-      if (lo > hi) return null;
-    }
-    if (lo < min || hi > max) return null;
-    for (let v = lo; v <= hi; v += step) out.add(v);
+/** G-P1-38：改漏跑补跑策略与窗口（只改给到的键；非法值直接报错，不写盘）。 */
+export function setCronPolicy(
+  home: string,
+  patch: { catchUp?: string; catchUpWindowMinutes?: number; quotaHoldMinutes?: number },
+): CronPolicy {
+  if (patch.catchUp !== undefined && patch.catchUp !== "once" && patch.catchUp !== "skip") {
+    throw new WorkflowTriggerError("补跑策略只认 once（只补跑一次）或 skip（直接跳到下一档）");
   }
-  return out.size ? out : null;
+  if (patch.catchUpWindowMinutes !== undefined &&
+    (!Number.isFinite(patch.catchUpWindowMinutes) || patch.catchUpWindowMinutes < 0 || patch.catchUpWindowMinutes > MAX_CATCH_UP_WINDOW_MINUTES)) {
+    throw new WorkflowTriggerError(`漏跑统计窗口须在 0–${MAX_CATCH_UP_WINDOW_MINUTES} 分钟之间`);
+  }
+  if (patch.quotaHoldMinutes !== undefined &&
+    (!Number.isFinite(patch.quotaHoldMinutes) || patch.quotaHoldMinutes < MIN_QUOTA_HOLD_MINUTES || patch.quotaHoldMinutes > MAX_QUOTA_HOLD_MINUTES)) {
+    throw new WorkflowTriggerError(`配额 hold 有效期须在 ${MIN_QUOTA_HOLD_MINUTES}–${MAX_QUOTA_HOLD_MINUTES} 分钟之间`);
+  }
+  const state = loadWorkflowTriggerState(home);
+  if (patch.catchUp !== undefined) state.catch_up = patch.catchUp;
+  if (patch.catchUpWindowMinutes !== undefined) state.catch_up_window_minutes = Math.floor(patch.catchUpWindowMinutes);
+  if (patch.quotaHoldMinutes !== undefined) state.quota_hold_minutes = Math.floor(patch.quotaHoldMinutes);
+  saveWorkflowTriggerState(home, state);
+  return resolveCronPolicy(state);
+}
+
+export function getCronPolicy(home: string): CronPolicy {
+  try {
+    return resolveCronPolicy(loadWorkflowTriggerState(home));
+  } catch {
+    // 状态文件损坏时回默认，不抛错（只读路径 fail-open）。
+    return { catchUp: DEFAULT_CATCH_UP, catchUpWindowMinutes: DEFAULT_CATCH_UP_WINDOW_MINUTES, quotaHoldMinutes: DEFAULT_QUOTA_HOLD_MINUTES };
+  }
+}
+
+export interface QuotaHoldInfo {
+  held: boolean;
+  /** 戳到期时间（held 时才有）。 */
+  holdUntil: string | null;
+  /** 触发 hold 的那条成本暂停（held 时才有）。 */
+  pauseId: string | null;
+  scope: string | null;
+}
+
+/** 只读看 hold 状态（不写盘、不打戳，status 命令用；状态文件损坏时当没有 hold）。 */
+export function describeQuotaHold(home: string, now = new Date()): QuotaHoldInfo {
+  let state: WorkflowTriggerState;
+  try {
+    state = loadWorkflowTriggerState(home);
+  } catch {
+    return { held: false, holdUntil: null, pauseId: null, scope: null };
+  }
+  const stamp = state.quota_hold_until ? Date.parse(state.quota_hold_until) : Number.NaN;
+  if (Number.isFinite(stamp) && now.getTime() < stamp) {
+    const pause = findActiveCostPause(home, now);
+    return { held: true, holdUntil: state.quota_hold_until ?? null, pauseId: pause?.id ?? null, scope: pause?.scope ?? null };
+  }
+  const pause = findActiveCostPause(home, now);
+  if (!pause) return { held: false, holdUntil: null, pauseId: null, scope: null };
+  return { held: true, holdUntil: state.quota_hold_until ?? null, pauseId: pause.id, scope: pause.scope };
 }
 
 /**
- * cron 是否匹配这一分钟。日（月）与周（日）按标准 cron 规则：只限制了
- * 一边就按那一边算，两边都限制了任一边命中即可，两边都不限制即命中。
- * 解析失败返回 false（守护进程里跳过、不炸轮询）。
+ * G-P1-38 配额 hold 判定（每轮触发前调；调用方须在返回 held=false 后继续跑）。
+ * 规则：
+ *   - hold 戳还在有效期内 → 继续挂起（戳本身说了算，不重复查暂停账本）；
+ *   - 戳过期或没有戳、且本月有未决成本暂停 → 打新戳（now + hold 分钟），
+ *     记一笔 quota_held 事故，挂起；
+ *   - 戳过期且暂停已解除 → 清戳，记一笔 quota_released 事故，放行。
+ * 返回 held 时调用方直接跳过本轮触发（不跑任何工作流、不推进 lastFired，
+ * 漏掉的分钟等放行后由补跑逻辑一次性处理，窗口照算）。
  */
-export function cronMatches(cron: string, date: Date): boolean {
-  const parts = cron.trim().split(/\s+/);
-  if (parts.length !== 5 || parts.some((p) => !CRON_FIELD_RE.test(p))) return false;
-  const minute = parseCronField(parts[0], 0, 59);
-  const hour = parseCronField(parts[1], 0, 23);
-  const dom = parseCronField(parts[2], 1, 31);
-  const month = parseCronField(parts[3], 1, 12);
-  const dowRaw = parseCronField(parts[4], 0, 7);
-  if (!minute || !hour || !dom || !month || !dowRaw) return false;
-  // 周日 7 当 0。
-  const dow = new Set([...dowRaw].map((v) => (v === 7 ? 0 : v)));
-  if (!minute.has(date.getMinutes()) || !hour.has(date.getHours()) || !month.has(date.getMonth() + 1)) return false;
-  const domRestricted = parts[2] !== "*";
-  const dowRestricted = parts[4] !== "*";
-  const domHit = dom.has(date.getDate());
-  const dowHit = dow.has(date.getDay());
-  if (domRestricted && dowRestricted) return domHit || dowHit;
-  if (domRestricted) return domHit;
-  if (dowRestricted) return dowHit;
-  return true;
+export function evaluateQuotaHold(home: string, state: WorkflowTriggerState, now = new Date()): QuotaHoldInfo {
+  const stamp = state.quota_hold_until ? Date.parse(state.quota_hold_until) : Number.NaN;
+  if (Number.isFinite(stamp) && now.getTime() < stamp) {
+    const pause = findActiveCostPause(home, now);
+    return { held: true, holdUntil: state.quota_hold_until ?? null, pauseId: pause?.id ?? null, scope: pause?.scope ?? null };
+  }
+  const hadStamp = Number.isFinite(stamp);
+  const pause = findActiveCostPause(home, now);
+  if (!pause) {
+    if (hadStamp) {
+      state.quota_hold_until = null;
+      saveWorkflowTriggerState(home, state);
+      appendCronIncident(home, { kind: "quota_released", source: "workflow", workflow: "" });
+    }
+    return { held: false, holdUntil: null, pauseId: null, scope: null };
+  }
+  const policy = resolveCronPolicy(state);
+  const holdUntil = new Date(now.getTime() + policy.quotaHoldMinutes * 60_000).toISOString();
+  const isNewStamp = !hadStamp;
+  state.quota_hold_until = holdUntil;
+  saveWorkflowTriggerState(home, state);
+  appendCronIncident(home, {
+    kind: "quota_held", source: "workflow", workflow: "",
+    pause_id: pause.id, scope: pause.scope, hold_until: holdUntil,
+    ...(isNewStamp ? {} : { note: "戳过期、暂停仍在，续戳" }),
+  });
+  return { held: true, holdUntil, pauseId: pause.id, scope: pause.scope };
 }
 
-function minuteKey(d: Date): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+/**
+ * 强制清掉 hold 戳（`nyra cron hold clear --yes`）。只清戳、不动成本暂停：
+ * 暂停还在的话，下一轮触发前会重新打戳、重新挂起。清戳本身记一笔
+ * quota_released 事故（带原因，免得账本里出现无缘无故的释放）。
+ */
+export function clearQuotaHold(home: string): void {
+  const state = loadWorkflowTriggerState(home);
+  state.quota_hold_until = null;
+  saveWorkflowTriggerState(home, state);
+  appendCronIncident(home, { kind: "quota_released", source: "workflow", workflow: "", note: "机主手动清戳" });
 }
 
 function appendTriggerEvidence(home: string, entry: Record<string, unknown>): void {
@@ -193,9 +298,23 @@ export interface TriggerFireResult {
   error?: string;
 }
 
+/** G-P1-38：本轮漏跑汇总（只记触发器与条数，明细进事故账）。 */
+export interface MissedTriggerSummary {
+  workflow: string;
+  triggerIndex: number;
+  /** 漏掉的分钟数。 */
+  count: number;
+  /** 是否按 once 策略补跑了一次。 */
+  caughtUp: boolean;
+}
+
 export interface TriggerRoundResult {
   skipped: string | null;
   fired: TriggerFireResult[];
+  /** G-P1-38：本轮因配额 hold 挂起时才有（不跑任何触发器）。 */
+  held?: QuotaHoldInfo;
+  /** G-P1-38：本轮记到的漏跑（空数组 = 没漏跑）。 */
+  missed?: MissedTriggerSummary[];
 }
 
 export type WorkflowRunFn = (home: string, name: string) => Promise<{ id: string }>;
@@ -264,12 +383,29 @@ async function fireOne(
     workflow, trigger_index: triggerIndex, trigger_type: triggerType,
     run_id: runId, status, ...(error ? { error: error.slice(0, 200) } : {}), ...evidenceExtra,
   });
+  if (status === "failed") {
+    // G-P1-38：触发失败也是事故，事故账里留一笔（证据链已有全量记录，
+    // 这里只记元数据 + 前 200 字错误，方便 `nyra cron incidents` 一眼看到）。
+    appendCronIncident(home, {
+      kind: "failed", source: "workflow", workflow, trigger_index: triggerIndex,
+      run_id: runId, error: (error ?? "").slice(0, 200),
+    });
+  }
   return { workflow, triggerIndex, triggerType, runId, status, ...(error ? { error } : {}) };
 }
 
 /**
  * 守护进程每轮调：到点的 schedule 触发器各跑一次（同一分钟不重复跑）。
  * 全局开关关着直接返回 skipped（不读注册表、不跑任何东西）。
+ *
+ * G-P1-38：
+ *   - 配额 hold：先判 hold，挂起时整轮跳过（不跑、不推进 lastFired，
+ *     漏掉的分钟等放行后由补跑逻辑处理）；
+ *   - 漏跑补跑：每触发器先算漏掉的分钟（上次 lastFired 之后、当前分钟
+ *     之前、窗口内的 cron 匹配分钟；没记过 lastFired 的不算漏跑）。
+ *     策略 once 且本分钟没到点时补跑一次（最近一次漏掉的），其余漏掉
+ *     的记 missed ×N；策略 skip 或本分钟正好到点时只记 missed ×N，
+ *     本分钟的正常触发照常跑。同一触发器一轮最多跑一次。
  */
 export async function runDueWorkflowTriggers(
   home: string,
@@ -278,39 +414,101 @@ export async function runDueWorkflowTriggers(
   const now = opts?.now ?? new Date();
   const state = loadWorkflowTriggerState(home);
   if (!state.enabled) return { skipped: "触发器执行未开启（nyra workflow triggers enable --yes 开启）", fired: [] };
+  const hold = evaluateQuotaHold(home, state, now);
+  if (hold.held) {
+    return {
+      skipped: `配额 hold 中：成本上限已触顶（${hold.scope ?? "未知层"}），触发挂起至 ${hold.holdUntil ?? "未知"}，期间不跑任何触发器`,
+      fired: [], held: hold, missed: [],
+    };
+  }
+  const policy = resolveCronPolicy(state);
   const workdir = opts?.workdir ?? process.cwd();
   const fired: TriggerFireResult[] = [];
+  const missed: MissedTriggerSummary[] = [];
   const minute = minuteKey(now);
+  const windowStart = new Date(now.getTime() - policy.catchUpWindowMinutes * 60_000);
   for (const wf of listActiveWorkflowTriggers(home)) {
     if (fired.length >= MAX_RUNS_PER_ROUND) break;
     for (let i = 0; i < wf.triggers.length; i++) {
       if (fired.length >= MAX_RUNS_PER_ROUND) break;
       const t = wf.triggers[i];
       if (t.type !== "schedule" || !t.cron) continue;
-      if (!cronMatches(t.cron, now)) continue;
       const key = `${wf.name}\n${i}`;
-      if (state.lastFired[key] === minute) continue;
-      // 先记已触发（同一分钟不重复跑），再执行；执行失败也只记证据，不重跑这一分钟。
-      state.lastFired[key] = minute;
-      saveWorkflowTriggerState(home, state);
-      fired.push(await fireOne(home, wf.name, i, "schedule", workdir, opts?.runFn, { cron: t.cron }));
+      const dueNow = cronMatches(t.cron, now);
+      const prevLast = state.lastFired[key];
+      // 漏跑：上次记过的分钟之后、当前分钟之前、窗口内的匹配分钟。
+      // 没记过 lastFired 的触发器不算漏跑（新建的触发器不背旧账）。
+      const anchor = prevLast ? parseMinuteKey(prevLast) : null;
+      const anchorInWindow = anchor && anchor.getTime() >= windowStart.getTime() ? anchor : (anchor ? windowStart : null);
+      const missedMinutes = policy.catchUpWindowMinutes > 0 ? missedCronMinutes(t.cron, anchorInWindow, now) : [];
+      let caughtUpThisRound = false;
+      if (missedMinutes.length > 0) {
+        if (policy.catchUp === "once" && !dueNow && fired.length < MAX_RUNS_PER_ROUND) {
+          // 补跑一次：最近一次漏掉的分钟。先记已触发再执行（与正常路径同款）。
+          state.lastFired[key] = minute;
+          saveWorkflowTriggerState(home, state);
+          const latest = missedMinutes[missedMinutes.length - 1];
+          const r = await fireOne(home, wf.name, i, "schedule", workdir, opts?.runFn, {
+            cron: t.cron, catch_up: true, scheduled_minute: minuteKey(latest),
+          });
+          fired.push(r);
+          caughtUpThisRound = true;
+          appendCronIncident(home, {
+            kind: "caught_up", source: "workflow", workflow: wf.name, trigger_index: i,
+            scheduled_minute: minuteKey(latest), policy: "once", run_id: r.runId,
+            ...(r.status === "failed" ? { error: (r.error ?? "").slice(0, 200) } : {}),
+          });
+          if (missedMinutes.length - 1 > 0) {
+            appendCronIncident(home, {
+              kind: "missed", source: "workflow", workflow: wf.name, trigger_index: i,
+              count: missedMinutes.length - 1, policy: "once",
+            });
+          }
+        } else {
+          // skip 策略，或本分钟正好到点（正常触发照常跑，漏掉的只记账）。
+          if (!dueNow) {
+            state.lastFired[key] = minute;
+            saveWorkflowTriggerState(home, state);
+          }
+          appendCronIncident(home, {
+            kind: "missed", source: "workflow", workflow: wf.name, trigger_index: i,
+            count: missedMinutes.length, policy: policy.catchUp,
+          });
+        }
+        missed.push({ workflow: wf.name, triggerIndex: i, count: missedMinutes.length, caughtUp: caughtUpThisRound });
+      }
+      if (dueNow && !caughtUpThisRound && prevLast !== minute) {
+        // 先记已触发（同一分钟不重复跑），再执行；执行失败也只记证据，不重跑这一分钟。
+        state.lastFired[key] = minute;
+        saveWorkflowTriggerState(home, state);
+        fired.push(await fireOne(home, wf.name, i, "schedule", workdir, opts?.runFn, { cron: t.cron }));
+      }
     }
   }
-  return { skipped: null, fired };
+  return { skipped: null, fired, missed };
 }
 
 /**
  * 事件触发：网关收到 webhook / Gmail 轮询派发事件后调。同一事件只触发一次
  * （按事件 id 去重）；事件 payload 不注进工作流输入（不可信外部数据），
- * 触发记录进证据链。
+ * 触发记录进证据链。G-P1-38：配额 hold 时事件触发同样挂起（不跑、不记
+ * firedEvents——事件本身没丢，网关侧仍有记录，放行后重派事件才会再触发）。
  */
 export async function fireWorkflowEventTriggers(
   home: string,
   event: IncomingEvent,
   opts?: { now?: Date; workdir?: string; runFn?: WorkflowRunFn },
 ): Promise<TriggerRoundResult> {
+  const now = opts?.now ?? new Date();
   const state = loadWorkflowTriggerState(home);
   if (!state.enabled) return { skipped: "触发器执行未开启（nyra workflow triggers enable --yes 开启）", fired: [] };
+  const hold = evaluateQuotaHold(home, state, now);
+  if (hold.held) {
+    return {
+      skipped: `配额 hold 中：成本上限已触顶（${hold.scope ?? "未知层"}），事件触发挂起至 ${hold.holdUntil ?? "未知"}`,
+      fired: [], held: hold, missed: [],
+    };
+  }
   const workdir = opts?.workdir ?? process.cwd();
   const fired: TriggerFireResult[] = [];
   let stateChanged = false;
@@ -331,11 +529,21 @@ export async function fireWorkflowEventTriggers(
     }
   }
   if (stateChanged) saveWorkflowTriggerState(home, state);
-  return { skipped: null, fired };
+  return { skipped: null, fired, missed: [] };
 }
 
-/** CLI status 用：开关 + 各 active 工作流的触发器清单。 */
-export function describeWorkflowTriggers(home: string): { enabled: boolean; workflows: ActiveWorkflowTriggers[] } {
+/** CLI status 用：开关 + 各 active 工作流的触发器清单 + G-P1-38 策略与 hold。 */
+export function describeWorkflowTriggers(home: string): {
+  enabled: boolean;
+  workflows: ActiveWorkflowTriggers[];
+  policy: CronPolicy;
+  hold: QuotaHoldInfo;
+} {
   const state = loadWorkflowTriggerState(home);
-  return { enabled: state.enabled, workflows: listActiveWorkflowTriggers(home) };
+  return {
+    enabled: state.enabled,
+    workflows: listActiveWorkflowTriggers(home),
+    policy: resolveCronPolicy(state),
+    hold: describeQuotaHold(home),
+  };
 }

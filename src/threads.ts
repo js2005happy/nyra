@@ -422,6 +422,10 @@ export interface ThreadCronFireResult {
 export interface ThreadCronRoundResult {
   skipped: string | null;
   fired: ThreadCronFireResult[];
+  /** G-P1-38：本轮因配额 hold 挂起时才有。 */
+  held?: { held: boolean; holdUntil: string | null; pauseId: string | null; scope: string | null };
+  /** G-P1-38：本轮记到的漏跑（空数组 = 没漏跑）。 */
+  missed?: Array<{ threadId: string; cronId: string; workflow: string; count: number; caughtUp: boolean }>;
 }
 
 export type ThreadCronRunFn = (home: string, workflow: string, threadId: string) => Promise<{ id: string }>;
@@ -443,15 +447,28 @@ async function defaultThreadCronRunFn(home: string, workflow: string, threadId: 
  * 与 workflow triggers 共用总开关：开关关着直接返回 skipped，不跑任何东西；
  * 只跑 active 的工作流（draft / trial_passed / 不存在的工作流跳过，记 skipped）。
  * 每轮最多跑 5 个；失败只记证据与线程运行记录，不重跑这一分钟。
+ *
+ * G-P1-38：配额 hold 时整轮挂起（与工作流触发器共用同一份 hold 戳）；
+ * 漏跑补跑与工作流触发器同款策略（once 只补跑一次、skip 只记 missed ×N，
+ * 窗口同款），锚点是各 cron 自己的 last_fired——没记过的 cron 不算漏跑。
  */
 export async function fireDueThreadCrons(
   home: string,
   opts?: { now?: Date; workdir?: string; runFn?: ThreadCronRunFn },
 ): Promise<ThreadCronRoundResult> {
   const now = opts?.now ?? new Date();
-  const { loadWorkflowTriggerState, cronMatches } = await import("./workflowTriggers.ts");
+  const { loadWorkflowTriggerState, cronMatches, evaluateQuotaHold, resolveCronPolicy } = await import("./workflowTriggers.ts");
+  const { appendCronIncident, missedCronMinutes, minuteKey, parseMinuteKey } = await import("./cronMaturity.ts");
   const state = loadWorkflowTriggerState(home);
   if (!state.enabled) return { skipped: "触发器执行未开启（nyra workflow triggers enable --yes 开启）", fired: [] };
+  const hold = evaluateQuotaHold(home, state, now);
+  if (hold.held) {
+    return {
+      skipped: `配额 hold 中：成本上限已触顶（${hold.scope ?? "未知层"}），线程 cron 挂起至 ${hold.holdUntil ?? "未知"}`,
+      fired: [], held: hold, missed: [],
+    };
+  }
+  const policy = resolveCronPolicy(state);
   const { loadWorkflowRegistry } = await import("./workflow.ts");
   let registry;
   try {
@@ -464,14 +481,59 @@ export async function fireDueThreadCrons(
       .filter((w) => w.status === "active").map((w) => w.name),
   );
   const fired: ThreadCronFireResult[] = [];
+  const missed: NonNullable<ThreadCronRoundResult["missed"]> = [];
   const minute = minuteKey(now);
+  const windowStart = new Date(now.getTime() - policy.catchUpWindowMinutes * 60_000);
   const threads = listThreads(home).filter((t) => t.status === "active");
   for (const t of threads) {
     if (fired.length >= MAX_CRONS_PER_ROUND) break;
     for (const c of t.crons) {
       if (fired.length >= MAX_CRONS_PER_ROUND) break;
-      if (!cronMatches(c.cron, now)) continue;
-      if (c.last_fired === minute) continue;
+      const dueNow = cronMatches(c.cron, now);
+      const prevLast = c.last_fired;
+      // 漏跑：上次记过的分钟之后、当前分钟之前、窗口内的匹配分钟。
+      const anchor = prevLast ? parseMinuteKey(prevLast) : null;
+      const anchorInWindow = anchor && anchor.getTime() >= windowStart.getTime() ? anchor : (anchor ? windowStart : null);
+      const missedMinutes = policy.catchUpWindowMinutes > 0 ? missedCronMinutes(c.cron, anchorInWindow, now) : [];
+      let caughtUpThisRound = false;
+      if (missedMinutes.length > 0) {
+        if (policy.catchUp === "once" && !dueNow && fired.length < MAX_CRONS_PER_ROUND && activeNames.has(c.workflow)) {
+          // 补跑一次：最近一次漏掉的分钟（只在工作流是 active 时补跑）。
+          const data = loadThreads(home);
+          const live = data.threads.find((x) => x.id === t.id);
+          const liveCron = live?.crons.find((x) => x.id === c.id);
+          if (liveCron) { liveCron.last_fired = minute; saveThreads(home, data); }
+          const latest = missedMinutes[missedMinutes.length - 1];
+          const r = await fireOneThreadCron(home, t, c, now, opts, minute, { catch_up: true, scheduled_minute: minuteKey(latest) });
+          fired.push(r);
+          caughtUpThisRound = true;
+          appendCronIncident(home, {
+            kind: "caught_up", source: "thread", workflow: c.workflow, thread_id: t.id, cron_id: c.id,
+            scheduled_minute: minuteKey(latest), policy: "once", run_id: r.runId,
+            ...(r.status === "failed" ? { error: (r.error ?? "").slice(0, 200) } : {}),
+          });
+          if (missedMinutes.length - 1 > 0) {
+            appendCronIncident(home, {
+              kind: "missed", source: "thread", workflow: c.workflow, thread_id: t.id, cron_id: c.id,
+              count: missedMinutes.length - 1, policy: "once",
+            });
+          }
+        } else {
+          if (!dueNow) {
+            const data = loadThreads(home);
+            const live = data.threads.find((x) => x.id === t.id);
+            const liveCron = live?.crons.find((x) => x.id === c.id);
+            if (liveCron) { liveCron.last_fired = minute; saveThreads(home, data); }
+          }
+          appendCronIncident(home, {
+            kind: "missed", source: "thread", workflow: c.workflow, thread_id: t.id, cron_id: c.id,
+            count: missedMinutes.length, policy: policy.catchUp,
+          });
+        }
+        missed.push({ threadId: t.id, cronId: c.id, workflow: c.workflow, count: missedMinutes.length, caughtUp: caughtUpThisRound });
+      }
+      if (!dueNow || caughtUpThisRound) continue;
+      if (prevLast === minute) continue;
       if (!activeNames.has(c.workflow)) {
         fired.push({ threadId: t.id, cronId: c.id, workflow: c.workflow, runId: null, status: "skipped", error: "工作流不是 active，不跑" });
         appendCronEvidence(home, { thread_id: t.id, cron_id: c.id, workflow: c.workflow, status: "skipped", reason: "workflow-not-active" });
@@ -482,33 +544,52 @@ export async function fireDueThreadCrons(
       const live = data.threads.find((x) => x.id === t.id);
       const liveCron = live?.crons.find((x) => x.id === c.id);
       if (liveCron) { liveCron.last_fired = minute; saveThreads(home, data); }
-      let runId: string | null = null;
-      let status: "ok" | "failed" = "ok";
-      let error: string | undefined;
-      try {
-        const r = opts?.runFn
-          ? await opts.runFn(home, c.workflow, t.id)
-          : await defaultThreadCronRunFn(home, c.workflow, t.id);
-        runId = r.id;
-      } catch (err: unknown) {
-        status = "failed";
-        error = err instanceof Error ? err.message : String(err);
-      }
-      try {
-        if (runId) recordThreadRun(home, t.id, runId, status, c.workflow);
-        appendThreadHistory(home, t.id, "cron", status === "ok"
-          ? `定时触发：工作流 ${c.workflow} 已跑（运行 ${runId}）`
-          : `定时触发：工作流 ${c.workflow} 失败：${(error ?? "").slice(0, 200)}`);
-      } catch { /* 线程记账失败不破坏触发结果 */ }
-      appendCronEvidence(home, {
-        thread_id: t.id, cron_id: c.id, workflow: c.workflow, cron: c.cron,
-        run_id: runId, status, ...(error ? { error: error.slice(0, 200) } : {}),
-      });
-      if (runId) {
-        await mirrorRunEvent(home, runId, "thread_cron_fired", { thread_id: t.id, workflow: c.workflow, status });
-      }
-      fired.push({ threadId: t.id, cronId: c.id, workflow: c.workflow, runId, status, ...(error ? { error } : {}) });
+      fired.push(await fireOneThreadCron(home, t, c, now, opts, minute, {}));
     }
   }
-  return { skipped: null, fired };
+  return { skipped: null, fired, missed };
+}
+
+/**
+ * 一条线程 cron 跑一次（正常触发与补跑共用）：执行、记运行记录与历史、
+ * 写证据、成功时镜像 thread_cron_fired 事件、失败时记一笔 failed 事故。
+ */
+async function fireOneThreadCron(
+  home: string, t: { id: string }, c: { id: string; workflow: string; cron: string },
+  now: Date, opts: { workdir?: string; runFn?: ThreadCronRunFn } | undefined, minute: string,
+  evidenceExtra: Record<string, unknown>,
+): Promise<ThreadCronFireResult> {
+  const { appendCronIncident } = await import("./cronMaturity.ts");
+  let runId: string | null = null;
+  let status: "ok" | "failed" = "ok";
+  let error: string | undefined;
+  try {
+    const r = opts?.runFn
+      ? await opts.runFn(home, c.workflow, t.id)
+      : await defaultThreadCronRunFn(home, c.workflow, t.id);
+    runId = r.id;
+  } catch (err: unknown) {
+    status = "failed";
+    error = err instanceof Error ? err.message : String(err);
+  }
+  try {
+    if (runId) recordThreadRun(home, t.id, runId, status, c.workflow);
+    appendThreadHistory(home, t.id, "cron", status === "ok"
+      ? `定时触发：工作流 ${c.workflow} 已跑（运行 ${runId}）`
+      : `定时触发：工作流 ${c.workflow} 失败：${(error ?? "").slice(0, 200)}`);
+  } catch { /* 线程记账失败不破坏触发结果 */ }
+  appendCronEvidence(home, {
+    thread_id: t.id, cron_id: c.id, workflow: c.workflow, cron: c.cron,
+    run_id: runId, status, ...(error ? { error: error.slice(0, 200) } : {}), ...evidenceExtra,
+  });
+  if (runId) {
+    await mirrorRunEvent(home, runId, "thread_cron_fired", { thread_id: t.id, workflow: c.workflow, status });
+  }
+  if (status === "failed") {
+    appendCronIncident(home, {
+      kind: "failed", source: "thread", workflow: c.workflow, thread_id: t.id, cron_id: c.id,
+      run_id: runId, error: (error ?? "").slice(0, 200),
+    });
+  }
+  return { threadId: t.id, cronId: c.id, workflow: c.workflow, runId, status, ...(error ? { error } : {}) };
 }

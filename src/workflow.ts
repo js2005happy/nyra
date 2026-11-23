@@ -2443,6 +2443,12 @@ export async function handleWorkflow(argv: string[], home: string): Promise<numb
       if (sub === "status") {
         const st = describeWorkflowTriggers(resolvedHome);
         process.stdout.write(`触发器执行：${st.enabled ? "已开启" : "未开启（默认关，nyra workflow triggers enable --yes 开启）"}\n`);
+        process.stdout.write(`补跑策略：${st.policy.catchUp === "once" ? "once（漏掉的只补跑一次，其余记 missed）" : "skip（直接跳到下一档，漏掉的全记 missed）"}，窗口 ${st.policy.catchUpWindowMinutes} 分钟（nyra cron policy 改）\n`);
+        if (st.hold.held) {
+          process.stdout.write(`配额 hold：挂起中，至 ${st.hold.holdUntil ?? "未知"}（暂停 ${st.hold.pauseId ?? "未知"}，层 ${st.hold.scope ?? "未知"}）；期间定时与事件触发全部挂起（nyra cron hold 看）\n`);
+        } else {
+          process.stdout.write("配额 hold：没有。\n");
+        }
         if (!st.workflows.length) {
           process.stdout.write("没有 active 且带触发器的工作流。\n");
           return 0;
@@ -2477,6 +2483,12 @@ export async function handleWorkflow(argv: string[], home: string): Promise<numb
         const { fireDueThreadCrons } = await import("./threads.ts");
         const threadReport = await fireDueThreadCrons(resolvedHome, { workdir: req.workdir, now: new Date() });
         const threadFired = threadReport.fired.filter((f) => f.status !== "skipped");
+        for (const m of report.missed ?? []) {
+          process.stdout.write(`工作流 ${m.workflow} 漏跑 ${m.count} 次${m.caughtUp ? "（已补跑一次）" : ""}，见事故账 nyra cron incidents。\n`);
+        }
+        for (const m of threadReport.missed ?? []) {
+          process.stdout.write(`线程 ${m.threadId.slice(0, 8)} 的工作流 ${m.workflow} 漏跑 ${m.count} 次${m.caughtUp ? "（已补跑一次）" : ""}，见事故账 nyra cron incidents。\n`);
+        }
         if (!report.fired.length && !threadFired.length) {
           process.stdout.write("本轮没有到点的触发器。\n");
           return 0;

@@ -264,6 +264,7 @@ nyra hitl <start|takeover|handback|cancel|status|list>   对话转人工坐席�
 nyra events <list|add|remove|enable|disable|test|poll>   事件触发任务：webhook 与新邮件触发进任务队列（详见 docs/event-triggers.md）
 nyra thread <create|list|search|show|copy|prune|state|history|runs|cron-add|cron-remove|crons|archive|unarchive|remove>   远端线程操作 API：建线程、搜线程、复制接着跑、剪历史、读写状态、给线程绑 cron（详见 docs/threads.md）
 nyra automation <list|show|install|remove|suggested>   自动化 bundle：一次装好整条自动化，自带建议触发器（详见 docs/automations.md）
+nyra cron <incidents|policy|hold>   cron 成熟语义：漏跑补跑策略（once/skip）+ 配额 hold + 事故账（详见 docs/cron-maturity.md）
 nyra mail-inbox <status|enable|disable|allowlist|set|poll>   邮件即任务入口：白名单发件人的邮件直接进任务队列，跑完回信（详见 docs/mail-inbox.md）
 nyra responsibility <list|add|set|remove|enable|disable|check|pause|resume|complete|cancel|brief|show>   持续责任语义：责任对象（归属人 + 验收标准 + 升级条件 + 过期时间）与晨间简报，无事安静（详见 docs/responsibilities.md）
 nyra bot telegram <start|stop|status>   Bot 方向 Phase 1：Telegram 渠道（长轮询收消息、会话串行、去重配额、确定性指令；外部用户强制只读，详见 docs/bot.md）
@@ -419,6 +420,7 @@ nyra hitl <start|takeover|handback|cancel|status|list>   human handoff: hand a c
 nyra events <list|add|remove|enable|disable|test|poll>   event-triggered tasks: webhooks and new mail enqueue tasks (see docs/event-triggers.md)
 nyra thread <create|list|search|show|copy|prune|state|history|runs|cron-add|cron-remove|crons|archive|unarchive|remove>   remote thread operations API: create/search/copy/prune threads, read/write state, bind crons to a thread (see docs/threads.md)
 nyra automation <list|show|install|remove|suggested>   automation bundles: install a whole automation at once, with suggested triggers included (see docs/automations.md)
+nyra cron <incidents|policy|hold>   cron maturity: missed-run catch-up policy (once/skip) + quota hold + incident ledger (see docs/cron-maturity.md)
 nyra mail-inbox <status|enable|disable|allowlist|set|poll>   mail as task entry: allowlisted senders' mail enqueues tasks, results mailed back (see docs/mail-inbox.md)
 nyra responsibility <list|add|set|remove|enable|disable|check|pause|resume|complete|cancel|brief|show>   standing responsibilities: responsibility objects (owner + acceptance criteria + escalation conditions + expiry) and the morning briefing, quiet when nothing is wrong (see docs/responsibilities.md)
 nyra bot telegram <start|stop|status>   bot direction phase 1: Telegram channel (long polling, per-session serial queue, dedup + quotas, deterministic commands; external users forced read-only, see docs/bot.md)
@@ -1347,6 +1349,12 @@ async function handleSchedule(argv: string[], workdir: string): Promise<number> 
       pollers.push(async () => {
           const { runDueWorkflowTriggers } = await import("./workflowTriggers.ts");
           const report = await runDueWorkflowTriggers(home, { workdir });
+          if (report.held) {
+            process.stdout.write(`[触发器] 配额 hold 中，挂起至 ${report.held.holdUntil ?? "未知"}，本轮不跑。\n`);
+          }
+          for (const m of report.missed ?? []) {
+            process.stdout.write(`[触发器] 工作流 ${m.workflow} 漏跑 ${m.count} 次${m.caughtUp ? "（已补跑一次）" : ""}，见事故账 nyra cron incidents。\n`);
+          }
           for (const f of report.fired) {
             process.stdout.write(`[触发器] 工作流 ${f.workflow} 已触发（${f.status === "ok" ? `运行 ${f.runId}` : `失败：${f.error ?? ""}`}）。\n`);
           }
@@ -1357,6 +1365,12 @@ async function handleSchedule(argv: string[], workdir: string): Promise<number> 
       pollers.push(async () => {
           const { fireDueThreadCrons } = await import("./threads.ts");
           const report = await fireDueThreadCrons(home, { workdir });
+          if (report.held) {
+            process.stdout.write(`[线程 cron] 配额 hold 中，挂起至 ${report.held.holdUntil ?? "未知"}，本轮不跑。\n`);
+          }
+          for (const m of report.missed ?? []) {
+            process.stdout.write(`[线程 cron] 线程 ${m.threadId.slice(0, 8)} 的工作流 ${m.workflow} 漏跑 ${m.count} 次${m.caughtUp ? "（已补跑一次）" : ""}，见事故账 nyra cron incidents。\n`);
+          }
           for (const f of report.fired) {
             if (f.status === "skipped") continue;
             process.stdout.write(`[线程 cron] 线程 ${f.threadId.slice(0, 8)} 的工作流 ${f.workflow} 已触发（${f.status === "ok" ? `运行 ${f.runId}` : `失败：${f.error ?? ""}`}）。\n`);
@@ -7154,6 +7168,10 @@ export async function main(argv: string[]): Promise<number> {
   if (args.subcommand === "automation") {
     const { handleAutomation } = await import("./automationCli.ts");
     return handleAutomation(args.subArgs ?? [], home);
+  }
+  if (args.subcommand === "cron") {
+    const { handleCron } = await import("./cronCli.ts");
+    return handleCron(args.subArgs ?? [], home);
   }
   if (args.subcommand === "kb" || args.subcommand === "knowledge") return knowledgeMain(args.subArgs ?? []);
   if (args.subcommand === "plugin") return handlePlugin(args.subArgs ?? [], home);
