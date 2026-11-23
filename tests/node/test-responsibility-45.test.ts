@@ -320,10 +320,10 @@ test("CLI 全流程：add 带新字段、pause/resume/complete/brief/show", () =
 test("CLI：help 中英文都有 responsibility 新子命令", () => {
   const { home } = setup();
   const zh = runCli(home, ["--help"]);
-  expect(zh.stdout).toContain("nyra responsibility <list|add|remove|enable|disable|check|pause|resume|complete|cancel|brief|show>");
+  expect(zh.stdout).toContain("nyra responsibility <list|add|set|remove|enable|disable|check|pause|resume|complete|cancel|brief|show>");
   const en = spawnSync("bun", ["run", "src/cli.ts", "--help"], {
     cwd: process.cwd(), encoding: "utf-8",
     env: { ...process.env, HOME: home, NYRA_HOME: home, NYRA_LANG: "en" },
   });
-  expect(en.stdout).toContain("nyra responsibility <list|add|remove|enable|disable|check|pause|resume|complete|cancel|brief|show>");
+  expect(en.stdout).toContain("nyra responsibility <list|add|set|remove|enable|disable|check|pause|resume|complete|cancel|brief|show>");
 });

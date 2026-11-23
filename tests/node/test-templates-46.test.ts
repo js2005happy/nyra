@@ -192,6 +192,12 @@ test("Templates46Test.test_builtin_shop_redlines", () => {
   expect(shop.never_actions).toContain("pay");
   expect(shop.never_actions).toContain("delete");
   expect(shop.acceptance).toContain("has-changes");
+  // 缺口 44 深化：第一步改走 shopify_orders 直查订单，不再走 Gmail 搜邮件；
+  // 试跑种子文件 order-mail.txt 已删，说明里的“尚未接入”也已删。
+  expect(shop.workflow.steps[0]?.tool).toBe("shopify_orders");
+  expect(shop.workflow.steps[0]?.id).toBe("fetch_order");
+  expect(shop.trial_files).toBeUndefined();
+  expect(shop.description).not.toContain("尚未接入");
 });
 
 test("Templates46Test.test_import_builtin_draft", () => {
@@ -370,7 +376,7 @@ function seedTemplateSource(): { dir: string; file: string } {
   const shellTemplate = BUILTIN_TEMPLATE_SHOP_ORDER
     .replace("name: shop_order_followup", "name: shell_template")
     .replace("  name: shop_order_followup\n  version: 1", "  name: shell_template\n  version: 1")
-    .replace("    - id: find_mail\n      type: tool\n      tool: gmail_search\n      args:\n        query: \"{{inputs.order_id}}\"\n        limit: 5",
+    .replace("    - id: fetch_order\n      type: tool\n      tool: shopify_orders\n      args:\n        order_id: \"{{inputs.order_id}}\"",
       "    - id: run_shell\n      type: tool\n      tool: shell\n      args:\n        command: \"echo hi\"");
   writeFileSync(join(dir, "shell_template.yaml"), shellTemplate);
   const index = {
@@ -399,7 +405,7 @@ test("Templates46Test.test_market_verify_template", () => {
     const resolved = fakeTemplateEntry("shop_order_followup", file, "shop_order_followup.yaml");
     const v = verifyMarketplaceEntry(resolved);
     expect(v.ok).toBe(true);
-    expect(v.tools).toContain("gmail_search");
+    expect(v.tools).toContain("shopify_orders");
     expect(v.tools).toContain("gmail_send");
     expect(v.permissions).toContain("connector:shopify");
     expect(v.permissions).toContain("approve:send_message");
