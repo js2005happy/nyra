@@ -1,3 +1,10 @@
+## 2026-11-23 — bounded web_fetch input and partial-evidence marker (static only)
+
+- Inspected development-branch README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, core Tools/Agent, recent commits, open Issues (none), PR #113 (separate evaluation work), and previous commit CI statuses/workflow runs (none returned). Original angel URL resolves to nyra.
+- **Source fact:** `web_fetch` previously used unbounded `response.read()` and only truncated after decoding and HTML cleanup. Now reads at most 32,001 bytes and decodes at most 32,000 bytes; when over the cap, the cleaned body and saved evidence both explicitly say they contain only the read portion.
+- **External user feedback reviewed 2026-11-23:** [Codex #55684](https://github.com/openai/codex/issues/55684) describes repeated truncated reads and wasted context; [Codex #37121](https://github.com/openai/codex/issues/37121) describes missing recoverable tool state after compaction. These are individual external reports, not incident counts or proof of this specific Angel bug. Creation dates not independently verified.
+- **Not executed:** tests, builds, CI, real network requests, dependency installation, external account access, main merge, or release. HTML may be cut mid-tag or mid-codepoint; output/evidence may contain sensitive data; byte cap is not a sanitizer, complete-page guarantee, or recovery mechanism.
+
 ## 2026-11-23 — bounded successful HTTP POST response read (static-only)
 
 - Reviewed development-branch README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, core Tools/Agent, recent repository commits, open Issues (none), PR #113 (separate evaluation work), and prior commit status (no statuses returned). Original angel URL resolves to js2005happy/nyra.
