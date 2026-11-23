@@ -257,10 +257,37 @@ test("ToolsTest.test_memory_append_and_save_skill", async () => {
   const home = mkdtempSync(join(tmpdir(), "nyra-tools-home-"));
   const ctx = fullCtx(wd);
   ctx.memoryPath = join(home, "MEMORY.md");
-  const out = await executeTool("memory_append", { text: "测试记忆行" }, ctx);
+  // Kooyu 记忆证据门：写记忆须附当前用户消息的逐字原话作依据。
+  ctx.currentUserText = "请记住，我用的是铜陵职业技术学院的邮箱";
+  const out = await executeTool("memory_append", { text: "用户邮箱是铜陵职业技术学院的邮箱", evidenceQuotes: ["铜陵职业技术学院的邮箱"] }, ctx);
   expect(out).not.toContain("错误：");
   expect(existsSync(join(home, "MEMORY.md"))).toBe(true);
-  expect(readFileSync(join(home, "MEMORY.md"), "utf-8")).toContain("测试记忆行");
+  expect(readFileSync(join(home, "MEMORY.md"), "utf-8")).toContain("用户邮箱是铜陵职业技术学院的邮箱");
+});
+
+test("ToolsTest.test_memory_append_gate_rejects_without_evidence", async () => {
+  const wd = mkdtempSync(join(tmpdir(), "nyra-tools-"));
+  const home = mkdtempSync(join(tmpdir(), "nyra-tools-home-"));
+  const ctx = fullCtx(wd);
+  ctx.memoryPath = join(home, "MEMORY.md");
+  ctx.home = home;
+  ctx.currentUserText = "请记住，我用的是铜陵职业技术学院的邮箱";
+  // 缺依据：直接拒绝，什么都不写。
+  const noEvidence = await executeTool("memory_append", { text: "用户邮箱是铜陵职业技术学院的邮箱" }, ctx);
+  expect(noEvidence.startsWith("错误：")).toBe(true);
+  expect(existsSync(join(home, "MEMORY.md"))).toBe(false);
+  // 引用不是逐字原话（转述）：同样拒绝。
+  const paraphrase = await executeTool("memory_append", { text: "用户邮箱是铜陵职业技术学院的邮箱", evidenceQuotes: ["用户的邮箱是学校的"] }, ctx);
+  expect(paraphrase.startsWith("错误：")).toBe(true);
+  expect(existsSync(join(home, "MEMORY.md"))).toBe(false);
+  // 子 agent 不能写全局记忆。
+  ctx.delegateDepth = 1;
+  const subagent = await executeTool("memory_append", { text: "用户邮箱是铜陵职业技术学院的邮箱", evidenceQuotes: ["铜陵职业技术学院的邮箱"] }, ctx);
+  expect(subagent.startsWith("错误：")).toBe(true);
+  expect(existsSync(join(home, "MEMORY.md"))).toBe(false);
+  // 拒绝都记进拒绝账本（不静默跳过）。
+  const { listGateRejections } = await import("../../src/memoryGate.ts");
+  expect(listGateRejections(home, 10).length).toBe(3);
 });
 
 test("ToolsTest.test_http_post_to_closed_port_errors", async () => {
