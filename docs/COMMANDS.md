@@ -75,7 +75,7 @@
 | `nyra schedule <list\|add\|remove\|run\|daemon>` | 定时任务（`add` 可加 `--agent <名字>`，让任务跑在该 Bot 的电脑里） |
 | `nyra events <list\|add\|remove\|enable\|disable\|test\|poll>` | 事件触发任务：webhook 与新邮件触发进任务队列（详见 `docs/event-triggers.md`） |
 | `nyra mail-inbox <status\|enable\|disable\|allowlist\|set\|poll>` | 邮件即任务入口：白名单发件人的邮件直接进任务队列，跑完回信（详见 `docs/mail-inbox.md`） |
-| `nyra responsibility <list\|add\|remove\|enable\|disable\|check\|pause\|resume\|complete\|cancel\|brief\|show>` | 持续责任语义：责任对象（归属人 + 验收标准 + 升级条件 + 过期时间）与晨间简报，无事安静（详见 `docs/responsibilities.md`） |
+| `nyra responsibility <list\|add\|set\|remove\|enable\|disable\|check\|pause\|resume\|complete\|cancel\|brief\|show>` | 持续责任语义：责任对象（归属人 + 验收标准 + 升级条件 + 过期时间）与晨间简报，无事安静（详见 `docs/responsibilities.md`） |
 | `nyra bot telegram <start\|stop\|status>` | Bot 方向 Phase 1+2+3：Telegram 渠道（长轮询收消息、会话串行、去重配额、确定性指令；角色路由与聊天内审批；主动推送 notifier 与附件处理，详见 `docs/bot.md`） |
 | `nyra bot discord <start\|stop\|status>` | Bot 方向：Discord 渠道（Gateway 收 MESSAGE_CREATE 事件、REST 发/编辑消息；需 Message Content Intent，详见 `docs/bot.md`） |
 | `nyra bot slack <start\|stop\|status>` | Bot 方向：Slack 渠道（Socket Mode 收 app_mention/message.im 事件、Web API 发/编辑消息；需 app token + bot token，详见 `docs/bot.md`） |
@@ -127,7 +127,7 @@
 | `nyra permissions` | Poppy 站点授权意向（本地账本，只记录不授权） |
 | `nyra eigenflux` | EigenFlux 接入检测与本地网络限制 |
 | `nyra gmail <status\|auth\|search\|read\|send\|drafts\|send-draft\|labels\|label\|unlabel\|mark-read\|mark-unread\|trash\|attachment\|revoke>` | Gmail 连接器：读邮件、按 thread 回复、代发草稿（发信走审批）；草稿列表与发送草稿（G-P0-6 做深）；附件只读下载、标签、标已读、进回收站（写操作须显式确认；永久删除不提供，详见 `docs/connectors-gmail.md`） |
-| `nyra connector <status\|list\|approve\|revoke\|auth\|install\|uninstall\|usage\|flows\|flow>` | 连接器目录：安装 / 一键授权 / 撤销 / 用量 / 业务流程（详见 `docs/connectors.md`） |
+| `nyra connector <status\|list\|approve\|revoke\|auth\|install\|uninstall\|usage\|flows\|flow\|bundle>` | 连接器目录：安装 / 一键授权 / 撤销 / 用量 / 业务流程 / 导出连接器包（详见 `docs/connectors.md`） |
 | `nyra shopify <auth\|status\|products\|product\|orders\|order\|fulfill\|inventory>` | Shopify 连接器（只读）：查商品、订单、库存；订单履约核查（G-P0-6 做深）；写操作一律拒绝（详见 `docs/connectors.md`） |
 | `nyra slack <auth\|status\|channels\|history\|send\|card\|callback>` | Slack 连接器：读频道/消息、发消息（须显式批准）、发审批卡、按钮回调回写审批桥（G-P0-6 做深）；删消息/改频道/管理成员一律拒绝（详见 `docs/connectors.md`） |
 | `nyra mcp server <status\|enable\|disable\|allow-writes-on\|allow-writes-off>` | 对外 MCP 服务开关：别的 agent 经网关 `POST /mcp` 调 Nyra 的记忆与任务（默认关闭；写操作须显式开且过独立审查，详见 `docs/mcp.md`） |
@@ -170,4 +170,4 @@
 |---|---|
 | `nyra events <list\|add\|remove\|enable\|disable\|test\|poll>` | 事件触发任务：webhook 与新邮件触发进任务队列（详见 [events.md](./events.md)） |
 | `nyra mail-inbox <status\|enable\|disable\|allowlist\|set\|poll>` | 邮件即任务入口：白名单发件人的邮件直接进队列，跑完回信 |
-| `nyra responsibility <list\|add\|remove\|enable\|disable\|check\|pause\|resume\|complete\|cancel\|brief\|show>` | 持续责任语义：责任对象与晨间简报，无事安静 |
+| `nyra responsibility <list\|add\|set\|remove\|enable\|disable\|check\|pause\|resume\|complete\|cancel\|brief\|show>` | 持续责任语义：责任对象与晨间简报，无事安静 |

@@ -123,12 +123,59 @@ nyra connector uninstall <连接器> [--yes]        从目录卸载：同时撤�
 nyra connector usage [连接器]                    用量：每个连接器的调用次数（总次数、分操作次数、最后调用时间）
 nyra connector flows                             列出全部业务流程（每条一条真实业务流程 + 验收标准）
 nyra connector flow <流程id> [参数]              跑一条业务流程（见“业务流程（G-P0-6）”一节）
+nyra connector bundle <连接器> [--out <目录>]    导出连接器包（四件套：权限声明 + 工具清单 + 业务流程 + 红线表，机器人市场验证用）
 ```
 
 `nyra gmail status` 也会多一行授权状态；`nyra gmail auth` 成功后自动在
 状态机里记“已授权”，`nyra gmail revoke` 后自动记“已撤销”。`nyra slack
 status` 同款（多一行授权状态）；`nyra slack auth` 成功后自动在状态机里
 记“已授权”，`nyra connector revoke slack` 后自动记“已撤销”并删本地凭证。
+
+## 模型工具（缺口 44 深化）
+
+声明里的工具现在模型真能调了（以前 Shopify / Slack 的工具只存在于声明里）：
+
+| 工具 | 作用 | 审批 |
+|---|---|---|
+| `shopify_products` | 列商品（只读） | 不用批 |
+| `shopify_orders` | 按订单号直查 / 列订单（只读） | 不用批 |
+| `shopify_inventory` | 查库存水平（只读） | 不用批 |
+| `slack_channels` | 列频道（只读） | 不用批 |
+| `slack_history` | 读频道消息（只读，输出包在不可信标记里） | 不用批 |
+| `slack_send` | 发消息到频道 | 与 `gmail_send` 同级审批（永远须人批） |
+
+Shopify 写工具一个不加：模型工具表里没有改价、改库存、退款、删单的入口。
+发消息的审批卡仍只走 CLI（`nyra slack card`），不给模型。
+
+**立即撤销**：撤销连接器授权后，Bot 立即失去访问，不等下次启动。工具层
+每次调用都现建客户端、现查授权账本，没有内存缓存——`nyra connector
+revoke shopify` 之后，下一条 `shopify_products` 调用直接被拒。
+
+**调用账本**：每次调用都记进运行记录（`connector_call` 事件）：调了哪个
+系统、哪个操作、读/写了什么、谁调的（`user_id`）。没 runId 时走证据文件
+（`evidence/connector/`），用量账本（`connector-usage.json`）只记次数。
+
+## 连接器包（缺口 44 深化，四件套）
+
+一个连接器 = 四件套，打包进机器人市场的验证信封：
+
+1. **权限声明**：能读什么、能写什么、哪些写操作永远须人批、哪些永远禁做
+   （直接引用缺口 51 红线表）；
+2. **工具清单**：模型工具 + 只走终端的工具（贴标签、标已读、进回收站、
+   发审批卡这些没有模型工具的，只走 `nyra gmail` / `nyra slack` 命令）；
+3. **业务流程**：见“业务流程（G-P0-6）”一节，每条带验收标准；
+4. **红线表**：默认红线表（缺口 51），写操作必须落在“永远须人批”或
+   “永远禁做”档，只读工具必须落在“自由做”档，否则打包拒绝。
+
+导出：`nyra connector bundle <连接器> [--out <目录>]`，写出 6 个文件
+（`connector.json` / `tools.json` / `flows.json` / `redlines.json` /
+`permission-statement.txt` / `market-entry.json`），导出记录进证据链。
+打包校验是 fail-closed：声明缺失、红线表缺失、流程缺失或验收为空、工具
+组里有未知工具、写工具没落到非自由档，任一成立就拒绝打包。
+
+市场侧（见 `docs/marketplace.md`）：kind `connector` 只验证、不安装——
+内置连接器已在代码里，包里的四件套没有地方可以“装”进去；第三方连接器
+安装是下一批（须先有第三方声明注册表）。
 
 ## 接线点
 

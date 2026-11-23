@@ -46,6 +46,18 @@ nyra responsibility remove --name 依赖安全更新
 nyra responsibility add --name 盯报价 --goal "每天看一眼供应商报价页，变了就记下来" --every 86400 \
   --owner 小明 --done-when "file-exists:报价记录.md" --escalate-on "涨价,下架" --expires-at 2026-12-31T00:00:00Z
 
+# 缺口 45 深化：建好后改复查节奏 / 汇报规则 / 升级条件 / 过期时间 / 归属人
+# 只改传了的项，没传的不动；--expires-at none 是清掉过期时间（不过期）。
+# 改完重跑全量校验（--every 仍须 ≥60 秒、验收标准仍须是已知 checker）；
+# 已完成 / 已过期 / 已取消的终态责任拒绝改。
+nyra responsibility set --name 盯报价 --every 3600 --report always --owner 小明
+nyra responsibility set --name 盯报价 --escalate-on "涨价,下架,断货"
+nyra responsibility set --name 盯报价 --expires-at none
+
+# 列表带下次巡查与到期标记（相对时间，不写死日期）
+nyra responsibility list
+# 依赖安全更新	active	user	每 600 秒	待首次巡查	不过期	有发现汇报		检查依赖有没有可用的安全更新
+
 # 生命周期：暂停、恢复、完成、取消（完成须验收标准全过；取消是终态）
 nyra responsibility pause --name 盯报价
 nyra responsibility resume --name 盯报价
