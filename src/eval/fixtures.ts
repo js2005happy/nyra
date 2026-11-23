@@ -88,6 +88,10 @@ export function createEvalMailbox(): {
       markUnread: deny,
       trash: deny,
       getAttachment: deny,
+      // G-P0-6 草稿闭环：评测夹具不提供列草稿/读草稿/发草稿（评测只走 search/get/send/createDraft）。
+      listDrafts: deny,
+      getDraft: deny,
+      sendDraft: deny,
     },
   };
 }
