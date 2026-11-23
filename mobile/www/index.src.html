@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1a1a1a">
+<meta name="color-scheme" content="dark">
+<title>Nyra</title>
+<!-- 由 mobile/scripts/make-assets.ts 从 index.src.html 生成（方块头、丸子 SVG 内联）；改这里请改 index.src.html 再跑一次脚本。 -->
+<style>
+  /* 设计稿 nyra-design v14 / v14.1 m01–m04。地面 #1a1a1a = 原生启动图与开机动画的底色：启动图 → 本页 → 电脑上的 /m 不跳白。
+     字号五档：20 / 17 / 14 / 12.5 / 11.5；标语是唯一的品牌例外。可点的元素都 ≥ 44×44。 */
+  :root{color-scheme:dark;--ground:#1a1a1a;--s1:#212123;--s2:#28282b;--s3:#323236;--inset:#161618;
+    --hair:rgba(255,255,255,.065);--hair2:rgba(255,255,255,.1);--hair3:rgba(255,255,255,.16);--lift:inset 0 1px 0 rgba(255,255,255,.045);
+    --t1:#EEEEF0;--t2:#ABABB2;--t3:#8E8E96;--brand:#8688ff;--on-brand:#141414;--brand-t:#AEB0FF;--bad:#F85149;--bad-t:#FF8F86;
+    --sans:Inter,"PingFang SC","Noto Sans SC","Microsoft YaHei",system-ui,sans-serif;--mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+    --safe-t:env(safe-area-inset-top,0px);--safe-b:env(safe-area-inset-bottom,0px)}
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{background:var(--ground);color:var(--t1);font:400 14px/1.5 var(--sans);-webkit-font-smoothing:antialiased;min-height:100%}
+  button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+  input{font:inherit;color:var(--t1)}
+  :focus-visible{outline:2px solid var(--brand-t);outline-offset:2px}
+  .hidden{display:none!important}
+  .i{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex:none}
+  .row{display:flex;align-items:center}
+  code{font-family:var(--mono);font-size:12.5px;background:rgba(255,255,255,.06);padding:1px 5px;border-radius:5px;color:var(--t1)}
+  .view{position:relative;min-height:100vh;padding-top:var(--safe-t)}
+  /* 首屏：方块头从开机终帧的位置（屏幕正中）上移，标语和登录区随后浮现 */
+  #first{overflow:hidden}
+  .glow{position:absolute;left:-60px;right:-60px;top:6vh;height:46vh;background:radial-gradient(50% 50% at 50% 46%,rgba(134,136,255,.17),rgba(134,136,255,.05) 45%,rgba(134,136,255,0) 72%);pointer-events:none;opacity:0;transition:opacity .4s ease .2s}
+  .brand{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;transition:top .42s cubic-bezier(.16,1,.3,1)}
+  .brand .mark{width:58px;height:58px;display:block}
+  .brand .wm{font:650 20px/28px var(--sans);letter-spacing:-.01em;margin-top:10px;opacity:0;transition:opacity .24s ease .3s}
+  .cloudbtn{position:absolute;right:10px;top:calc(8px + var(--safe-t));z-index:2;height:44px;padding:0 12px;display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--t2);border-radius:12px}
+  .hero{position:absolute;left:0;right:0;top:calc(29vh + 74px);text-align:center;padding:0 24px}
+  .tagline{font-size:28px;line-height:38px;font-weight:700;letter-spacing:-.02em}
+  .hero p{font-size:14px;line-height:21px;color:var(--t2);margin-top:12px}
+  .crew{display:flex;justify-content:center;gap:10px;margin-top:26px;align-items:flex-end}
+  .crew span{display:inline-block}.crew svg{display:block;overflow:visible;width:100%;height:100%}
+  .login{position:absolute;left:22px;right:22px;bottom:calc(22px + var(--safe-b));display:flex;flex-direction:column}
+  .fade{opacity:0;transform:translateY(6px);transition:opacity .24s ease .42s,transform .24s ease .42s}
+  .ready .brand{top:29vh}.ready .brand .wm,.ready .glow{opacity:1}.ready .fade{opacity:1;transform:none}
+  @media (prefers-reduced-motion:reduce){.brand,.brand .wm,.glow,.fade{transition:none}}
+  @media (max-height:700px){.hero p,.crew{display:none}}
+  .lh{display:flex;align-items:center;margin-bottom:12px;padding:0 2px;font-size:12.5px;color:var(--t3);font-weight:550}
+  .tag{margin-left:auto;display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px;border-radius:7px;font-size:11.5px;font-weight:550;background:rgba(255,255,255,.06);color:var(--t2);white-space:nowrap}
+  .tag:before{content:"";width:5px;height:5px;border-radius:50%;background:var(--brand-t)}
+  .btn{height:50px;border-radius:14px;display:inline-flex;align-items:center;justify-content:center;gap:9px;font-size:14px;font-weight:600;background:var(--s1);color:var(--t1);box-shadow:var(--lift),inset 0 0 0 1px var(--hair);padding:0 16px;white-space:nowrap;width:100%}
+  .btn.google{height:52px;background:#F3F3F5;color:#1a1a1a;box-shadow:inset 0 1px 0 #fff}
+  .btn.pri{height:52px;background:var(--brand);color:var(--on-brand);box-shadow:inset 0 1px 0 rgba(255,255,255,.28),0 6px 18px rgba(134,136,255,.18)}
+  .btn.pri:disabled{background:var(--s2);color:var(--t3);box-shadow:inset 0 0 0 1px var(--hair);cursor:default}
+  .btn:active{filter:brightness(1.12)}
+  .two{display:flex;gap:10px;margin-top:10px}
+  .sepl{height:1px;background:var(--hair);margin:18px 2px 4px}
+  .lan{height:56px;display:flex;align-items:center;gap:12px;padding:0 4px;width:100%;text-align:left}
+  .tile{width:32px;height:32px;border-radius:10px;background:var(--s3);box-shadow:var(--lift);display:flex;align-items:center;justify-content:center;flex:none}
+  .lan b{display:block;font-size:14px;font-weight:600;line-height:19px}.lan small{display:block;font-size:11.5px;color:var(--t3);line-height:17px}
+  .lan .t{flex:1}.lan .chev{color:var(--t3)}
+  /* 连家里电脑 */
+  .bar{height:56px;display:flex;align-items:center;padding:0 4px}
+  .ib{width:44px;height:44px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center}
+  .page{padding:4px 24px calc(18px + var(--safe-b));display:flex;flex-direction:column;min-height:calc(100vh - 56px - var(--safe-t))}
+  .page h1{font-size:20px;line-height:28px;font-weight:700;letter-spacing:-.015em}
+  .page .lead{font-size:14px;line-height:21px;color:var(--t2);margin-top:6px}
+  .steps{display:flex;flex-direction:column;gap:12px;margin-top:20px}
+  .step{display:flex;gap:12px;align-items:flex-start}
+  .step span:first-child{width:22px;height:22px;border-radius:7px;background:var(--s3);font:600 11.5px/22px var(--sans);text-align:center;flex:none}
+  .step span:last-child{font-size:12.5px;line-height:21px;color:var(--t2)}
+  .lbl{font-size:12.5px;color:var(--t2);font-weight:550;margin-bottom:8px;display:flex}
+  .lbl em{font-style:normal;margin-left:auto;color:var(--t3);font-weight:400}
+  .inp{width:100%;height:50px;border-radius:14px;border:0;outline:0;background:var(--s1);box-shadow:inset 0 0 0 1px var(--hair2);padding:0 16px;font-size:17px;font-family:var(--mono)}
+  .inp:focus{box-shadow:inset 0 0 0 1.5px var(--brand),0 0 0 4px rgba(134,136,255,.12)}
+  .inp.bad{box-shadow:inset 0 0 0 1.5px var(--bad),0 0 0 4px rgba(248,81,73,.1)}
+  .code6{display:flex;gap:8px;position:relative}
+  .code6 i{font-style:normal;flex:1;max-width:52px;height:56px;border-radius:14px;background:var(--s1);box-shadow:inset 0 0 0 1px var(--hair2);display:flex;align-items:center;justify-content:center;font:500 20px/1 var(--mono)}
+  .code6 i.cur{box-shadow:inset 0 0 0 1.5px var(--brand),0 0 0 4px rgba(134,136,255,.12)}
+  .code6 input{position:absolute;inset:0;opacity:0;width:100%;height:100%;font-size:17px}
+  .note{font-size:11.5px;color:var(--t3);margin-top:10px;line-height:18px}
+  .err{color:var(--bad-t);font-size:12.5px;min-height:18px;margin-top:8px;display:flex;gap:7px;align-items:flex-start}
+  .warn{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;border-radius:16px;background:var(--s1);box-shadow:inset 0 0 0 1px var(--hair);margin:18px 0 12px;font-size:12.5px;line-height:19px;color:var(--t2)}
+  .grow{flex:1;min-height:12px}
+  /* 抽屉 */
+  .dim{position:fixed;inset:0;background:rgba(8,8,9,.62);z-index:10}
+  .sheet{position:fixed;left:0;right:0;bottom:0;z-index:11;background:var(--s2);border-radius:28px 28px 0 0;box-shadow:inset 0 1px 0 rgba(255,255,255,.07),0 -20px 50px rgba(0,0,0,.4);padding:8px 18px calc(14px + var(--safe-b))}
+  .grab{width:36px;height:4px;border-radius:2px;background:rgba(255,255,255,.2);margin:0 auto 14px}
+  .sheet h2{font-size:17px;line-height:24px;font-weight:650;flex:1}
+  .sheet p{font-size:12.5px;color:var(--t2);margin-top:4px;line-height:20px}
+  .sheet .btn{margin-top:18px}
+</style>
+</head>
+<body>
+<section id="first" class="view">
+  <div class="glow"></div>
+  <button class="cloudbtn" id="cloudBtn"><svg class="i" viewBox="0 0 24 24"><path d="M7 18.5h10a4 4 0 0 0 .6-7.95A5.5 5.5 0 0 0 7 9.5a4.5 4.5 0 0 0 0 9z"/></svg>云端地址</button>
+  <div class="brand">{{MARK}}<div class="wm">Nyra</div></div>
+  <div class="hero fade">
+    <div class="tagline">活交给它，<br>决定留给你。</div>
+    <p>它在你的电脑上写代码、跑命令，<br>要动手之前，先在手机上问你。</p>
+    <div class="crew" aria-hidden="true">{{MASCOT:patrol:idle:22}}{{MASCOT:tester:work:22}}{{MASCOT:chief:idle:26}}{{MASCOT:docs:idle:22}}{{MASCOT:weekly:idle:22}}</div>
+  </div>
+  <div class="login fade">
+    <div class="lh">用账号登录<span class="tag">即将推出</span></div>
+    <button class="btn google" id="googleBtn"><svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>用 Google 继续</button>
+    <div class="two">
+      <button class="btn" id="githubBtn"><svg width="18" height="18" viewBox="0 0 16 16" aria-hidden="true"><path fill="#ffffff" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>GitHub</button>
+      <button class="btn" id="emailBtn"><svg class="i" viewBox="0 0 24 24"><rect x="3.5" y="5.5" width="17" height="13" rx="2"/><path d="M4 7l8 6 8-6"/></svg>邮箱</button>
+    </div>
+    <div class="sepl"></div>
+    <button class="lan" id="lanBtn"><span class="tile"><svg class="i" viewBox="0 0 24 24"><rect x="4.5" y="5" width="15" height="10.5" rx="1.5"/><path d="M2.5 19h19"/></svg></span><span class="t"><b>连家里电脑</b><small>同一个 Wi-Fi 下，用配对码连接</small></span><svg class="i chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
+  </div>
+</section>
+
+<section id="lan" class="view hidden">
+  <div class="bar"><button class="ib" id="lanBack" aria-label="返回"><svg class="i" viewBox="0 0 24 24" style="width:21px;height:21px"><path d="M19 12H5"/><path d="M11 6l-6 6 6 6"/></svg></button></div>
+  <div class="page">
+    <h1>连家里电脑</h1>
+    <p class="lead">云端上线前，手机通过家里的 Wi-Fi 连你的电脑。</p>
+    <div class="steps">
+      <div class="step"><span>1</span><span>电脑上运行 <code>nyra ui --pair</code>，终端会显示二维码和 6 位配对码。</span></div>
+      <div class="step"><span>2</span><span>手机和电脑连同一个 Wi-Fi，在下面填好。</span></div>
+    </div>
+    <div class="row" style="gap:10px;margin-top:24px;align-items:flex-start">
+      <div style="flex:1"><label class="lbl" for="host">电脑地址</label><input class="inp" id="host" type="text" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="192.168.1.23"></div>
+      <div style="width:104px"><label class="lbl" for="port">端口</label><input class="inp" id="port" type="number" inputmode="numeric" value="8765" min="1" max="65535"></div>
+    </div>
+    <div style="margin-top:18px"><div class="lbl">配对码<em>首次连接时填</em></div>
+      <label class="code6" id="boxes"><i></i><i></i><i></i><i></i><i></i><i></i><input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" aria-label="6 位配对码"></label>
+    </div>
+    <div class="note">配对码 5 分钟内有效，只能用一次，输错 5 次作废。已配对过的手机不用填。</div>
+    <div class="err" id="lanErr"></div>
+    <div class="grow"></div>
+    <div class="warn"><svg class="i" viewBox="0 0 24 24" style="width:16px;height:16px;margin-top:1px"><rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></svg><span>明文连接，只在自己信任的家庭 Wi-Fi 里用，绝不要把端口映射到公网。手机丢了，在电脑的设置里撤销它。</span></div>
+    <button class="btn pri" id="connectBtn" disabled>连接</button>
+  </div>
+</section>
+
+<div class="dim hidden" id="dim"></div>
+<div class="sheet hidden" id="cloudSheet" role="dialog" aria-modal="true" aria-labelledby="cloudTitle">
+  <div class="grab"></div>
+  <div class="row"><h2 id="cloudTitle">云端地址</h2><button class="ib closeSheet" aria-label="关闭" style="margin:-10px -10px -10px 0"><svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  <p>告诉手机连哪个云端，填一次就会记住。云端账号登录上线后，用的就是这个地址。</p>
+  <div style="margin-top:18px"><label class="lbl" for="cloud">地址</label><input class="inp" id="cloud" type="text" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://cloud.example.com"></div>
+  <div class="err" id="err"></div>
+  <p style="font-size:12.5px;color:var(--t3)">不知道地址？在电脑上运行 <code>nyra cloud status</code> 查看。</p>
+  <button class="btn pri" id="saveCloud">保存</button>
+</div>
+<div class="sheet hidden" id="soonSheet" role="dialog" aria-modal="true" aria-labelledby="soonTitle">
+  <div class="grab"></div>
+  <div class="row"><h2 id="soonTitle">账号登录即将推出</h2></div>
+  <p>用 Google、GitHub 或邮箱登录、手机直连云端，这一步还没上线。现在请用“连家里电脑”，在同一个 Wi-Fi 下用配对码连接。</p>
+  <button class="btn" id="soonLan">连家里电脑</button>
+  <button class="btn" style="margin-top:10px;background:none;box-shadow:none;color:var(--t2)" id="soonClose">知道了</button>
+</div>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  // 首屏：方块头从屏幕正中（= 原生启动图 / 开机终帧的位置）上移，标语和登录区随后浮现。
+  requestAnimationFrame(function () { requestAnimationFrame(function () { $('first').classList.add('ready'); }); });
+
+  function show(id) { $('first').classList.toggle('hidden', id !== 'first'); $('lan').classList.toggle('hidden', id !== 'lan'); window.scrollTo(0, 0); }
+  function openSheet(id) { closeSheets(); $('dim').classList.remove('hidden'); $(id).classList.remove('hidden'); }
+  function closeSheets() { $('dim').classList.add('hidden'); $('cloudSheet').classList.add('hidden'); $('soonSheet').classList.add('hidden'); }
+  $('dim').onclick = closeSheets;
+  Array.prototype.forEach.call(document.querySelectorAll('.closeSheet'), function (b) { b.onclick = closeSheets; });
+  $('soonClose').onclick = closeSheets;
+  $('soonLan').onclick = function () { closeSheets(); show('lan'); };
+
+  // 账号登录：云端登录后端还没部署——按钮在，点了说明“即将推出”，不假装能登。
+  ['googleBtn', 'githubBtn', 'emailBtn'].forEach(function (id) { $(id).onclick = function () { openSheet('soonSheet'); }; });
+
+  // 云端地址：校验后记在本机（云端账号上线后用）。
+  var cloudEl = $('cloud'), errEl = $('err');
+  try { cloudEl.value = localStorage.getItem('nyra-cloud-url') || ''; } catch (e) {}
+  $('cloudBtn').onclick = function () { errEl.textContent = ''; cloudEl.classList.remove('bad'); openSheet('cloudSheet'); setTimeout(function () { cloudEl.focus(); }, 60); };
+  $('saveCloud').onclick = function () {
+    var url = (cloudEl.value || '').trim().replace(/\/$/, '');
+    errEl.textContent = ''; cloudEl.classList.remove('bad');
+    if (!url) { errEl.textContent = '先填云端地址（电脑上跑 nyra cloud set-url 能看到）。'; cloudEl.classList.add('bad'); return; }
+    if (!/^https?:\/\//i.test(url)) { errEl.textContent = '云端地址要带 http:// 或 https://。'; cloudEl.classList.add('bad'); return; }
+    try { localStorage.setItem('nyra-cloud-url', url); } catch (e) {}
+    closeSheets();
+  };
+
+  // 连家里电脑（局域网）：填电脑地址 + 配对码，跳电脑上的 /m。
+  var hostEl = $('host'), portEl = $('port'), codeEl = $('code'), lanErrEl = $('lanErr');
+  var last = null;
+  try { last = JSON.parse(localStorage.getItem('nyra-last-gateway') || 'null'); } catch (e) {}
+  if (last && last.host) { hostEl.value = last.host; if (last.port) portEl.value = last.port; }
+  function sync() {
+    var v = codeEl.value.replace(/\D/g, '').slice(0, 6); if (codeEl.value !== v) codeEl.value = v;
+    Array.prototype.forEach.call($('boxes').querySelectorAll('i'), function (b, i) { b.textContent = v[i] || ''; b.classList.toggle('cur', document.activeElement === codeEl && i === Math.min(v.length, 5)); });
+    $('connectBtn').disabled = !hostEl.value.trim();
+  }
+  codeEl.oninput = sync; codeEl.onfocus = sync; codeEl.onblur = sync; hostEl.oninput = sync;
+  $('lanBtn').onclick = function () { show('lan'); sync(); };
+  $('lanBack').onclick = function () { show('first'); };
+  function goLan(host, port, code) {
+    host = (host || '').trim().replace(/^https?:\/\//i, '').split('/')[0];
+    hostEl.classList.remove('bad');
+    if (!host) { lanErrEl.textContent = '先填电脑地址。'; hostEl.classList.add('bad'); return; }
+    if (!/^[A-Za-z0-9._-]+(:\d+)?$/.test(host)) { lanErrEl.textContent = '电脑地址格式不对，只要 IP 或主机名，不要带 http://。'; hostEl.classList.add('bad'); return; }
+    port = parseInt(port, 10);
+    if (!port || port < 1 || port > 65535) { lanErrEl.textContent = '端口不对，应在 1–65535 之间。'; return; }
+    code = (code || '').trim();
+    if (code && !/^\d{6}$/.test(code)) { lanErrEl.textContent = '配对码是 6 位数字，不填也可以（已配对过的手机不用填）。'; return; }
+    try { localStorage.setItem('nyra-last-gateway', JSON.stringify({ host: host, port: port })); } catch (e) {}
+    window.location.href = 'http://' + host + ':' + port + '/m' + (code ? '#pair=' + code : '');
+  }
+  $('connectBtn').onclick = function () { lanErrEl.textContent = ''; goLan(hostEl.value, portEl.value, codeEl.value); };
+  sync();
+})();
+</script>
+</body>
+</html>

@@ -542,8 +542,9 @@ test("ReviewQueue.test_mobile_page_has_review_tab", async () => {
     const page = await fetch(`http://127.0.0.1:${info.port}/m`);
     expect(page.status).toBe(200);
     const html = await page.text();
-    expect(html).toContain("review-view");
-    expect(html).toContain("m.tab.review");
+    // v14：审阅与审批合并成“待你决定”标签页（inbox-view）。
+    expect(html).toContain("inbox-view");
+    expect(html).toContain("m.tab.inbox");
     expect(html).toContain("review-approve");
   } finally {
     await gw.stop();

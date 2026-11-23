@@ -400,7 +400,7 @@ test("splash: 方块头转眼球入场动画，只在手机主屏幕独立窗口
 });
 
 // ---------------------------------------------------------- 设计稿改版 ---
-test("mobile v2 design: 中英文案键齐全、四个标签、字体同源加载且 CSP 不放开 font-src", async () => {
+test("mobile v2 design: 中英文案键齐全、四个标签（v14：对话 / 待你决定 / 自动化 / 设置）、字体同源加载且 CSP 不放开 font-src", async () => {
   const { MESSAGES } = await import("../../src/i18n.ts");
   const zhKeys = Object.keys(MESSAGES.zh).filter((k) => k.startsWith("m."));
   const enKeys = Object.keys(MESSAGES.en).filter((k) => k.startsWith("m."));
@@ -416,9 +416,10 @@ test("mobile v2 design: 中英文案键齐全、四个标签、字体同源加�
     expect(csp).toContain("default-src 'none'");
     expect(csp).not.toContain("font-src");
     const page = await res.text();
-    for (const tab of ["threads", "automations", "skills", "settings"]) expect(page).toContain(`data-tab="${tab}"`);
+    for (const tab of ["threads", "inbox", "automations", "settings"]) expect(page).toContain(`data-tab="${tab}"`);
+    expect(page).not.toContain('data-tab="skills"'); // 技能收进设置
     expect(page).toContain("new FontFace(");
-    expect(page).toContain("prefers-color-scheme:dark");
+    expect(page).toContain('<meta name="color-scheme" content="dark">'); // v14 只有深色，地面 #1a1a1a 与开机动画同色
     // 页面不含任何 token
     expect(page).not.toContain(gw.token);
     for (const f of ["inter-400", "inter-600", "jbm-400"]) {

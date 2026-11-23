@@ -1101,7 +1101,11 @@ export class GroupStore {
     });
   }
 
-  async send(roomId: string, message: string, rounds = 1): Promise<SendResult> {
+  /**
+   * opts.onEntry：每条新记录写进群里后回调一次（网关把它转成群事件流，手机群聊页实时看到谁回了）；
+   * 不改 send 本身的语义——仍然等本轮所有成员回答完才返回。
+   */
+  async send(roomId: string, message: string, rounds = 1, opts: { onEntry?: (entry: RoomMessage) => void } = {}): Promise<SendResult> {
     const text = validateText(message, "群消息", MAX_INPUT_CHARS);
     if (
       typeof rounds !== "number" ||
@@ -1140,6 +1144,7 @@ export class GroupStore {
         for (const entry of results) {
           room.messages.push(entry);
           newEntries.push(entry);
+          try { opts.onEntry?.(entry); } catch { /* 观察器故障不影响群聊 */ }
         }
         this.writeRoom(room);
       }

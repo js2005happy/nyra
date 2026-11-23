@@ -58,7 +58,14 @@ import { listArtifacts, getArtifact } from "./artifacts.ts";
 import { summarizeLastTurn, type TurnSummary } from "./turnSummary.ts";
 import { projectMemoryView, projectMemoryFile } from "./projectMemory.ts";
 import { EvidenceStore } from "./evidence.ts";
-import { GroupStore, type BotConfig } from "./groups.ts";
+import { GroupStore, type BotConfig, type RoomMessage } from "./groups.ts";
+import {
+  GroupEventHub, ChiefError, CHIEF_MAX_MEMBERS, CHIEF_PERMISSION,
+  chiefCandidates, createChiefGroup, getChiefRun, listChiefRuns, proposeChiefGroup, runChiefGroup,
+} from "./chiefGroup.ts";
+import { TeamError, getTeam, listTeams, prepareTeamDispatch, publicTeam } from "./team.ts";
+import { getGroupPlan, listGroupPlans } from "./groupPlan.ts";
+import { assignMascots } from "./mascots.ts";
 // 群聊页嵌进二进制（.txt 后缀：bun-types 只给 *.txt 声明了 string 类型；
 // 内容分别是群聊页 HTML 与 JS，原文件在 nyra/ 已随 Python 删除，改这里要同步改 .txt）。
 import GROUP_UI_HTML from "./assets/group_ui.html.txt" with { type: "text" };
@@ -198,6 +205,10 @@ export class Gateway {
   magicLinks: MagicLinkStore;
   private _store: ConversationStore | null = null;
   groups: GroupStore;
+  /** 群事件流（总指挥分派、成员交回、群里异步发消息）：手机群聊页轮询 / SSE 读它。 */
+  groupEvents = new GroupEventHub();
+  /** 总指挥团队分派起的 chief 会话：会话 id → 团队与纪元（GET /api/teams/runs/:id 用）。 */
+  teamRuns: Map<string, { team_id: string; team_name: string; chief: string; epoch: number | null; task: string; created_at: string }> = new Map();
   mcpManager: MCPToolManager | null = null;
   mcpCost: McpCostTracker;
   private providerInstance: ProviderLike | null = null;
@@ -892,7 +903,7 @@ export class Gateway {
   }
 
   // -- running ------------------------------------------------------------
-  send(sessionId: string, text: string): SessionRun {
+  send(sessionId: string, text: string, team?: { soulAgent: string; teamId: string; teamEpoch: number | null; display: string }): SessionRun {
     const run = this.getRun(sessionId);
     if (run.status === "running") throw new Error("这个会话正在执行任务，请等它完成");
     run.events = [];
@@ -905,6 +916,9 @@ export class Gateway {
           workdir: this.workdir, mode: this.mode, maxTurns: this.maxTurns ?? 20,
           sessionId, interactive: true,
           messages: loadSession(sessionId, this.home),
+          // 总指挥团队分派（POST /api/teams/:id/dispatch）：Soul = 参谋长、团队模式 chief 角色（工具只剩
+          // delegate / delegate_parallel，见 team.ts ORCHESTRATOR_TOOLS）；成员的对外动作照常走下面的审批桥。
+          ...(team ? { soulAgent: team.soulAgent, teamId: team.teamId, teamRole: "chief" as const, teamEpoch: team.teamEpoch } : {}),
           mcpManager: this.mcpManager,
           onEvent: (kind, data) => this.record(run, kind, data),
           approveFn: (tool, summary, details) => this.approve(run, tool, summary, details),
@@ -964,8 +978,9 @@ export class Gateway {
       const snap = run.agent!.usage.snapshot();
       usageBase = { total_tokens: snap.total_tokens ?? (snap.calls === 0 ? 0 : null), missing_calls: snap.missing_calls };
     } catch { usageBase = null; }
-    this.record(run, "user", usageBase ? { content: text, usage_base: usageBase } : { content: text });
-    try { this.store.record(sessionId, "user", text); } catch { /* 存档失败不阻塞运行 */ }
+    const shown = team ? team.display : text;
+    this.record(run, "user", usageBase ? { content: shown, usage_base: usageBase } : { content: shown });
+    try { this.store.record(sessionId, "user", shown); } catch { /* 存档失败不阻塞运行 */ }
     this.rememberProject(sessionId);
     void this.doWork(run, text);
     return run;
@@ -1846,6 +1861,7 @@ export class Gateway {
     const who = await this.apiAuth(req);
     if (who === null) { this.sendError(res, 403, "token 无效"); return; }
     const isOwner = who === "owner";
+    if (await this.chiefRoutes(method, path, query, req, res)) return;
 
     if (method === "GET" && path === "/api/approvals") {
       this.sendJson(res, 200, { approvals: this.pendingApprovals() });
@@ -2259,6 +2275,13 @@ export class Gateway {
       if (groupMsgMatch) {
         try {
           const rounds = body.rounds === undefined ? 1 : Number(body.rounds);
+          if (body.async === true) {
+            // 手机群聊页：不等成员回答完，立刻回 202；回答逐条进群事件流（GET /api/groups/:id/events）。
+            this.groups.get(groupMsgMatch[1]);
+            this.sendGroupAsync(groupMsgMatch[1], String(body.text ?? ""), rounds);
+            this.sendJson(res, 202, { room: groupMsgMatch[1], accepted: true });
+            return;
+          }
           const result = await this.groups.send(groupMsgMatch[1], String(body.text ?? ""), rounds);
           this.sendJson(res, 200, result);
         } catch (err) { this.sendError(res, 400, err instanceof Error ? err.message : String(err)); }
@@ -2361,6 +2384,198 @@ export class Gateway {
     }
 
     this.sendError(res, 404, "未找到");
+  }
+
+  // -- 总指挥 / 团队 / 群事件（第 1 阶段，docs/chief.md） --------------------
+  /** 团队分派：过三道门、拿 lead 租约，起一个 chief 会话（审批照常进手机“待你决定”）。返回会话 id = run_id。 */
+  async dispatchTeam(idOrName: string, task: string): Promise<{ run_id: string; team_id: string; epoch: number | null; status: string; error: string }> {
+    const { plan, chiefTask } = await prepareTeamDispatch(this.home, idOrName, task);
+    const sid = this.newSession();
+    this.teamRuns.set(sid, { team_id: plan.team.id, team_name: plan.team.name, chief: plan.chief, epoch: plan.epoch ?? null, task: plan.task, created_at: new Date().toISOString() });
+    const run = this.send(sid, chiefTask, { soulAgent: plan.chief, teamId: plan.team.id, teamEpoch: plan.epoch ?? null, display: plan.task });
+    this.record(run, "team_dispatched", { team_id: plan.team.id, chief: plan.chief, members: plan.members.length, epoch: plan.epoch ?? null });
+    return { run_id: sid, team_id: plan.team.id, epoch: plan.epoch ?? null, status: run.status, error: run.error };
+  }
+
+  /** 总指挥建群后的分派：后台跑，事件进群事件流。 */
+  startChiefRun(runId: string, roomId: string): void {
+    this.groupEvents.push(roomId, "chief_started", { run_id: runId });
+    void runChiefGroup(this.home, this.groups, runId, (type, data) => { this.groupEvents.push(roomId, type, data); })
+      .catch((err) => { this.groupEvents.push(roomId, "chief_failed", { run_id: runId, error: err instanceof Error ? err.message : String(err) }); });
+  }
+
+  /** 群里异步发一条消息（手机群聊页用）：立刻回 202，成员回答逐条进事件流。 */
+  sendGroupAsync(roomId: string, text: string, rounds: number): void {
+    this.groupEvents.push(roomId, "group_send_started", { text: text.slice(0, 200) });
+    void this.groups.send(roomId, text, rounds, { onEntry: (entry: RoomMessage) => { this.groupEvents.push(roomId, "group_reply", { sender: entry.sender, error: Boolean(entry.error) }); } })
+      .then((r) => { this.groupEvents.push(roomId, "group_send_done", { total: r.total }); })
+      .catch((err) => { this.groupEvents.push(roomId, "group_send_failed", { error: err instanceof Error ? err.message : String(err) }); });
+  }
+
+  private groupView(roomId: string): Record<string, unknown> {
+    const room = this.groups.get(roomId);
+    const keys = assignMascots(room.bots.map((b) => b.id));
+    const runs = listChiefRuns(this.home, roomId);
+    return {
+      ...room,
+      bots: room.bots.map((b) => ({ ...b, mascot: keys[b.id] })),
+      chief: runs[0] ?? null,
+      events_next: this.groupEvents.since(roomId, Number.MAX_SAFE_INTEGER).next,
+    };
+  }
+
+  private teamRunView(sid: string): Record<string, unknown> | null {
+    const meta = this.teamRuns.get(sid);
+    if (!meta) return null;
+    const run = this.getRun(sid, false);
+    const msgs = this.sessionMessages(sid);
+    const last = [...msgs].reverse().find((m) => m.role === "assistant" && typeof m.content === "string" && m.content);
+    return { run_id: sid, ...meta, status: run?.status ?? "idle", error: run?.error ?? "", output: run?.status === "done" && last ? String(last.content) : null };
+  }
+
+  /** 团队 / 总指挥 / 群事件路由（鉴权之后调用）；处理了返回 true。 */
+  private async chiefRoutes(method: string, path: string, query: URLSearchParams, req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+    const fail = (err: unknown, status = 400) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.sendError(res, status, msg);
+    };
+    if (method === "GET" && path === "/api/teams") {
+      try {
+        const teams = listTeams(this.home).map((t) => {
+          const keys = assignMascots(t.members);
+          return { ...publicTeam(t), mascots: { chief: "chief", ...keys } };
+        });
+        this.sendJson(res, 200, { teams });
+      } catch (err) { fail(err); }
+      return true;
+    }
+    const teamRunMatch = /^\/api\/teams\/runs\/([^/]+)(\/events)?$/.exec(path);
+    if (method === "GET" && teamRunMatch) {
+      const sid = this.validSid(teamRunMatch[1]);
+      if (!sid || !this.teamRuns.has(sid)) { this.sendError(res, 404, "没有这个团队分派"); return true; }
+      if (teamRunMatch[2]) {
+        let since = 0;
+        try { since = Math.max(0, Number(query.get("since") ?? "0") || 0); } catch { since = 0; }
+        this.streamEvents(req, res, sid, since);
+        return true;
+      }
+      this.sendJson(res, 200, this.teamRunView(sid));
+      return true;
+    }
+    const teamMatch = /^\/api\/teams\/([^/]+)(\/dispatch)?$/.exec(path);
+    if (teamMatch && !teamRunMatch) {
+      const idOrName = decodeURIComponent(teamMatch[1]);
+      if (method === "GET" && !teamMatch[2]) {
+        const team = getTeam(this.home, idOrName);
+        if (!team) { this.sendError(res, 404, `找不到团队 ${idOrName}`); return true; }
+        this.sendJson(res, 200, { ...publicTeam(team), mascots: { chief: "chief", ...assignMascots(team.members) } });
+        return true;
+      }
+      if (method === "POST" && teamMatch[2]) {
+        let body: Record<string, unknown>;
+        try { body = await this.readBody(req); } catch (err) { fail(err); return true; }
+        try {
+          const out = await this.dispatchTeam(idOrName, String(body.task ?? ""));
+          this.sendJson(res, 202, out);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          fail(err, err instanceof TeamError && /找不到团队/.test(msg) ? 404 : err instanceof TeamError && /分派被拒|已解散|硬顶/.test(msg) ? 409 : 400);
+        }
+        return true;
+      }
+    }
+    if (method === "GET" && path === "/api/chief") {
+      try {
+        const { team, candidates } = chiefCandidates(this.home, query.get("team"));
+        const runs = listChiefRuns(this.home).slice(0, 20);
+        this.sendJson(res, 200, {
+          max: CHIEF_MAX_MEMBERS, permission: CHIEF_PERMISSION,
+          team: team ? publicTeam(team) : null, candidates,
+          runs, running: runs.filter((r) => r.status === "running").length,
+        });
+      } catch (err) { fail(err); }
+      return true;
+    }
+    if (method === "POST" && path === "/api/chief/proposals") {
+      let body: Record<string, unknown>;
+      try { body = await this.readBody(req); } catch (err) { fail(err); return true; }
+      try { this.sendJson(res, 200, proposeChiefGroup(this.home, body.task, { team: typeof body.team === "string" ? body.team : null })); }
+      catch (err) { fail(err); }
+      return true;
+    }
+    if (method === "POST" && path === "/api/chief/groups") {
+      let body: Record<string, unknown>;
+      try { body = await this.readBody(req); } catch (err) { fail(err); return true; }
+      try {
+        const { run, room } = createChiefGroup(this.home, this.groups, {
+          task: body.task, members: body.members, title: body.title,
+          team: typeof body.team === "string" ? body.team : null,
+        });
+        if (body.start !== false) this.startChiefRun(run.id, run.room_id);
+        this.sendJson(res, 201, { run, room: { id: room.id, name: room.name } });
+      } catch (err) { fail(err, err instanceof ChiefError ? 400 : 400); }
+      return true;
+    }
+    const chiefRunMatch = /^\/api\/chief\/runs\/(chief_[0-9a-f]{12})$/.exec(path);
+    if (method === "GET" && chiefRunMatch) {
+      const run = getChiefRun(this.home, chiefRunMatch[1]);
+      if (!run) { this.sendError(res, 404, "没有这个总指挥任务"); return true; }
+      this.sendJson(res, 200, run);
+      return true;
+    }
+    const gid = /^\/api\/groups\/([a-z][a-z0-9_-]{0,31})\/(plans|events|view)$/.exec(path);
+    if (method === "GET" && gid) {
+      const roomId = gid[1];
+      try { this.groups.get(roomId); } catch (err) { this.sendError(res, 404, err instanceof Error ? err.message : String(err)); return true; }
+      if (gid[2] === "plans") {
+        try { this.sendJson(res, 200, { plans: listGroupPlans(this.home, roomId), chief_runs: listChiefRuns(this.home, roomId) }); }
+        catch (err) { fail(err); }
+        return true;
+      }
+      if (gid[2] === "view") { this.sendJson(res, 200, this.groupView(roomId)); return true; }
+      let since = 0;
+      try { since = Math.max(0, Number(query.get("since") ?? "0") || 0); } catch { since = 0; }
+      if (query.get("format") === "json") { this.sendJson(res, 200, this.groupEvents.since(roomId, since)); return true; }
+      this.streamGroupEvents(req, res, roomId, since);
+      return true;
+    }
+    const planMatch = /^\/api\/plans\/(gplan_[0-9a-f]{12})$/.exec(path);
+    if (method === "GET" && planMatch) {
+      try {
+        const plan = getGroupPlan(this.home, planMatch[1]);
+        if (!plan) { this.sendError(res, 404, "没有这个计划"); return true; }
+        this.sendJson(res, 200, plan);
+      } catch (err) { fail(err); }
+      return true;
+    }
+    return false;
+  }
+
+  private streamGroupEvents(req: IncomingMessage, res: ServerResponse, roomId: string, since: number): void {
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-store",
+      "X-Content-Type-Options": "nosniff",
+      "Referrer-Policy": "no-referrer",
+      "X-Frame-Options": "DENY",
+    });
+    const write = (text: string): boolean => { try { res.write(text); return true; } catch { return false; } };
+    write(": connected\n\n");
+    let cursor = Math.max(0, since);
+    let lastWrite = Date.now();
+    let closed = false;
+    req.on("close", () => { closed = true; clearInterval(timer); });
+    const timer = setInterval(() => {
+      if (closed) { clearInterval(timer); return; }
+      const { events, next } = this.groupEvents.since(roomId, cursor);
+      for (const e of events) {
+        if (!write(`id: ${e.seq}\ndata: ${JSON.stringify(e)}\n\n`)) return;
+        lastWrite = Date.now();
+      }
+      cursor = Math.max(cursor, next);
+      if (Date.now() - lastWrite >= 15000) { write(": heartbeat\n\n"); lastWrite = Date.now(); }
+    }, 200);
+    timer.unref?.();
   }
 
   private streamEvents(req: IncomingMessage, res: ServerResponse, sid: string, since: number): void {

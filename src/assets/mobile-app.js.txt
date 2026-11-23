@@ -1,7 +1,8 @@
 'use strict';
-// 手机 PWA（/m）前端：按设计稿的四个标签（对话 / 自动化 / 技能 / 设置）+ 对话页 + 审批底部弹层。
-// 页面不含任何秘密：设备 token 只在 localStorage，每次 API 调用带 X-Nyra-Token 头。
+// 手机 PWA（/m）前端：设计稿 nyra-design v14 / v14.1。四个标签：对话 / 待你决定 / 自动化 / 设置（技能收在设置里）；
+// 另有会话页 + 审批抽屉、总指挥（方案卡）、群聊页。页面不含任何秘密：设备 token 只在 localStorage，每次 API 调用带 X-Nyra-Token 头。
 // 文案来自 src/i18n.ts 的 m.* 键（中英），语言跟随 navigator.language，认不出回落 en。
+// 不用浏览器原生对话框：所有确认、编辑都用页内抽屉（#sheet）。
 const $ = (id) => document.getElementById(id);
 const LANG = (() => { const l = String((navigator.languages && navigator.languages[0]) || navigator.language || '').toLowerCase(); return l.startsWith('zh') ? 'zh' : 'en'; })();
 const MSG = (window.NYRA_I18N && (window.NYRA_I18N[LANG] || window.NYRA_I18N.en)) || {};
@@ -10,44 +11,120 @@ const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent || '');
 document.documentElement.classList.add(IS_IOS ? 'ios' : 'android');
 document.documentElement.lang = LANG === 'zh' ? 'zh-CN' : 'en';
 const EDIT_TOOLS = ['write_file', 'edit_file', 'apply_patch'];
-let currentSession = null, currentTab = 'threads', poll = null, lastFeedKey = '', sheetKey = '', cardState = {};
+let currentSession = null, currentTab = 'threads', currentGroup = null, poll = null, lastFeedKey = '', sheetKey = '', cardState = {};
 let pendingText = '', lastInfo = null, fullStep = 0, lastApprovals = [], lastSessions = null, searchQ = '', lastReviewJson = '';
+let online = null, lastOkAt = 0, chiefMeta = null, reviewPending = 0, sheetMode = null, failedAction = null;
 
 function token(){
   const q = new URLSearchParams(location.search).get('token');
   if (q) { try { localStorage.setItem('nyra-token', q); } catch(e){} return q; }
   try { return localStorage.getItem('nyra-device-token') || localStorage.getItem('nyra-token') || ''; } catch(e){ return ''; }
 }
+class NetError extends Error {}
 async function api(path, opts){
   opts = opts || {};
-  const res = await fetch(path, { ...opts, headers: { 'X-Nyra-Token': token(), 'Content-Type': 'application/json' } });
+  let res;
+  try { res = await fetch(path, { ...opts, headers: { 'X-Nyra-Token': token(), 'Content-Type': 'application/json' } }); }
+  catch (e) { setOnline(false); throw new NetError(t('m.off.cant')); }
   let data = null; try { data = await res.json(); } catch(e){}
   if (res.status === 403) { lostDevice(); throw new Error((data && data.error) || t('m.unauthorized')); }
+  setOnline(true);
   if (!res.ok) throw new Error((data && data.error) || ('HTTP ' + res.status));
   return data;
 }
 function el(tag, cls, text){ const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; }
-function icon(name){ const tpl = $('ic-' + name); return tpl ? tpl.content.firstElementChild.cloneNode(true) : el('span'); }
-function toast(text){ const x = el('div', 'toast', text); document.body.appendChild(x); setTimeout(() => x.remove(), 2200); }
+function icon(name, cls){ const tpl = $('ic-' + name); const n = tpl ? tpl.content.firstElementChild.cloneNode(true) : el('span'); if (cls) n.classList.add(cls); return n; }
+// `代码` → <code>，其余按纯文本（文案里的命令用反引号标）。
+function rich(text){
+  const f = document.createDocumentFragment();
+  String(text).split(/(`[^`]+`)/).forEach(part => { if (/^`[^`]+`$/.test(part)) f.appendChild(el('code', '', part.slice(1, -1))); else if (part) f.appendChild(document.createTextNode(part)); });
+  return f;
+}
+// ---------------------------------------------------------------- 丸子 ---
+let mcSeq = 0;
+const MC = window.NYRA_MASCOTS || { pieces: {}, badge: {}, names: {} };
+function mascot(key, state, px, opts){
+  opts = opts || {};
+  const k = MC.pieces[key] ? key : 'nyra';
+  const w = el('span', 'mcw'); w.style.width = px + 'px'; w.style.height = px + 'px';
+  const label = String(opts.label || MC.names[k] || '').replace(/[<>&"]/g, '');
+  w.innerHTML = composeMascot(MC.pieces[k], k, state || 'idle', px <= 20 ? 's' : 'm', String(++mcSeq), label, !!opts.dim, MC.badge);
+  return w;
+}
+function stack(keys, size){
+  const s = el('span', 'stack'); if (size) { s.style.width = size + 'px'; s.style.height = size + 'px'; }
+  const pos = keys.length <= 1 ? [[3, 3, 32]] : keys.length === 2 ? [[0, 0, 24], [14, 14, 24]] : [[0, 2, 21], [17, 0, 21], [8, 17, 21]];
+  keys.slice(0, 3).forEach((k, i) => { const m = mascot(k, 'idle', pos[i][2]); m.style.left = pos[i][0] + 'px'; m.style.top = pos[i][1] + 'px'; s.appendChild(m); });
+  return s;
+}
+function toast(text, action){
+  document.querySelectorAll('.toast').forEach(x => x.remove());
+  const x = el('div', 'toast'); x.setAttribute('role', 'status');
+  x.appendChild(el('span', '', text));
+  if (action) { const b = el('button', 'tap act', action.label); b.onclick = () => { x.remove(); action.fn(); }; x.appendChild(b); }
+  document.body.appendChild(x); setTimeout(() => x.remove(), action ? 6000 : 2400);
+}
+// 动作没发出去（断网）：提示条带“重试”。
+function actionFailed(e, retry){
+  if (e instanceof NetError) toast(t('m.off.actionFailed'), { label: t('m.off.retry'), fn: retry });
+  else toast(t('m.toast.failed', { msg: e.message }));
+}
 function applyI18n(root){
   (root || document).querySelectorAll('[data-i]').forEach(n => { n.textContent = t(n.dataset.i); });
+  (root || document).querySelectorAll('[data-ir]').forEach(n => { n.textContent = ''; n.appendChild(rich(t(n.dataset.ir))); });
   (root || document).querySelectorAll('[data-ip]').forEach(n => { n.placeholder = t(n.dataset.ip); });
   (root || document).querySelectorAll('[data-ia]').forEach(n => { n.setAttribute('aria-label', t(n.dataset.ia)); });
 }
-const VIEWS = ['pair-view', 'threads-view', 'chat-view', 'review-view', 'automations-view', 'skills-view', 'settings-view'];
+const VIEWS = ['pair-view', 'threads-view', 'chat-view', 'inbox-view', 'automations-view', 'settings-view', 'skills-view', 'chief-view', 'group-view'];
+const TABBED = ['threads-view', 'inbox-view', 'automations-view', 'settings-view'];
 function show(view){
   VIEWS.forEach(v => $(v).classList.toggle('hidden', v !== view));
-  const tabbed = view !== 'pair-view' && view !== 'chat-view';
-  $('nav').classList.toggle('hidden', !tabbed);
+  $('nav').classList.toggle('hidden', !TABBED.includes(view));
   $('fab').classList.toggle('hidden', view !== 'threads-view');
-  if (view !== 'chat-view') { closeSheet(); $('menu').classList.add('hidden'); }
+  closeSheet();
   document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('on', b.dataset.tab + '-view' === view));
   window.scrollTo(0, 0);
+}
+// ---------------------------------------------------------------- 连接状态 ---
+function hostText(){ return location.host || ''; }
+function renderConn(){
+  document.querySelectorAll('.conn-slot').forEach(slot => {
+    slot.innerHTML = '';
+    const c = el('span', 'conn' + (online === false ? ' off' : online === null ? ' busy' : ''));
+    c.appendChild(el('i'));
+    c.appendChild(document.createTextNode(online === false ? t('m.conn.off') : online === null ? t('m.conn.connecting') : t('m.conn.home')));
+    slot.appendChild(c);
+  });
+  const tag = $('conn-tag'); if (tag) { tag.className = 'tag ' + (online === false ? 'bad' : 'ok'); tag.textContent = online === false ? t('m.conn.off') : t('m.conn.connected'); }
+  const hostLine = $('conn-host'); if (hostLine) hostLine.textContent = t('m.conn.hostLine', { host: hostText() });
+  renderOffline();
+}
+function setOnline(v){
+  if (v) lastOkAt = Date.now();
+  if (online === v) return;
+  online = v; renderConn();
+}
+function renderOffline(){
+  const box = $('offline'); if (!box) return;
+  box.innerHTML = ''; box.classList.toggle('hidden', online !== false);
+  const threads = $('threads'); if (threads) threads.classList.toggle('dimmed', online === false);
+  if (online !== false) return;
+  const b = el('div', 'banner bad'); b.appendChild(icon('wifioff'));
+  const tx = el('div'); tx.style.flex = '1';
+  tx.appendChild(el('b', '', t('m.off.title')));
+  const mins = lastOkAt ? Math.max(1, Math.round((Date.now() - lastOkAt) / 60000)) : 0;
+  const sm = el('small'); sm.appendChild(rich(lastOkAt ? t('m.off.bodyStale', { n: mins }) : t('m.off.body'))); tx.appendChild(sm);
+  const row = el('div', 'row'); row.style.gap = '8px'; row.style.marginTop = '12px';
+  const retry = el('button', 'btn sm pri'); retry.appendChild(icon('refresh', 's16')); retry.appendChild(document.createTextNode(t('m.off.retry'))); retry.onclick = () => tick(true);
+  const other = el('button', 'btn sm', t('m.off.switch')); other.onclick = () => { $('pair-lost').classList.add('hidden'); show('pair-view'); };
+  row.appendChild(retry); row.appendChild(other); tx.appendChild(row); b.appendChild(tx); box.appendChild(b);
+  const n = el('div', 'note', t('m.off.auto')); n.style.padding = '10px 28px 0'; box.appendChild(n);
 }
 function lostDevice(){
   try { localStorage.removeItem('nyra-device-token'); } catch(e){}
   clearInterval(poll); poll = null;
-  $('pair-error').textContent = t('m.pair.lost');
+  $('pair-title').textContent = t('m.pair.relink');
+  $('pair-lost').classList.remove('hidden');
   show('pair-view');
 }
 function deviceName(){
@@ -58,6 +135,12 @@ function deviceName(){
   if (m) return m[1].trim().slice(0, 40);
   if (/Android/.test(ua)) return 'Android';
   return 'Phone';
+}
+function syncCodeBoxes(){
+  const v = $('pair-code').value.replace(/\D/g, '').slice(0, 6);
+  if ($('pair-code').value !== v) $('pair-code').value = v;
+  const boxes = $('pair-boxes').querySelectorAll('i');
+  boxes.forEach((b, i) => { b.textContent = v[i] || ''; b.classList.toggle('cur', i === Math.min(v.length, 5) && document.activeElement === $('pair-code')); });
 }
 async function pair(){
   const code = $('pair-code').value.replace(/\D/g, '');
@@ -70,7 +153,8 @@ async function pair(){
     if (!res.ok || !data.token) { $('pair-error').textContent = data.error || t('m.pair.failed'); return; }
     try { localStorage.setItem('nyra-device-token', data.token); } catch(e){}
     history.replaceState(null, '', '/m');
-    $('pair-code').value = '';
+    $('pair-code').value = ''; syncCodeBoxes();
+    $('pair-lost').classList.add('hidden'); $('pair-title').textContent = t('m.pair.title');
     toast(t('m.pair.connected'));
     await boot();
   } catch (e) { $('pair-error').textContent = t('m.pair.cantReach', { msg: e.message }); }
@@ -92,79 +176,171 @@ function relTime(iso){
 }
 function base(p){ return String(p || '').split(/[\\/]/).pop(); }
 function sandboxText(){ const sb = lastInfo && lastInfo.config ? lastInfo.config.sandbox : 'local'; return t(sb === 'e2b' ? 'm.sandbox.e2b' : sb === 'bwrap' ? 'm.sandbox.bwrap' : 'm.sandbox.local'); }
-// 设计稿 v8 m-17：副标题写状态结果。等你确认写要做什么；跑完了写改了几个文件、有没有推送（网关按会话文件真实汇总，outcome 为 null 时退回原来的写法）。
 function waitText(a){
   if (EDIT_TOOLS.includes(a.tool)) { const d = parseDiff(a.summary); return t('m.sub.waitEdit', { file: base(d.path) || a.tool, a: d.add, d: d.del }); }
   if (a.tool === 'shell' && a.command) return t('m.sub.waitRun', { cmd: String(a.command).split('\n')[0].slice(0, 48) });
   return t('m.sub.waitTool', { tool: a.tool });
 }
+// 一行的状态：[丸子表情, 状态词 class, 状态词, 说明]
 function threadState(s){
   const a = lastApprovals.find(x => x.session === s.id);
-  if (a) return ['wait', waitText(a)];
-  if (s.status === 'running') return ['run', t('m.st.running')];
-  if (s.status === 'error') return ['err', t('m.st.error')];
+  if (a) return ['wait', 'sw', t('m.st.wait'), waitText(a)];
+  if (s.status === 'running') return ['work', 'sr', t('m.st.running'), t('m.st.runningSub')];
+  if (s.status === 'error') return ['idle', 'se', t('m.st.error'), t('m.st.errorSub')];
   const seen = seenMap()[s.id];
   const fresh = seen !== undefined && (s.count || 0) > seen;
   const o = s.outcome;
   if (o && o.steps) {
     const push = t(o.pushed ? 'm.sub.pushed' : 'm.sub.notPushed');
     const txt = o.edited && o.edited.length ? t(o.edited.length === 1 ? 'm.sub.doneEdit1' : 'm.sub.doneEdit', { n: o.edited.length, push }) : (o.commands ? '' : t('m.sub.doneRead'));
-    if (txt) return [fresh ? 'review' : '', txt];
+    if (txt) return ['done', 'sd', t('m.st.done'), txt];
   }
-  if (fresh) return ['review', t('m.st.review')];
-  return ['', t('m.st.idle', { n: s.count || 0 })];
+  if (fresh) return ['done', 'sd', t('m.st.review'), ''];
+  return ['idle', '', '', t('m.st.idle', { n: s.count || 0 })];
 }
 function titleOf(s){ return (s && (s.title || s.preview)) || t('m.untitled'); }
-async function loadSessions(){ lastSessions = await api('/api/sessions'); renderThreads(); }
+async function loadSessions(){
+  const [sessions, chief] = await Promise.all([api('/api/sessions'), api('/api/chief').catch(() => null)]);
+  lastSessions = sessions; if (chief) chiefMeta = chief;
+  renderThreads();
+}
+function skeleton(){
+  const box = $('threads'); box.innerHTML = '';
+  const card = $('chief-card'); card.innerHTML = '';
+  const h = el('div', 'hd'); const a = el('span', 'skel'); a.style.cssText = 'width:44px;height:44px;border-radius:14px';
+  const c = el('div', 'col'); c.style.gap = '8px'; const l1 = el('span', 'skel'); l1.style.cssText = 'width:90px;height:12px'; const l2 = el('span', 'skel'); l2.style.cssText = 'width:200px;height:10px';
+  c.appendChild(l1); c.appendChild(l2); h.appendChild(a); h.appendChild(c); card.appendChild(h);
+  const ask = el('span', 'skel'); ask.style.cssText = 'height:46px;border-radius:15px;margin-top:12px'; card.appendChild(ask);
+  const sec = el('div', 'sec'); const sl = el('span', 'skel'); sl.style.cssText = 'width:56px;height:10px'; sec.appendChild(sl); box.appendChild(sec);
+  const g = el('div', 'grp');
+  [[190, 140], [150, 170], [210, 120], [170, 150]].forEach(([w1, w2]) => {
+    const r = el('div', 'th'); const av = el('span', 'skel'); av.style.cssText = 'width:38px;height:38px;border-radius:50%';
+    const tx = el('div', 'tx col'); tx.style.gap = '8px'; const x1 = el('span', 'skel'); x1.style.cssText = 'width:' + w1 + 'px;height:12px'; const x2 = el('span', 'skel'); x2.style.cssText = 'width:' + w2 + 'px;height:10px';
+    tx.appendChild(x1); tx.appendChild(x2); r.appendChild(av); r.appendChild(tx); g.appendChild(r);
+  });
+  box.appendChild(g);
+}
+function runProgress(run){
+  const n = run.steps.length, done = run.steps.filter(s => s.status === 'done').length;
+  const cur = run.steps.find(s => s.status === 'running');
+  const curName = cur ? memberName(run, cur.member) : '';
+  if (run.status === 'running') return cur ? t('m.chief.progRunning', { k: done, n, who: curName }) : t('m.chief.progStarting', { k: done, n });
+  if (run.status === 'done') return t('m.chief.progDone', { n });
+  return t('m.chief.progPartial', { k: done, n });
+}
+function memberName(run, id){ const m = (run.members || []).find(x => x.id === id); return m ? m.name : id; }
+function memberMascot(run, id){ const m = (run.members || []).find(x => x.id === id); return m ? m.mascot : 'nyra'; }
+function renderChiefCard(){
+  const card = $('chief-card'); card.innerHTML = '';
+  const runs = (chiefMeta && chiefMeta.runs) || [];
+  const running = runs.filter(r => r.status === 'running');
+  const hd = el('div', 'hd'); hd.appendChild(mascot('chief', running.length ? 'work' : 'idle', 44, { label: t('m.chief.name') }));
+  const tx = el('div'); tx.style.cssText = 'flex:1;min-width:0';
+  tx.appendChild(el('b', '', t('m.chief.name')));
+  tx.appendChild(el('small', '', running.length ? t('m.chief.leading', { n: running.length }) : t('m.chief.pitch')));
+  hd.appendChild(tx); card.appendChild(hd);
+  if (running[0]) {
+    const r = running[0];
+    const row = el('button', 'crun'); row.dataset.room = r.room_id;
+    row.appendChild(stack(r.members.map(m => m.mascot)));
+    const tt = el('div', 't'); tt.appendChild(el('b', '', r.title)); tt.appendChild(el('small', '', runProgress(r))); row.appendChild(tt);
+    row.appendChild(icon('chev', 's18'));
+    row.onclick = () => openGroup(r.room_id);
+    card.appendChild(row);
+  }
+  const ask = el('form', 'ask');
+  const inp = el('input'); inp.id = 'chief-ask'; inp.placeholder = t('m.chief.ask'); inp.setAttribute('aria-label', t('m.chief.ask')); inp.maxLength = 2000;
+  const go = el('button', 'go'); go.type = 'submit'; go.setAttribute('aria-label', t('m.send')); const gi = el('i'); gi.appendChild(icon('up', 's18')); go.appendChild(gi);
+  ask.appendChild(inp); ask.appendChild(go);
+  ask.onsubmit = (e) => { e.preventDefault(); const v = inp.value.trim(); if (!v) { inp.focus(); return; } inp.value = ''; openChief(v); };
+  card.appendChild(ask);
+}
+function threadRow(s){
+  const [face, cls, word, sub] = threadState(s);
+  const row = el('button', 'th thread'); row.dataset.id = s.id;
+  row.appendChild(mascot('nyra', face, 38));
+  const tx = el('div', 'tx'); tx.appendChild(el('b', '', titleOf(s)));
+  const sm = el('small');
+  if (word) { const w = el('span', cls); if (cls === 'se') w.appendChild(icon('alert', 's14')); w.appendChild(document.createTextNode(word)); sm.appendChild(w); }
+  sm.appendChild(el('span', 'e', sub)); tx.appendChild(sm); row.appendChild(tx);
+  row.appendChild(el('span', 'tm', relTime(s.mtime)));
+  row.onclick = () => openSession(s.id);
+  return row;
+}
+function groupRow(r){
+  const row = el('button', 'th thread'); row.dataset.room = r.room_id;
+  row.appendChild(stack(r.members.map(m => m.mascot)));
+  const tx = el('div', 'tx'); tx.appendChild(el('b', '', r.title));
+  const sm = el('small'); sm.appendChild(el('span', r.status === 'running' ? 'sr' : r.status === 'done' ? 'sd' : 'se', t('m.group.tag')));
+  sm.appendChild(el('span', 'e', runProgress(r))); tx.appendChild(sm); row.appendChild(tx);
+  row.appendChild(el('span', 'tm', relTime(r.updated_at)));
+  row.onclick = () => openGroup(r.room_id);
+  return row;
+}
 function renderThreads(){
+  renderChiefCard();
   const box = $('threads'); box.innerHTML = '';
   if (!lastSessions) return;
   let list = lastSessions.sessions || [];
-  if (searchQ) { const q = searchQ.toLowerCase(); list = list.filter(s => (titleOf(s) + ' ' + (s.project || '')).toLowerCase().includes(q)); }
-  if (!list.length) {
-    const e = el('div', 'empty');
-    // 还没有任何对话（不是搜索没结果）时，空状态上方放正式标志。
-    const tpl = !searchQ && document.getElementById('tpl-mark');
-    if (tpl) { const m = el('div', 'mk'); m.appendChild(tpl.content.cloneNode(true)); e.appendChild(m); }
-    e.appendChild(el('span', '', searchQ ? t('m.noMatch') : t('m.noThreads'))); box.appendChild(e); return;
+  let runs = (chiefMeta && chiefMeta.runs) || [];
+  if (searchQ) {
+    const q = searchQ.toLowerCase();
+    list = list.filter(s => (titleOf(s) + ' ' + (s.project || '')).toLowerCase().includes(q));
+    runs = runs.filter(r => r.title.toLowerCase().includes(q));
   }
-  // 按项目分组（设计稿：app / nyra），组的顺序按组内最新一条。
+  if (!list.length && !runs.length) {
+    const e = el('div', 'empty');
+    if (!searchQ) {
+      const trio = el('div', 'row'); trio.style.cssText = 'gap:6px;align-items:flex-end';
+      trio.appendChild(mascot('tester', 'idle', 30)); trio.appendChild(mascot('nyra', 'idle', 52)); trio.appendChild(mascot('docs', 'idle', 30));
+      e.appendChild(trio);
+      e.appendChild(el('b', '', t('m.noThreads')));
+      e.appendChild(el('p', '', t('m.noThreadsBody')));
+    } else e.appendChild(el('b', '', t('m.noMatch')));
+    box.appendChild(e); return;
+  }
+  const active = list.filter(s => s.status === 'running' || lastApprovals.some(a => a.session === s.id));
+  const activeRuns = runs.filter(r => r.status === 'running');
+  if (active.length + activeRuns.length) {
+    const sec = el('div', 'sec'); sec.appendChild(document.createTextNode(t('m.sec.active', { n: active.length + activeRuns.length }))); box.appendChild(sec);
+    const g = el('div', 'grp'); activeRuns.forEach(r => g.appendChild(groupRow(r))); active.forEach(s => g.appendChild(threadRow(s))); box.appendChild(g);
+  }
+  const rest = list.filter(s => !active.includes(s));
   const groups = new Map();
-  list.forEach(s => { const g = s.project || ''; if (!groups.has(g)) groups.set(g, []); groups.get(g).push(s); });
+  rest.forEach(s => { const g = s.project || ''; if (!groups.has(g)) groups.set(g, []); groups.get(g).push(s); });
   groups.forEach((items, g) => {
-    box.appendChild(el('div', 'lh', g || '—'));
-    items.forEach(s => {
-      const [cls, sub] = threadState(s);
-      const row = el('button', 'it thread'); row.dataset.id = s.id;
-      const sd = el('span', 'sd'); sd.appendChild(el('i', cls)); row.appendChild(sd);
-      const tx = el('div', 'tx'); tx.appendChild(el('b', '', titleOf(s))); tx.appendChild(el('small', '', sub)); row.appendChild(tx);
-      row.appendChild(el('span', 't', relTime(s.mtime)));
-      row.onclick = () => openSession(s.id);
-      box.appendChild(row);
-    });
+    box.appendChild(el('div', 'sec', g || t('m.sec.noProject')));
+    const grp = el('div', 'grp'); items.forEach(s => grp.appendChild(threadRow(s))); box.appendChild(grp);
   });
+  const doneRuns = runs.filter(r => r.status !== 'running');
+  if (doneRuns.length) {
+    box.appendChild(el('div', 'sec', t('m.sec.groups')));
+    const grp = el('div', 'grp'); doneRuns.slice(0, 10).forEach(r => grp.appendChild(groupRow(r))); box.appendChild(grp);
+  }
+  box.appendChild(el('div', '', '')).style.height = '72px';
 }
 function toggleSearch(){
   const r = $('search-row'); r.classList.toggle('hidden');
   if (!r.classList.contains('hidden')) $('search').focus(); else { searchQ = ''; $('search').value = ''; renderThreads(); }
 }
 async function newSession(){
-  const data = await api('/api/sessions', { method: 'POST', body: '{}' });
-  await openSession(data.id, true);
+  try { const data = await api('/api/sessions', { method: 'POST', body: '{}' }); await openSession(data.id, true); }
+  catch (e) { actionFailed(e, newSession); }
 }
 
-// ---------------------------------------------------------------- 对话页 ---
+// ---------------------------------------------------------------- 会话页 ---
 async function openSession(id, fresh){
-  currentSession = id; lastFeedKey = ''; sheetKey = '';
+  currentSession = id; currentGroup = null; lastFeedKey = ''; sheetKey = '';
   const s = lastSessions && (lastSessions.sessions || []).find(x => x.id === id);
   $('chat-title').textContent = fresh ? t('m.untitled') : titleOf(s);
   const project = (s && s.project) || (lastSessions && lastSessions.project && lastSessions.project.name) || '';
   $('chat-sub').textContent = t('m.onPc', { project });
+  $('chat-av').innerHTML = ''; $('chat-av').appendChild(mascot('nyra', 'idle', 30));
   $('feed').innerHTML = '';
   show('chat-view');
   await tick();
 }
-function goHome(){ currentSession = null; sheetKey = ''; setTab('threads'); }
+function goHome(){ currentSession = null; currentGroup = null; sheetKey = ''; setTab('threads'); }
 function textOf(m){
   if (typeof m.content === 'string') return m.content;
   if (Array.isArray(m.content)) return m.content.map(p => (p && p.text) || '').join('');
@@ -179,35 +355,47 @@ function stepOf(c){
   else if (name === 'read_file' && args.path) put('m.step.read', String(args.path));
   else if (EDIT_TOOLS.includes(name) && args.path) put('m.step.edited', String(args.path));
   else put('m.step.called', name + (args.path ? ' ' + args.path : ''));
+  line.dataset.tool = name;
   return line;
 }
-function stepsBlock(steps, open){
-  const lg = el('div', 'lg steps' + (open ? ' open' : ''));
+function stepsBlock(steps){
+  const lg = el('div', 'steps');
   const h = el('button'); h.dataset.role = 'steps';
-  h.appendChild(el('span', 'ok-ic', '✓'));
+  h.appendChild(icon('check', 's14')); h.lastChild.classList.add('ok');
   h.appendChild(document.createTextNode(t('m.showSteps', { n: steps.length })));
-  h.appendChild(el('span', 'car', '›'));
+  const car = icon('chev', 's14'); car.classList.add('car'); h.appendChild(car);
   h.onclick = () => lg.classList.toggle('open');
   lg.appendChild(h);
   const st = el('div', 'st'); steps.forEach(s => st.appendChild(s)); lg.appendChild(st);
   return lg;
 }
-function avatar(state){ const tpl = $('av-' + state); const s = el('span', 'av'); if (tpl) s.appendChild(tpl.content.firstElementChild.cloneNode(true)); return s; }
+// 运行中的这一步：“正在执行 第 N 步”，最后一行转圈。
+function runningBlock(steps){
+  const box = el('div', 'running');
+  const h = el('div', 'rh'); h.appendChild(icon('chevd', 's14')); h.appendChild(document.createTextNode(t('m.run.now'))); h.appendChild(el('span', '', t('m.run.step', { n: steps.length }))); box.appendChild(h);
+  steps.forEach((s, i) => {
+    const last = i === steps.length - 1;
+    const r = el('div', 'rl' + (last ? ' cur' : ''));
+    if (last) r.appendChild(el('i', 'spin')); else r.appendChild(icon(s.dataset.tool === 'shell' ? 'term' : 'file', 's16'));
+    r.appendChild(s); box.appendChild(r);
+  });
+  return box;
+}
 // 输入框下两枚胶囊：模型、审批模式（点了去设置里换；完全访问用警示色）。
 function renderCPills(){
   const row = $('cpills'); if (!row || !lastInfo) return;
   const key = (lastInfo.model || '') + ':' + (lastInfo.mode || '');
   if (row.dataset.key === key) return; row.dataset.key = key; row.innerHTML = '';
-  const m = el('button', 'cp'); m.dataset.role = 'model'; m.appendChild(icon('chip')); m.appendChild(el('span', '', lastInfo.model || '—')); m.setAttribute('aria-label', t('m.pill.model')); m.onclick = () => setTab('settings'); row.appendChild(m);
-  const md = el('button', 'cp' + (lastInfo.mode === 'full' ? ' warn' : '')); md.dataset.role = 'mode'; md.appendChild(icon('shield')); md.appendChild(el('span', '', modeLabel(lastInfo.mode))); md.setAttribute('aria-label', t('m.pill.mode')); md.onclick = () => setTab('settings'); row.appendChild(md);
+  const m = el('button', 'cp'); m.dataset.role = 'model'; m.appendChild(icon('chip', 's14')); m.appendChild(el('span', '', lastInfo.model || t('m.pill.defaultModel'))); m.setAttribute('aria-label', t('m.pill.model')); m.onclick = () => setTab('settings'); row.appendChild(m);
+  const md = el('button', 'cp' + (lastInfo.mode === 'full' ? ' warn' : '')); md.dataset.role = 'mode'; md.appendChild(icon('shield', 's14')); md.appendChild(el('span', '', modeLabel(lastInfo.mode))); md.setAttribute('aria-label', t('m.pill.mode')); md.onclick = () => setTab('settings'); row.appendChild(md);
 }
 function emptyState(){
   const e = el('div', 'chat-empty');
-  const a = avatar('idle-m'); a.classList.add('big'); e.appendChild(a);
+  e.appendChild(mascot('nyra', 'think', 72));
   e.appendChild(el('h2', '', t('m.empty.lead')));
   e.appendChild(el('p', '', t('m.empty.sub')));
   const project = (lastSessions && lastSessions.project && lastSessions.project.name) || '';
-  const c = el('div', 'conn'); c.appendChild(el('i', 'ok')); c.appendChild(el('span', '', t('m.empty.connected', { project }))); e.appendChild(c);
+  const c = el('span', 'conn'); c.appendChild(el('i')); c.appendChild(document.createTextNode(t('m.empty.connected', { project }))); e.appendChild(c);
   return e;
 }
 // 运行中的这一轮还没写进会话（网关只给出本轮之前的消息）：从事件流补上本轮的用户消息、工具步骤和中间回复。
@@ -224,23 +412,31 @@ function liveTurn(v){
   });
   return out;
 }
+function setChatStatus(v){
+  const st = $('chat-status'); st.innerHTML = ''; st.className = 'cstat';
+  if (v.status === 'running') { st.appendChild(mascot('nyra', lastApprovals.some(a => a.session === currentSession) ? 'wait' : 'work', 20)); st.appendChild(document.createTextNode(lastApprovals.some(a => a.session === currentSession) ? t('m.waitingYou') : t('m.working'))); }
+  else if (v.status === 'error') { st.classList.add('bad'); st.appendChild(icon('alert', 's16')); st.appendChild(document.createTextNode(t('m.errorPrefix', { msg: v.error || '' }))); }
+}
 function renderFeed(v){
   const all = v.messages || [];
-  // 正在等审批的那一步由审批卡表示，还没执行，不提前写进过程里（与桌面一致）。
-  const live = liveTurn(v); if (lastApprovals.some(a => a.session === currentSession) && live.length && live[live.length - 1].tool_calls) live.pop();
+  const waiting = lastApprovals.some(a => a.session === currentSession);
+  const live = liveTurn(v); if (waiting && live.length && live[live.length - 1].tool_calls) live.pop();
   const msgs = all.filter(m => m.role !== 'system').concat(live);
-  const key = msgs.length + ':' + (msgs.length ? textOf(msgs[msgs.length - 1]).length : 0) + ':' + v.status + ':' + (v.next || 0);
-  $('chat-status').textContent = v.status === 'running' ? t('m.working') : (v.status === 'error' ? t('m.errorPrefix', { msg: v.error || '' }) : '');
+  const key = msgs.length + ':' + (msgs.length ? textOf(msgs[msgs.length - 1]).length : 0) + ':' + v.status + ':' + (v.next || 0) + ':' + waiting;
+  setChatStatus(v);
+  const avState = waiting ? 'wait' : v.status === 'running' ? 'work' : 'idle';
+  const av = $('chat-av'); if (av.dataset.state !== avState) { av.dataset.state = avState; av.innerHTML = ''; av.appendChild(mascot('nyra', avState, 30)); }
   const firstUser = msgs.find(m => m.role === 'user');
   if (firstUser) $('chat-title').textContent = textOf(firstUser).slice(0, 60) || t('m.untitled');
   if (v.status !== 'running') markSeen(currentSession, all.length);
   renderCPills();
+  $('send-btn').disabled = false;
   if (key === lastFeedKey) return;
   lastFeedKey = key;
   const feed = $('feed'); feed.innerHTML = '';
   if (!msgs.length && v.status !== 'running' && !pendingText) { feed.appendChild(emptyState()); return; }
   let steps = [];
-  const flush = (open) => { if (steps.length) { feed.appendChild(stepsBlock(steps, open)); steps = []; } };
+  const flush = (isLast) => { if (steps.length) { feed.appendChild(isLast && v.status === 'running' && !waiting ? runningBlock(steps) : stepsBlock(steps)); steps = []; } };
   msgs.forEach(m => {
     if (m.role === 'tool') return;
     const txt = textOf(m);
@@ -253,36 +449,48 @@ function renderFeed(v){
     flush(false);
     feed.appendChild(bubble(m, all, txt));
   });
-  flush(false);
-  // 运行中的这一轮还没写进会话：先把刚发出的消息显示出来。
+  flush(true);
   if (pendingText && v.status === 'running' && !msgs.some(m => m.role === 'user' && textOf(m) === pendingText)) feed.appendChild(el('div', 'u', pendingText));
   if (v.status !== 'running') pendingText = '';
   window.scrollTo(0, document.body.scrollHeight);
 }
 function bubble(m, all, txt){
   const b = el('div', m.role === 'user' ? 'u' : 'p', txt);
-  // 点一下消息展开回退操作（与桌面页一致：回退到此 / 编辑重发 / Fork 新会话）。
+  // 点一下消息展开回退操作（回退到此 / 编辑重发 / Fork 新会话）。
   const index = all.indexOf(m);
   if (index >= 0) b.onclick = () => toggleRewind(b, index, txt);
   return b;
 }
 function toggleRewind(b, index, text){
   const next = b.nextSibling;
+  document.querySelectorAll('#feed .sel').forEach(x => x.classList.remove('sel'));
   if (next && next.classList && next.classList.contains('rw')) { next.remove(); return; }
+  document.querySelectorAll('#feed .rw').forEach(x => x.remove());
+  b.classList.add('sel');
   const row = el('div', 'rw');
-  if (b.classList.contains('u')) row.style.justifyContent = 'flex-end';
-  [['m.rewind.truncate', 'truncate'], ['m.rewind.edit', 'edit'], ['m.rewind.fork', 'fork']].forEach(([label, action]) => {
-    const x = el('button', '', t(label)); x.onclick = () => doRewind(index, action, text); row.appendChild(x);
+  if (!b.classList.contains('u')) row.style.justifyContent = 'flex-start';
+  [['m.rewind.truncate', 'truncate', 'undo'], ['m.rewind.edit', 'edit', 'edit2'], ['m.rewind.fork', 'fork', 'fork']].forEach(([label, action, ic]) => {
+    const x = el('button', 'chipb'); const sp = el('span'); sp.appendChild(icon(ic, 's14')); sp.appendChild(document.createTextNode(t(label))); x.appendChild(sp);
+    x.onclick = () => (action === 'edit' ? editSheet(index, text) : doRewind(index, action, null)); row.appendChild(x);
   });
   b.after(row);
 }
-async function doRewind(index, action, text){
+function editSheet(index, text){
+  openSheet('edit');
+  const sh = $('sheet');
+  sh.appendChild(el('h2', '', t('m.rewind.editTitle')));
+  sh.appendChild(el('p', 'sub-t', t('m.rewind.editBody')));
+  const box = el('div', 'subbox'); const ta = el('textarea'); ta.value = text || ''; ta.rows = 4; box.appendChild(ta);
+  const go = el('button', 'btn pri full', t('m.rewind.editSend')); go.onclick = () => { const v = ta.value.trim(); if (!v) { ta.focus(); return; } closeSheet(); doRewind(index, 'edit', v); };
+  const no = el('button', 'btn ghost full', t('m.cancel')); no.onclick = closeSheet;
+  box.appendChild(go); box.appendChild(no); sh.appendChild(box);
+  setTimeout(() => ta.focus(), 50);
+}
+async function doRewind(index, action, edited){
   if (!currentSession) return;
   const rows = await api('/api/sessions/' + encodeURIComponent(currentSession) + '/history').catch(() => null);
   const messageId = rows && rows.messages && rows.messages[index] ? rows.messages[index].id : null;
   if (messageId === null) { toast(t('m.rewind.notYet')); return; }
-  let edited = null;
-  if (action === 'edit') { edited = prompt(t('m.rewind.editPrompt'), text || ''); if (edited === null) return; }
   try {
     const res = await api('/api/sessions/' + encodeURIComponent(currentSession) + '/rewind', { method: 'POST', body: JSON.stringify({ message_id: messageId, action, text: edited }) });
     if (res && res.new_session_id) { await openSession(res.new_session_id); return; }
@@ -292,15 +500,24 @@ async function doRewind(index, action, text){
 async function sendMsg(){
   const input = $('input'); const text = input.value.trim();
   if (!text || !currentSession) return;
-  input.value = ''; autoGrow(); pendingText = text; lastFeedKey = '';
+  input.value = ''; autoGrow(input); pendingText = text; lastFeedKey = '';
   try { await api('/api/sessions/' + encodeURIComponent(currentSession) + '/messages', { method: 'POST', body: JSON.stringify({ text }) }); }
-  catch (e) { toast(e.message); input.value = text; }
+  catch (e) { input.value = text; pendingText = ''; actionFailed(e, sendMsg); }
   await tick();
 }
-function autoGrow(){ const i = $('input'); i.style.height = 'auto'; i.style.height = Math.min(i.scrollHeight, window.innerHeight * 0.3) + 'px'; }
-function toggleMenu(){ $('menu').classList.toggle('hidden'); }
+function autoGrow(i){ i.style.height = 'auto'; i.style.height = Math.min(i.scrollHeight, window.innerHeight * 0.3) + 'px'; }
 
-// ---------------------------------------------------------------- 审批弹层 ---
+// ---------------------------------------------------------------- 抽屉 ---
+function openSheet(mode){
+  sheetMode = mode;
+  const sh = $('sheet'); sh.innerHTML = ''; sh.dataset.mode = mode;
+  sh.appendChild(el('div', 'grab'));
+  sh.classList.remove('hidden'); $('dim').classList.remove('hidden');
+  return sh;
+}
+function closeSheet(){ $('sheet').classList.add('hidden'); $('dim').classList.add('hidden'); sheetKey = ''; sheetMode = null; }
+
+// ---------------------------------------------------------------- 审批抽屉 ---
 function ruleLabel(sg){
   if (!sg) return '';
   if (sg.kind === 'prefix' && Array.isArray(sg.prefix)) return t('m.rule.prefix', { prefix: sg.prefix.join(' ') });
@@ -319,7 +536,6 @@ function parseDiff(summary){
   });
   return { path, add, del, body, head: lines[0] || '' };
 }
-function closeSheet(){ $('sheet').classList.add('hidden'); $('dim').classList.add('hidden'); sheetKey = ''; }
 function apprBits(a){
   const isEdit = EDIT_TOOLS.includes(a.tool);
   const isShell = a.tool === 'shell' && !!a.command;
@@ -329,39 +545,42 @@ function apprBits(a){
 }
 // “这一步能动到什么”框。edit：文件 + 看改动、其他（不跑命令 · 不联网 · 沙箱）；shell：命令 + 其他（沙箱）；其他工具：工具名。
 function scopeBox(a, b, st, onDiff, oneLine){
-  const box = el('div', 'scope'); box.appendChild(el('div', 'st', t('m.scope.title')));
-  const row = (k, v, extra) => { const r = el('div', 'sr'); r.appendChild(el('span', 'k', k)); const vv = el('span', 'v', v); r.appendChild(vv); if (extra) r.appendChild(extra); box.appendChild(r); return r; };
+  if (oneLine) {
+    const box = el('div', 'qscope');
+    if (b.isEdit) {
+      box.appendChild(icon('file', 's16')); box.appendChild(el('span', 'mono', base(b.d.path) || a.tool)); box.appendChild(el('span', 'nw', t('m.scope.noCmdNet')));
+      box.appendChild(el('span', 'sp')); box.appendChild(el('span', 'mono ok', '+' + b.d.add)); box.appendChild(el('span', 'mono bad', '−' + b.d.del));
+    } else if (b.isShell) {
+      box.appendChild(icon('term', 's16')); box.appendChild(el('span', 'mono', a.command)); box.appendChild(el('span', 'sp')); box.appendChild(el('span', 'nw', sandboxText()));
+    } else { box.appendChild(icon('shield', 's16')); box.appendChild(el('span', 'mono', a.tool)); }
+    return box;
+  }
+  const box = el('div', 'scope');
+  const row = (k, v, extra, mono) => { const r = el('div', 'sr'); r.appendChild(el('span', 'k', k)); const vv = el('span', 'v' + (mono ? ' mono' : ''), v); r.appendChild(vv); if (extra) r.appendChild(extra); box.appendChild(r); return r; };
   if (b.isEdit) {
-    if (oneLine) {
-      const x = el('span', 'x'); x.appendChild(el('span', 'ok', '+' + b.d.add)); x.appendChild(document.createTextNode(' ')); x.appendChild(el('span', 'bad', '−' + b.d.del));
-      row(t('m.scope.file'), [base(b.d.path), t('m.scope.noCmd'), t('m.scope.noNet')].join(' · '), x).querySelector('.v').classList.add('mono');
-    } else {
-      let link = null;
-      if (onDiff) { link = el('button', 'lk', (st.diff ? t('m.scope.hideDiff') : t('m.scope.viewDiff')) + ' ›'); link.dataset.act = 'diff'; link.onclick = onDiff; }
-      row(t('m.scope.file'), base(b.d.path) || a.tool, link).querySelector('.v').classList.add('mono');
-      row(t('m.scope.other'), [t('m.scope.noCmd'), t('m.scope.noNet'), sandboxText()].join(' · '));
-    }
+    let link = null;
+    if (onDiff) { link = el('button', 'lk', st.diff ? t('m.scope.hideDiff') : t('m.scope.viewDiff')); link.appendChild(icon(st.diff ? 'chevd' : 'chev', 's14')); link.dataset.act = 'diff'; link.onclick = onDiff; }
+    row(t('m.scope.file'), b.d.path || a.tool, link, true);
+    row(t('m.scope.other'), [t('m.scope.noCmd'), t('m.scope.noNet'), sandboxText()].join(t('m.sep'))).querySelector('.v').style.color = 'var(--t2)';
   } else if (b.isShell) {
-    const x = oneLine ? el('span', 'x', sandboxText()) : null;
-    row(t('m.scope.cmd'), a.command, x).querySelector('.v').classList.add('mono');
-    if (!oneLine) row(t('m.scope.other'), sandboxText());
+    row(t('m.scope.cmd'), a.command, null, true);
+    row(t('m.scope.other'), sandboxText()).querySelector('.v').style.color = 'var(--t2)';
   } else {
-    row(t('m.scope.other'), a.tool + (a.summary ? ' · ' + String(a.summary).split('\n')[0].slice(0, 120) : ''));
+    row(t('m.scope.other'), a.tool + (a.summary ? t('m.sep') + String(a.summary).split('\n')[0].slice(0, 120) : ''));
   }
   return box;
 }
-function waitChip(){ const c = el('span', 'wchip'); c.appendChild(el('i')); c.appendChild(document.createTextNode(t('m.appr.waiting'))); return c; }
+function waitChip(a){ const c = el('div', 'wl'); c.appendChild(mascot('nyra', 'wait', 22)); c.appendChild(document.createTextNode(t('m.appr.waitingWho', { who: 'Nyra' }))); return c; }
 function renderSheet(){
+  if (sheetMode && sheetMode !== 'approval') return;
   const a = currentSession ? lastApprovals.find(x => x.session === currentSession) : null;
-  if (!a) { if (!$('sheet').classList.contains('hidden')) closeSheet(); return; }
+  if (!a) { if (sheetMode === 'approval') closeSheet(); return; }
   const st = cardState[a.id] || (cardState[a.id] = { open: null, scope: 'session', feedback: '', diff: false, more: false });
   const key = a.id + ':' + st.open + ':' + st.scope + ':' + st.diff + ':' + st.more;
-  if (key === sheetKey) return;
-  sheetKey = key;
-  const sh = $('sheet'); sh.innerHTML = ''; sh.dataset.id = a.id;
-  sh.appendChild(el('div', 'grab'));
+  if (key === sheetKey && sheetMode === 'approval') return;
+  const sh = openSheet('approval'); sheetKey = key; sh.dataset.id = a.id;
   const b = apprBits(a);
-  sh.appendChild(waitChip());
+  sh.appendChild(waitChip(a));
   sh.appendChild(el('h2', '', b.sentence));
   sh.appendChild(scopeBox(a, b, st, b.isEdit ? () => { st.diff = !st.diff; renderSheet(); } : null, false));
   if (b.isEdit && st.diff) {
@@ -371,35 +590,47 @@ function renderSheet(){
     });
     sh.appendChild(code);
   }
+  const denying = st.open === 'deny';
   const btns = el('div', 'btns');
-  const deny = el('button', 'bt' + (st.open === 'deny' ? ' sel' : ''), t('m.denyAlt')); deny.dataset.act = 'deny';
-  deny.onclick = () => { st.open = st.open === 'deny' ? null : 'deny'; renderSheet(); };
+  const deny = el('button', 'btn' + (denying ? ' line' : ''), t('m.denyAlt')); deny.dataset.act = 'deny';
+  deny.onclick = () => { st.open = denying ? null : 'deny'; renderSheet(); };
   btns.appendChild(deny);
-  const once = el('button', 'bt p', t('m.allowOnce')); once.dataset.act = 'allow';
+  const once = el('button', 'btn' + (denying ? '' : ' pri'), t('m.allowOnce')); once.dataset.act = 'allow';
   once.onclick = () => decide(a.id, { approve: true });
   btns.appendChild(once);
   sh.appendChild(btns);
+  if (denying) {
+    const box = el('div', 'subbox deny');
+    const ta = el('textarea'); ta.rows = 3; ta.placeholder = t('m.deny.placeholder'); ta.value = st.feedback; ta.id = 'deny-' + a.id;
+    ta.oninput = () => { st.feedback = ta.value; };
+    box.appendChild(ta);
+    const send = el('button', 'btn pri full', t('m.deny.confirm')); send.dataset.act = 'deny-confirm';
+    send.onclick = () => decide(a.id, { approve: false, feedback: (st.feedback || '').trim() });
+    box.appendChild(send);
+    sh.appendChild(box);
+    setTimeout(() => ta.focus(), 50);
+  }
   // 更多：本会话总是允许、记住为规则（复合命令 / 危险操作没有建议规则，只能单次允许）。
   const canRule = !!a.suggestion; const canAlways = canRule || (!!a.always && a.tool !== 'shell');
-  if (canAlways) {
+  if (canAlways && !denying) {
     const mr = el('button', 'morerow' + (st.more ? ' open' : '')); mr.dataset.act = 'more';
-    mr.appendChild(el('span', '', t(canRule ? 'm.more.both' : 'm.more.session'))); mr.appendChild(el('span', 'car', '⌄'));
+    mr.appendChild(el('span', '', t(canRule ? 'm.more.both' : 'm.more.session'))); const car = icon('chevd', 's14'); car.classList.add('car'); mr.appendChild(car);
     mr.onclick = () => { st.more = !st.more; if (!st.more && st.open === 'always') st.open = null; renderSheet(); };
     sh.appendChild(mr);
     if (st.more) {
       const opts = el('div', 'moreopts');
-      const al = el('button', 'bt', t('m.alwaysSession')); al.dataset.act = 'always-session';
+      const al = el('button', 'btn', t('m.alwaysSession')); al.dataset.act = 'always-session';
       al.onclick = () => decide(a.id, canRule ? { approve: true, scope: 'session' } : { approve: true, always: true });
       opts.appendChild(al);
-      if (canRule) { const rr = el('button', 'bt' + (st.open === 'always' ? ' sel' : ''), t('m.rememberRule')); rr.dataset.act = 'always'; rr.onclick = () => { st.open = st.open === 'always' ? null : 'always'; renderSheet(); }; opts.appendChild(rr); }
+      if (canRule) { const rr = el('button', 'btn' + (st.open === 'always' ? ' line' : ''), t('m.rememberRule')); rr.dataset.act = 'always'; rr.onclick = () => { st.open = st.open === 'always' ? null : 'always'; renderSheet(); }; opts.appendChild(rr); }
       sh.appendChild(opts);
     }
   }
   if (st.open === 'always' && a.suggestion) {
-    const box = el('div', 'sub always');
+    const box = el('div', 'subbox always');
     box.appendChild(el('div', 'k', t('m.remember.title')));
     box.appendChild(el('code', 'rule', ruleLabel(a.suggestion)));
-    const seg = el('div', 'seg');
+    const seg = el('div', 'seg two');
     [['session', 'm.scope.session'], ['project', 'm.scope.project']].forEach(([val, label]) => {
       const bb = el('button', st.scope === val ? 'on' : '', t(label)); bb.dataset.scope = val;
       bb.onclick = () => { st.scope = val; renderSheet(); };
@@ -407,59 +638,57 @@ function renderSheet(){
     });
     box.appendChild(seg);
     box.appendChild(el('div', 'note', t(st.scope === 'project' ? 'm.scope.projectHelp' : 'm.scope.sessionHelp')));
-    const ok = el('button', 'bt p full', t('m.remember.confirm')); ok.dataset.act = 'remember-confirm';
+    const ok = el('button', 'btn pri full', t('m.remember.confirm')); ok.dataset.act = 'remember-confirm';
     ok.onclick = () => decide(a.id, { approve: true, scope: st.scope });
     box.appendChild(ok);
     sh.appendChild(box);
   }
-  if (st.open === 'deny') {
-    const box = el('div', 'sub deny');
-    const ta = el('textarea'); ta.rows = 3; ta.placeholder = t('m.deny.placeholder'); ta.value = st.feedback; ta.id = 'deny-' + a.id;
-    ta.oninput = () => { st.feedback = ta.value; };
-    box.appendChild(ta);
-    const send = el('button', 'bt p full', t('m.deny.confirm')); send.dataset.act = 'deny-confirm';
-    send.onclick = () => decide(a.id, { approve: false, feedback: (st.feedback || '').trim() });
-    box.appendChild(send);
-    sh.appendChild(box);
-  }
-  if (!a.suggestion && a.tool === 'shell') sh.appendChild(el('div', 'foot', t('m.noRule')));
-  else if (b.isEdit && lastInfo && lastInfo.config && lastInfo.config.sandbox !== 'e2b') sh.appendChild(el('div', 'foot', t('m.checkpoint')));
-  sh.classList.remove('hidden'); $('dim').classList.remove('hidden');
+  const foot = el('div', 'foot');
+  if (!a.suggestion && a.tool === 'shell') { foot.appendChild(icon('alert', 's14')); foot.appendChild(document.createTextNode(t('m.noRule'))); sh.appendChild(foot); }
+  else if (b.isEdit && lastInfo && lastInfo.config && lastInfo.config.sandbox !== 'e2b') { foot.appendChild(icon('undo', 's14')); foot.appendChild(document.createTextNode(t('m.checkpoint'))); sh.appendChild(foot); }
 }
 async function decide(id, body){
   try {
     await api('/api/approvals/' + encodeURIComponent(id), { method: 'POST', body: JSON.stringify(body) });
-    delete cardState[id]; sheetKey = '';
+    delete cardState[id]; delete queueState[id]; sheetKey = '';
     lastApprovals = lastApprovals.filter(a => a.id !== id);
     toast(body.approve ? (body.scope ? t('m.toast.remembered') : t('m.toast.allowed')) : (body.feedback ? t('m.toast.deniedFeedback') : t('m.toast.denied')));
-    renderSheet();
+    if (sheetMode === 'approval') closeSheet();
     lastReviewJson = '';
     await tick();
-  } catch (e) { toast(t('m.toast.failed', { msg: e.message })); }
+  } catch (e) { actionFailed(e, () => decide(id, body)); }
 }
-async function tick(){
+function updateBadges(){
+  const n = lastApprovals.length + reviewPending;
+  document.querySelectorAll('[data-badge]').forEach(b => { const show = b.dataset.badge === 'inbox' && n > 0; b.classList.toggle('hidden', !show); b.textContent = show ? String(n) : ''; });
+  document.title = lastApprovals.length ? '(' + lastApprovals.length + ') Nyra' : 'Nyra';
+}
+async function tick(force){
   try {
     const data = await api('/api/approvals');
     lastApprovals = data.approvals || [];
-    document.title = lastApprovals.length ? '(' + lastApprovals.length + ') Nyra' : 'Nyra';
+    updateBadges();
     if (currentSession) { renderFeed(await api('/api/sessions/' + encodeURIComponent(currentSession))); renderSheet(); }
+    else if (currentGroup) await loadGroup();
     else if (currentTab === 'threads' && !$('threads-view').classList.contains('hidden')) await loadSessions();
-    else if (currentTab === 'review' && !$('review-view').classList.contains('hidden')) await loadReview();
+    else if (currentTab === 'inbox' && !$('inbox-view').classList.contains('hidden')) await loadReview();
     if (lastInfo) renderCPills();
-  } catch (e) { /* 断网时下次再试 */ }
+  } catch (e) {
+    // 断网：保留旧数据（变暗）、横幅提示，下次轮询再试。
+    if (force && !(e instanceof NetError)) toast(e.message);
+  }
 }
 
 // ---------------------------------------------------------------- 标签页 ---
 async function setTab(tab){
-  currentTab = tab; currentSession = null; sheetKey = '';
+  currentTab = tab; currentSession = null; currentGroup = null; sheetKey = '';
   show(tab + '-view');
   try {
-    if (tab === 'threads') await loadSessions();
-    if (tab === 'review') await loadReview();
+    if (tab === 'threads') { if (!lastSessions) skeleton(); await loadSessions(); }
+    if (tab === 'inbox') await loadReview(true);
     if (tab === 'automations') await loadAutomations();
-    if (tab === 'skills') await loadSkills();
     if (tab === 'settings') await openSettings();
-  } catch (e) { toast(e.message); }
+  } catch (e) { if (!(e instanceof NetError)) toast(e.message); }
 }
 function scheduleText(task){
   if (task.at) return t('m.auto.daily', { at: task.at });
@@ -474,107 +703,108 @@ async function loadAutomations(){
   const data = await api('/api/schedule');
   const box = $('autos'); box.innerHTML = '';
   const list = data.tasks || [];
+  const footer = () => { const f = el('div', 'row'); f.style.cssText = 'gap:10px;padding:16px 26px;align-items:flex-start;font-size:var(--f-s);color:var(--t3);line-height:19px'; f.appendChild(icon('laptop', 's16')); const sp = el('span'); sp.appendChild(rich(t('m.auto.addHint'))); f.appendChild(sp); return f; };
   if (!list.length) {
-    const e = el('div', 'empty'); e.appendChild(el('b', '', t('m.auto.emptyTitle')));
-    e.appendChild(el('code', '', t('m.auto.emptyHint'))); box.appendChild(e); return;
+    const e = el('div', 'empty'); e.appendChild(mascot('night', 'idle', 52)); e.appendChild(el('b', '', t('m.auto.emptyTitle')));
+    const p = el('p'); p.appendChild(rich(t('m.auto.emptyHint'))); e.appendChild(p); box.appendChild(e); return;
   }
+  box.appendChild(el('div', 'sec', t('m.auto.tasks'))).style.paddingTop = '6px';
+  const g = el('div', 'grp');
   list.forEach(task => {
     const on = task.enabled !== false;
-    const row = el('div', 'it auto');
-    const tx = el('div', 'tx'); tx.appendChild(el('b', '', task.name));
-    tx.appendChild(el('small', '', on ? scheduleText(task) + (task.mode ? ' · ' + t('m.mode.' + task.mode) : '') : t('m.auto.paused')));
+    const row = el('div', 'r2 nolead auto');
+    const tx = el('div', 'k'); tx.appendChild(document.createTextNode(task.name));
+    tx.appendChild(el('small', '', on ? scheduleText(task) + (task.mode ? t('m.sep') + t('m.mode.' + task.mode) : '') : t('m.auto.paused')));
     row.appendChild(tx);
-    const tg = el('button', 'tg' + (on ? '' : ' off')); tg.dataset.act = 'toggle'; tg.setAttribute('role', 'switch'); tg.setAttribute('aria-checked', String(on)); tg.setAttribute('aria-label', task.name);
+    const tg = el('button', 'tg' + (on ? '' : ' off')); tg.appendChild(el('i')); tg.dataset.act = 'toggle'; tg.setAttribute('role', 'switch'); tg.setAttribute('aria-checked', String(on)); tg.setAttribute('aria-label', task.name);
     tg.onclick = async () => {
       tg.disabled = true;
       try { const r = await api('/api/schedule', { method: 'POST', body: JSON.stringify({ action: 'toggle', name: task.name }) }); toast(t(r.task && r.task.enabled === false ? 'm.auto.off' : 'm.auto.on', { name: task.name })); }
-      catch (e) { toast(t('m.auto.toggleFailed', { msg: e.message })); }
-      await loadAutomations();
+      catch (e) { if (e instanceof NetError) actionFailed(e, () => tg.onclick()); else toast(t('m.auto.toggleFailed', { msg: e.message })); }
+      await loadAutomations().catch(() => {});
     };
-    row.appendChild(tg);
-    box.appendChild(row);
+    row.appendChild(tg); g.appendChild(row);
   });
+  box.appendChild(g);
   const ran = list.filter(x => x.last_run).sort((a, b) => String(b.last_run).localeCompare(String(a.last_run))).slice(0, 3);
   if (ran.length) {
-    box.appendChild(el('div', 'lh', t('m.auto.lastRun')));
+    box.appendChild(el('div', 'sec', t('m.auto.lastRun')));
+    const g2 = el('div', 'grp');
     ran.forEach(task => {
-      const row = el('div', 'it');
       const ok = task.last_status === 'ok';
-      row.appendChild(el('span', ok ? 'ok' : 'bad', ok ? '✓' : '✕'));
-      const tx = el('div', 'tx'); tx.appendChild(el('b', '', task.name));
-      tx.appendChild(el('small', 'wrap', fmtWhen(task.last_run) + (task.last_summary ? ' · ' + task.last_summary : '')));
-      row.appendChild(tx); box.appendChild(row);
+      const row = el('div', 'r2');
+      const tile = el('span', 'tile ' + (ok ? 'okb' : 'badb')); tile.appendChild(icon(ok ? 'check' : 'x')); row.appendChild(tile);
+      const tx = el('div', 'k'); tx.appendChild(document.createTextNode(task.name));
+      tx.appendChild(el('small', '', fmtWhen(task.last_run) + (task.last_summary ? t('m.comma') + task.last_summary : '')));
+      row.appendChild(tx); g2.appendChild(row);
     });
+    box.appendChild(g2);
   }
+  box.appendChild(footer());
 }
-// ---------------------------------------------------------------- 审阅队列 ---
-// 缺口 3b：手机审批面——待审项（diff 统计 + 验证结论 + 成本）逐项批复。
-// fail-closed：只在用户点“批准”后才放行；“应用改动”是单独一步，只接受
+// ---------------------------------------------------------------- 待你决定 ---
+// 审批（等你确认）+ 验收（待审改动）合在一处。fail-closed：只在用户点“批准”后才放行；“应用改动”是单独一步，只接受
 // 已批准的项；超时/断线时本页不改任何状态，下次轮询再读。
-function reviewStatusLabel(item){
-  return t('m.review.' + item.status);
-}
+function reviewStatusLabel(item){ return t('m.review.' + item.status); }
 function reviewVerifyLabel(item){
   const v = item.verification || {};
   if (v.status === 'verified') return ['ok', t('m.review.verified')];
   if (v.status === 'failed') return ['bad', t('m.review.verifyFailed')];
-  return ['', t('m.review.notVerified')];
+  return ['bad', t('m.review.notVerified')];
 }
 function reviewCostLabel(item){
-  return item.spentUsd === null || item.spentUsd === undefined
-    ? t('m.review.costUnknown')
-    : t('m.review.cost', { cost: '$' + Number(item.spentUsd).toFixed(4) });
+  return item.spentUsd === null || item.spentUsd === undefined ? t('m.review.costUnknown') : t('m.review.cost', { cost: '$' + Number(item.spentUsd).toFixed(4) });
 }
+let queueState = {};
 async function loadReview(force){
   const data = await api('/api/review');
-  const json = JSON.stringify(data.items || []) + '|' + JSON.stringify(lastApprovals) + '|' + Object.entries(queueState).map(([k, v]) => k + (v.more ? 'm' : '') + (v.deny ? 'd' : '')).join(',');
+  const items = data.items || [];
+  reviewPending = items.filter(x => x.status === 'pending').length; updateBadges();
+  const json = JSON.stringify(items) + '|' + JSON.stringify(lastApprovals) + '|' + Object.entries(queueState).map(([k, v]) => k + (v.more ? 'm' : '') + (v.deny ? 'd' : '')).join(',');
   if (!force && json === lastReviewJson) return;
   lastReviewJson = json;
   if (!lastSessions) { try { lastSessions = await api('/api/sessions'); } catch(e){} }
-  renderReview(data.items || []);
+  renderReview(items);
 }
-let queueState = {};
 function renderQueue(box){
   if (!lastApprovals.length) return;
-  const sessions = new Set(lastApprovals.map(a => a.session));
-  const hd = el('div', 'qh');
-  const tl = el('div', 'qt'); tl.appendChild(el('h2', '', t('m.q.title'))); tl.appendChild(el('span', '', t('m.q.count', { n: lastApprovals.length, m: sessions.size }))); hd.appendChild(tl);
-  hd.appendChild(el('p', '', t('m.q.hint')));
-  box.appendChild(hd);
+  const sec = el('div', 'sec'); sec.style.paddingTop = '6px';
+  sec.appendChild(document.createTextNode(t('m.q.title'))); const n = el('span', 'tag wait', String(lastApprovals.length)); n.style.height = '20px'; sec.appendChild(n);
+  sec.appendChild(el('span', 'r', t('m.q.hint'))); box.appendChild(sec);
   lastApprovals.forEach(a => {
     const qs = queueState[a.id] || (queueState[a.id] = { more: false, deny: false, feedback: '' });
     const s = lastSessions && (lastSessions.sessions || []).find(x => x.id === a.session);
-    const card = el('div', 'qcard'); card.dataset.id = a.id;
-    const top = el('button', 'qtop'); top.appendChild(avatar('wait-s'));
-    top.appendChild(el('b', '', titleOf(s)));
-    if (s && s.project) top.appendChild(el('span', 'pj', '· ' + s.project));
+    const card = el('div', 'grp qcard'); card.dataset.id = a.id;
+    const top = el('button', 'qtop'); top.appendChild(mascot('nyra', 'wait', 28));
+    const tt = el('div'); tt.style.cssText = 'flex:1;min-width:0'; tt.appendChild(el('b', '', titleOf(s)));
+    tt.appendChild(el('small', '', [s && s.project, s && relTime(s.mtime)].filter(Boolean).join(t('m.comma')))); top.appendChild(tt);
     top.onclick = () => openSession(a.session);
     card.appendChild(top);
     const b = apprBits(a);
     card.appendChild(el('div', 'qs', b.sentence));
     card.appendChild(scopeBox(a, b, {}, null, true));
-    const btns = el('div', 'btns');
-    const more = el('button', 'bt dots' + (qs.more ? ' sel' : '')); more.dataset.act = 'more'; more.setAttribute('aria-label', t('m.q.more')); more.appendChild(icon('more'));
+    const btns = el('div', 'qbtns');
+    const more = el('button', 'btn sm dots' + (qs.more ? ' line' : '')); more.dataset.act = 'more'; more.setAttribute('aria-label', t('m.q.more')); more.appendChild(icon('moreh', 's18'));
     more.onclick = () => { qs.more = !qs.more; lastReviewJson = ''; loadReview(true); };
-    const deny = el('button', 'bt' + (qs.deny ? ' sel' : ''), t('m.denyAlt')); deny.dataset.act = 'deny';
+    const deny = el('button', 'btn sm' + (qs.deny ? ' line' : ''), t('m.deny')); deny.dataset.act = 'deny';
     deny.onclick = () => { qs.deny = !qs.deny; lastReviewJson = ''; loadReview(true); };
-    const once = el('button', 'bt p', t('m.allowOnce')); once.dataset.act = 'allow';
+    const once = el('button', 'btn sm pri', t('m.allowOnce')); once.dataset.act = 'allow';
     once.onclick = () => decide(a.id, { approve: true });
     btns.appendChild(more); btns.appendChild(deny); btns.appendChild(once); card.appendChild(btns);
     const canRule = !!a.suggestion; const canAlways = canRule || (!!a.always && a.tool !== 'shell');
     if (qs.more) {
-      const opts = el('div', 'moreopts');
-      if (canAlways) { const al = el('button', 'bt', t('m.alwaysSession')); al.dataset.act = 'always-session'; al.onclick = () => decide(a.id, canRule ? { approve: true, scope: 'session' } : { approve: true, always: true }); opts.appendChild(al); }
-      if (canRule) { const rr = el('button', 'bt', t('m.rememberRule')); rr.dataset.act = 'always'; rr.onclick = () => { (cardState[a.id] || (cardState[a.id] = { open: null, scope: 'session', feedback: '', diff: false, more: true })).open = 'always'; cardState[a.id].more = true; openSession(a.session); }; opts.appendChild(rr); }
-      if (b.isEdit) { const dv = el('button', 'bt', t('m.scope.viewDiff')); dv.onclick = () => { (cardState[a.id] || (cardState[a.id] = { open: null, scope: 'session', feedback: '', diff: true, more: false })).diff = true; openSession(a.session); }; opts.appendChild(dv); }
+      const opts = el('div', 'moreopts'); opts.style.marginTop = '10px';
+      if (canAlways) { const al = el('button', 'btn sm', t('m.alwaysSession')); al.dataset.act = 'always-session'; al.onclick = () => decide(a.id, canRule ? { approve: true, scope: 'session' } : { approve: true, always: true }); opts.appendChild(al); }
+      if (canRule) { const rr = el('button', 'btn sm', t('m.rememberRule')); rr.dataset.act = 'always'; rr.onclick = () => { (cardState[a.id] || (cardState[a.id] = { open: null, scope: 'session', feedback: '', diff: false, more: true })).open = 'always'; cardState[a.id].more = true; openSession(a.session); }; opts.appendChild(rr); }
+      if (b.isEdit) { const dv = el('button', 'btn sm', t('m.scope.viewDiff')); dv.onclick = () => { (cardState[a.id] || (cardState[a.id] = { open: null, scope: 'session', feedback: '', diff: true, more: false })).diff = true; openSession(a.session); }; opts.appendChild(dv); }
       if (!canAlways) opts.appendChild(el('div', 'note', t('m.noRule')));
       card.appendChild(opts);
     }
     if (qs.deny) {
-      const sub = el('div', 'sub deny');
+      const sub = el('div', 'subbox deny');
       const ta = el('textarea'); ta.rows = 2; ta.placeholder = t('m.deny.placeholder'); ta.value = qs.feedback; ta.oninput = () => { qs.feedback = ta.value; };
       sub.appendChild(ta);
-      const send = el('button', 'bt p full', t('m.deny.confirm')); send.dataset.act = 'deny-confirm';
+      const send = el('button', 'btn pri full', t('m.deny.confirm')); send.dataset.act = 'deny-confirm';
       send.onclick = () => decide(a.id, { approve: false, feedback: (qs.feedback || '').trim() });
       sub.appendChild(send); card.appendChild(sub);
     }
@@ -584,115 +814,114 @@ function renderQueue(box){
 function renderReview(items){
   const box = $('reviews'); box.innerHTML = '';
   // 输入框里有字时不要整页重画（反馈会丢）：由 queueState 保存。
+  const wrap = el('div'); wrap.style.cssText = 'margin:0 14px'; 
   renderQueue(box);
-  if (!items.length && lastApprovals.length) return;
-  if (!items.length) {
-    const e = el('div', 'empty'); e.appendChild(el('b', '', t('m.review.emptyTitle')));
-    e.appendChild(el('code', '', t('m.review.emptyHint'))); box.appendChild(e); return;
+  if (!items.length && !lastApprovals.length) {
+    const e = el('div', 'empty');
+    const trio = el('div', 'row'); trio.style.cssText = 'gap:6px;align-items:flex-end';
+    trio.appendChild(mascot('patrol', 'idle', 30)); trio.appendChild(mascot('nyra', 'idle', 52)); trio.appendChild(mascot('lingo', 'idle', 30)); e.appendChild(trio);
+    e.appendChild(el('b', '', t('m.inbox.emptyTitle'))); e.appendChild(el('p', '', t('m.inbox.emptyBody'))); box.appendChild(e); return;
   }
+  if (!items.length) return;
   const pending = items.filter(x => x.status === 'pending').length;
-  box.appendChild(el('div', 'lh', t('m.review.pending') + ' ' + pending + ' / ' + items.length));
+  const sec = el('div', 'sec', t('m.review.section')); sec.appendChild(el('span', 'r', t('m.review.pendingN', { n: pending }))); box.appendChild(sec);
   items.forEach(item => {
-    const card = el('div', 'rv');
+    const card = el('div', 'grp rv');
     const head = el('div', 'rv-h');
     head.appendChild(el('b', '', item.title || item.id));
-    head.appendChild(el('span', 'tag', reviewStatusLabel(item)));
+    head.appendChild(el('span', 'tag' + (item.status === 'pending' ? ' wait' : item.status === 'rejected' ? ' bad' : ' ok'), reviewStatusLabel(item)));
     card.appendChild(head);
-    const meta = el('div', 'note');
-    const src = t('m.review.source.' + item.source);
-    meta.appendChild(document.createTextNode(src + ' · '));
-    const [vcls, vlabel] = reviewVerifyLabel(item);
-    const vs = el('span', vcls, vlabel); meta.appendChild(vs);
-    meta.appendChild(document.createTextNode(' · ' + reviewCostLabel(item)));
-    card.appendChild(meta);
-    const files = (item.changedFiles && item.changedFiles.length)
-      ? t('m.review.files', { n: item.changedFiles.length }) + '：' + item.changedFiles.join('、')
-      : t('m.review.noChanges');
-    card.appendChild(el('div', 'note', files));
-    if (item.summary) card.appendChild(el('div', 'note wrap', String(item.summary).slice(0, 500)));
-    if (item.diffStat) {
-      const d = el('div', 'cmd', String(item.diffStat).slice(0, 1500));
-      d.setAttribute('aria-label', t('m.review.diff'));
-      card.appendChild(d);
-    }
-    if (item.status === 'pending' && (!item.verification || item.verification.status !== 'verified')) {
-      card.appendChild(el('div', 'note warn-t', t('m.review.unverifiedWarn')));
-    }
-    if (item.decidedBy) card.appendChild(el('div', 'note', (item.status === 'approved' || item.status === 'rejected' ? t('m.review.decided') + '：' : '') + item.decidedBy));
-    const btns = el('div', 'btns');
-    const mkBtn = (cls, label, act, fn) => {
-      const b = el('button', cls, label); b.dataset.act = act; b.onclick = fn; btns.appendChild(b); return b;
-    };
+    const tags = el('div', 'tags');
+    tags.appendChild(el('span', 'tag', t('m.review.source.' + item.source)));
+    const [vcls, vlabel] = reviewVerifyLabel(item); tags.appendChild(el('span', 'tag ' + vcls, vlabel));
+    tags.appendChild(el('span', 'tag', (item.changedFiles && item.changedFiles.length) ? t('m.review.files', { n: item.changedFiles.length }) : t('m.review.noChanges')));
+    tags.appendChild(el('span', 'tag', reviewCostLabel(item)));
+    card.appendChild(tags);
+    if (item.changedFiles && item.changedFiles.length) card.appendChild(el('div', 'files mono', item.changedFiles.join(t('m.listSep'))));
+    if (item.summary) card.appendChild(el('div', 'sum', String(item.summary).slice(0, 500)));
+    if (item.diffStat) { const d = el('pre', '', String(item.diffStat).slice(0, 1500)); d.setAttribute('aria-label', t('m.review.diff')); card.appendChild(d); }
+    if (item.status === 'pending' && (!item.verification || item.verification.status !== 'verified')) card.appendChild(el('div', 'warn', t('m.review.unverifiedWarn')));
+    if (item.decidedBy) card.appendChild(el('div', 'note', t('m.review.decided') + t('m.colon') + item.decidedBy)).style.padding = '8px 0 0';
+    const btns = el('div', 'qbtns');
+    const mkBtn = (cls, label, act, fn) => { const b = el('button', cls, label); b.dataset.act = act; b.onclick = fn; btns.appendChild(b); return b; };
     if (item.status === 'pending') {
-      mkBtn('bt', t('m.review.reject'), 'review-reject', () => reviewAction(item.id, 'decide', { approve: false }));
-      mkBtn('bt', t('m.review.verify'), 'review-verify', () => reviewAction(item.id, 'verify', {}));
-      mkBtn('bt p', t('m.review.approve'), 'review-approve', () => reviewAction(item.id, 'decide', { approve: true }));
+      mkBtn('btn sm', t('m.review.reject'), 'review-reject', () => reviewAction(item.id, 'decide', { approve: false }));
+      mkBtn('btn sm', t('m.review.verify'), 'review-verify', () => reviewAction(item.id, 'verify', {}));
+      mkBtn('btn sm pri', t('m.review.approve'), 'review-approve', () => reviewAction(item.id, 'decide', { approve: true }));
     } else if (item.status === 'approved') {
-      mkBtn('bt', t('m.review.verify'), 'review-verify', () => reviewAction(item.id, 'verify', {}));
-      mkBtn('bt p', t('m.review.apply'), 'review-apply', () => reviewAction(item.id, 'apply', {}));
+      mkBtn('btn sm', t('m.review.verify'), 'review-verify', () => reviewAction(item.id, 'verify', {}));
+      mkBtn('btn sm pri', t('m.review.apply'), 'review-apply', () => reviewAction(item.id, 'apply', {}));
     }
     if (btns.childNodes.length) card.appendChild(btns);
     box.appendChild(card);
   });
+  box.appendChild(el('div')).style.height = '24px';
 }
 async function reviewAction(id, action, body){
   try {
     await api('/api/review/' + encodeURIComponent(id) + '/' + action, { method: 'POST', body: JSON.stringify(body || {}) });
     toast(t(action === 'apply' ? 'm.review.appliedOk' : action === 'verify' ? 'm.review.verifyOk' : 'm.review.decided'));
     await loadReview(true);
-  } catch (e) { toast(t('m.review.actionFailed', { msg: e.message })); }
+  } catch (e) { if (e instanceof NetError) actionFailed(e, () => reviewAction(id, action, body)); else toast(t('m.review.actionFailed', { msg: e.message })); }
 }
+// ---------------------------------------------------------------- 技能（设置里） ---
 async function loadSkills(){
   const info = await loadInfo();
   const box = $('skill-list'); box.innerHTML = '';
   const list = info.skills || [];
+  $('skills-sub').textContent = t('m.skills.count', { n: list.length });
   if (!list.length) {
-    const e = el('div', 'empty'); e.appendChild(el('b', '', t('m.skills.emptyTitle')));
-    e.appendChild(el('code', '', t('m.skills.emptyHint'))); box.appendChild(e); return;
+    const e = el('div', 'empty'); e.appendChild(mascot('scout', 'idle', 52)); e.appendChild(el('b', '', t('m.skills.emptyTitle')));
+    const p = el('p'); p.appendChild(rich(t('m.skills.emptyHint'))); e.appendChild(p); box.appendChild(e); return;
   }
-  box.appendChild(el('div', 'lh', t('m.skills.count', { n: list.length })));
+  box.appendChild(el('div', 'sec', t('m.skills.loaded')));
+  const g = el('div', 'grp');
   list.forEach(s => {
-    const row = el('div', 'it');
-    const tx = el('div', 'tx'); tx.appendChild(el('b', '', s.name)); if (s.description) tx.appendChild(el('small', 'wrap', s.description));
-    row.appendChild(tx); box.appendChild(row);
+    const row = el('div', 'r2 nolead');
+    const tx = el('div', 'k'); tx.appendChild(document.createTextNode(s.name)); if (s.description) tx.appendChild(el('small', '', s.description));
+    row.appendChild(tx); g.appendChild(row);
   });
+  box.appendChild(g);
 }
+async function openSkills(){ show('skills-view'); try { await loadSkills(); } catch (e) { if (!(e instanceof NetError)) toast(e.message); } }
 
 // ---------------------------------------------------------------- 设置 ---
 const MODE_KEYS = { readonly: 'm.mode.readonly', auto: 'm.mode.auto', full: 'm.mode.full', creator: 'm.mode.creator' };
-function modeLabel(m){ return MODE_KEYS[m] ? t(MODE_KEYS[m]) : m; }
+function modeLabel(m){ return MODE_KEYS[m] ? t(MODE_KEYS[m]) : (m || ''); }
 async function openSettings(){
   fullStep = 0;
   await loadInfo().catch(() => {});
   renderModes();
   $('provider-line').textContent = lastInfo && lastInfo.provider_desc ? lastInfo.provider_desc : t('m.set.notConfigured');
   $('version-line').textContent = t('m.set.version', { v: (lastInfo && lastInfo.version) || '' });
+  const n = lastInfo && lastInfo.skills ? lastInfo.skills.length : 0;
+  $('skills-line').textContent = t('m.set.skillsBody', { n });
+  renderConn();
   await loadRules();
 }
 function renderModes(){
   const box = $('modes'); box.innerHTML = '';
   const cur = lastInfo ? lastInfo.mode : '';
   const modes = ['readonly', 'auto', 'full'];
-  if (cur === 'creator') modes.push('creator');
+  if (cur === 'creator') { modes.push('creator'); box.style.gridTemplateColumns = 'repeat(4,1fr)'; }
   modes.forEach(m => {
-    const b = el('button', m === cur ? 'on' : '', modeLabel(m)); b.dataset.mode = m;
+    const b = el('button', m === cur ? 'on' : ''); b.dataset.mode = m;
+    if (m === cur) b.appendChild(icon('shield', 's16'));
+    b.appendChild(document.createTextNode(modeLabel(m)));
     b.onclick = () => chooseMode(m);
     box.appendChild(b);
   });
+  $('mode-help').textContent = t(cur === 'readonly' ? 'm.set.helpReadonly' : cur === 'full' ? 'm.set.helpFull' : 'm.set.helpAuto');
   const c = $('mode-confirm'); c.innerHTML = '';
-  if (fullStep === 1) {
-    const w = el('div', 'warn');
-    w.appendChild(el('b', '', t('m.full.warnTitle')));
-    w.appendChild(el('div', 'note', t('m.full.warnBody')));
-    const go = el('button', 'bt danger', t('m.full.continue')); go.dataset.act = 'full-step1'; go.onclick = () => { fullStep = 2; renderModes(); };
-    const no = el('button', 'bt ghost', t('m.cancel')); no.onclick = () => { fullStep = 0; renderModes(); };
-    w.appendChild(go); w.appendChild(no); c.appendChild(w);
-  } else if (fullStep === 2) {
-    const w = el('div', 'warn');
-    w.appendChild(el('b', '', t('m.full.confirmTitle')));
-    const go = el('button', 'bt danger', t('m.full.confirm')); go.dataset.act = 'full-step2'; go.onclick = () => setMode('full');
-    const no = el('button', 'bt ghost', t('m.cancel')); no.onclick = () => { fullStep = 0; renderModes(); };
-    w.appendChild(go); w.appendChild(no); c.appendChild(w);
+  if (fullStep) {
+    const w = el('div', 'warnbox');
+    w.appendChild(el('b', '', t(fullStep === 1 ? 'm.full.warnTitle' : 'm.full.confirmTitle')));
+    if (fullStep === 1) w.appendChild(el('p', '', t('m.full.warnBody')));
+    const row = el('div', 'row'); row.style.gap = '8px';
+    const no = el('button', 'btn sm', t('m.cancel')); no.style.flex = '1'; no.onclick = () => { fullStep = 0; renderModes(); };
+    const go = el('button', 'btn sm danger', t(fullStep === 1 ? 'm.full.continue' : 'm.full.confirm')); go.style.flex = '1.4'; go.dataset.act = fullStep === 1 ? 'full-step1' : 'full-step2';
+    go.onclick = () => { if (fullStep === 1) { fullStep = 2; renderModes(); } else setMode('full'); };
+    row.appendChild(no); row.appendChild(go); w.appendChild(row); c.appendChild(w);
   }
 }
 function chooseMode(m){
@@ -703,31 +932,241 @@ function chooseMode(m){
 async function setMode(m){
   try {
     await api('/api/mode', { method: 'POST', body: JSON.stringify(m === 'full' ? { mode: m, confirm: 'full' } : { mode: m }) });
-    fullStep = 0; await loadInfo(); renderModes();
+    fullStep = 0; await loadInfo(); renderModes(); renderCPills();
     toast(t('m.set.switched', { mode: modeLabel(m) }));
-  } catch (e) { toast(t('m.set.switchFailed', { msg: e.message })); }
+  } catch (e) { if (e instanceof NetError) actionFailed(e, () => setMode(m)); else toast(t('m.set.switchFailed', { msg: e.message })); }
 }
 async function loadRules(){
   const data = await api('/api/rules');
   const box = $('rules'); box.innerHTML = '';
   const list = data.rules || [];
-  if (!list.length) { const r = el('div', 'row'); r.appendChild(el('span', 'tx note', t('m.set.rulesEmpty'))); box.appendChild(r); return; }
+  if (!list.length) { const r = el('div', 'r2 nolead'); r.appendChild(el('div', 'k', '')).appendChild(el('small', '', t('m.set.rulesEmpty'))); box.appendChild(r); return; }
   list.forEach(r => {
-    const row = el('div', 'row rule-row');
-    const tx = el('div', 'tx'); tx.appendChild(el('code', '', ruleLabel(r) || r.label)); row.appendChild(tx);
-    row.appendChild(el('span', 'tag', r.scope === 'project' ? t('m.scope.project') : t('m.scope.session')));
-    const b = el('button', 'chipbtn', t('m.set.revoke')); b.dataset.act = 'revoke-rule';
+    const row = el('div', 'r2 nolead rule-row');
+    const tx = el('div', 'k'); tx.appendChild(rich(ruleLabel(r) || r.label)); tx.appendChild(el('small', '', r.scope === 'project' ? t('m.scope.project') : t('m.scope.session'))); row.appendChild(tx);
+    const b = el('button', 'btn ghost sm', t('m.set.revoke')); b.style.color = 'var(--t1)'; b.dataset.act = 'revoke-rule';
     b.onclick = async () => {
       try { await api('/api/rules/' + encodeURIComponent(r.id) + '/revoke', { method: 'POST', body: '{}' }); toast(t('m.set.revoked')); await loadRules(); }
-      catch (e) { toast(t('m.set.revokeFailed', { msg: e.message })); }
+      catch (e) { if (e instanceof NetError) actionFailed(e, () => b.onclick()); else toast(t('m.set.revokeFailed', { msg: e.message })); }
     };
     row.appendChild(b); box.appendChild(row);
   });
 }
 function forgetDevice(){
-  if (!confirm(t('m.set.disconnectConfirm'))) return;
-  try { localStorage.removeItem('nyra-device-token'); localStorage.removeItem('nyra-token'); } catch(e){}
-  clearInterval(poll); poll = null; show('pair-view');
+  const sh = openSheet('disconnect');
+  sh.appendChild(el('h2', '', t('m.set.disconnectTitle')));
+  sh.appendChild(el('p', 'sub-t', t('m.set.disconnectBody')));
+  const btns = el('div', 'btns');
+  const no = el('button', 'btn', t('m.cancel')); no.onclick = closeSheet;
+  const go = el('button', 'btn danger', t('m.set.disconnectGo')); go.dataset.act = 'disconnect-confirm';
+  go.onclick = () => {
+    try { localStorage.removeItem('nyra-device-token'); localStorage.removeItem('nyra-token'); } catch(e){}
+    clearInterval(poll); poll = null; closeSheet(); $('pair-lost').classList.add('hidden'); $('pair-title').textContent = t('m.pair.title'); show('pair-view');
+  };
+  btns.appendChild(no); btns.appendChild(go); sh.appendChild(btns);
+}
+function cloudSoon(){
+  const sh = openSheet('cloud');
+  const r = el('div', 'row'); r.style.gap = '10px'; r.appendChild(el('h2', '', t('m.set.cloud'))); r.appendChild(el('span', 'tag soon', t('m.soon'))); sh.appendChild(r);
+  sh.appendChild(el('p', 'sub-t', t('m.cloud.soonBody')));
+  const ok = el('button', 'btn full', t('m.ok')); ok.style.marginTop = '16px'; ok.onclick = closeSheet; sh.appendChild(ok);
+}
+
+// ---------------------------------------------------------------- 总指挥 ---
+let chiefState = null;
+function chiefAv(){ const a = $('chief-av'); a.innerHTML = ''; a.appendChild(mascot('chief', chiefState && chiefState.loading ? 'think' : 'idle', 30, { label: t('m.chief.name') })); }
+async function openChief(task){
+  currentSession = null; currentGroup = null;
+  chiefState = { task, proposal: null, selected: [], loading: true, error: '' };
+  show('chief-view'); chiefAv(); renderChief();
+  try {
+    const p = await api('/api/chief/proposals', { method: 'POST', body: JSON.stringify({ task }) });
+    chiefState.proposal = p; chiefState.selected = p.members.map(m => m.id);
+  } catch (e) { chiefState.error = e.message; }
+  chiefState.loading = false; chiefAv(); renderChief();
+}
+function chiefMsg(text, state){
+  const gm = el('div', 'gm'); gm.appendChild(mascot('chief', state || 'idle', 28, { label: t('m.chief.name') }));
+  const bd = el('div', 'bd'); bd.appendChild(el('div', 'nm', t('m.chief.name'))); bd.appendChild(el('div', 'tx', text)); gm.appendChild(bd); return gm;
+}
+function permTag(){ const p = el('span', 'perm'); p.appendChild(icon('shield')); p.appendChild(document.createTextNode(t('m.perm.readonly'))); return p; }
+function candidateOf(id){ return chiefState.proposal.candidates.find(c => c.id === id); }
+function renderChief(){
+  const feed = $('chief-feed'); feed.innerHTML = '';
+  if (!chiefState) return;
+  feed.appendChild(el('div', 'u', chiefState.task));
+  if (chiefState.loading) { feed.appendChild(chiefMsg(t('m.chief.thinking'), 'think')); return; }
+  if (chiefState.error) { const m = chiefMsg(chiefState.error); m.querySelector('.tx').classList.add('err'); feed.appendChild(m); return; }
+  const p = chiefState.proposal;
+  feed.appendChild(chiefMsg(t('m.chief.proposeLead', { n: chiefState.selected.length })));
+  const card = el('div', 'card'); card.style.marginLeft = '38px'; card.id = 'chief-plan';
+  const ch = el('div', 'ch'); const b = el('b'); b.appendChild(icon('users', 's18')); b.appendChild(document.createTextNode(t('m.chief.planTitle', { title: p.title }))); ch.appendChild(b);
+  ch.appendChild(el('small', '', p.team ? t('m.chief.planSubTeam', { n: chiefState.selected.length, team: p.team.name }) : t('m.chief.planSub', { n: chiefState.selected.length })));
+  card.appendChild(ch);
+  chiefState.selected.forEach(id => {
+    const c = candidateOf(id); if (!c) return;
+    const row = el('div', 'mem'); row.dataset.member = id;
+    row.appendChild(mascot(c.mascot, 'idle', 36, { label: c.name }));
+    const tx = el('div', 'tx'); const nm = el('b', '', c.name); nm.appendChild(permTag()); tx.appendChild(nm); tx.appendChild(el('small', '', c.role)); row.appendChild(tx);
+    const rm = el('button', 'ib'); rm.style.color = 'var(--t3)'; rm.setAttribute('aria-label', t('m.chief.remove', { name: c.name })); rm.dataset.act = 'remove-member'; rm.appendChild(icon('minus', 's18'));
+    rm.disabled = chiefState.selected.length <= p.min;
+    rm.onclick = () => { chiefState.selected = chiefState.selected.filter(x => x !== id); renderChief(); };
+    row.appendChild(rm); card.appendChild(row);
+  });
+  const add = el('div', 'mem'); add.style.minHeight = '52px';
+  const ab = el('button', 'tap row'); ab.style.cssText = 'gap:10px;color:var(--brand-t);font-weight:600;font-size:var(--f-m);justify-content:flex-start'; ab.dataset.act = 'add-member';
+  ab.appendChild(icon('plus', 's18')); ab.appendChild(document.createTextNode(t('m.chief.addMember'))); ab.onclick = adjustMembers; ab.disabled = chiefState.selected.length >= p.max;
+  add.appendChild(ab); add.appendChild(el('span', 'sp')); const mx = el('span', '', t('m.chief.max', { n: p.max })); mx.style.cssText = 'font-size:var(--f-xs);color:var(--t3);padding-right:10px'; add.appendChild(mx);
+  card.appendChild(add);
+  const note = el('div', 'note', t('m.chief.readonlyNote')); note.style.padding = '0 16px 10px'; card.appendChild(note);
+  const act = el('div', 'row'); act.style.cssText = 'padding:4px 12px 12px;gap:8px';
+  const adj = el('button', 'btn sm', t('m.chief.adjust')); adj.style.flex = '1'; adj.onclick = adjustMembers;
+  const ok = el('button', 'btn sm pri', t('m.chief.create')); ok.style.flex = '1.6'; ok.dataset.act = 'chief-create'; ok.onclick = createChief;
+  act.appendChild(adj); act.appendChild(ok); card.appendChild(act);
+  feed.appendChild(card);
+}
+function adjustMembers(){
+  const p = chiefState.proposal; if (!p) return;
+  const draft = chiefState.selected.slice();
+  const draw = () => {
+    const sh = openSheet('members');
+    sh.appendChild(el('h2', '', t('m.chief.adjustTitle')));
+    sh.appendChild(el('p', 'sub-t', t('m.chief.adjustBody', { min: p.min, max: p.max })));
+    const card = el('div', 'card'); card.style.cssText = 'margin-top:14px;background:var(--inset)';
+    p.candidates.forEach(c => {
+      const on = draft.includes(c.id);
+      const row = el('button', 'mem'); row.dataset.member = c.id; row.setAttribute('role', 'checkbox'); row.setAttribute('aria-checked', String(on));
+      row.appendChild(mascot(c.mascot, 'idle', 34, { label: c.name }));
+      const tx = el('div', 'tx'); tx.appendChild(el('b', '', c.name)); tx.appendChild(el('small', '', c.role)); row.appendChild(tx);
+      const box = el('span', 'tap'); const k = el('span', 'chk' + (on ? ' on' : '')); k.appendChild(icon('check')); box.appendChild(k); row.appendChild(box);
+      row.onclick = () => {
+        if (on) { if (draft.length <= p.min) { toast(t('m.chief.atLeast', { n: p.min })); return; } draft.splice(draft.indexOf(c.id), 1); }
+        else { if (draft.length >= p.max) { toast(t('m.chief.atMost', { n: p.max })); return; } draft.push(c.id); }
+        draw();
+      };
+      card.appendChild(row);
+    });
+    sh.appendChild(card);
+    const perm = el('div', 'lbl'); perm.style.marginTop = '16px'; perm.textContent = t('m.chief.permTitle'); sh.appendChild(perm);
+    const seg = el('div', 'seg'); seg.style.cssText = 'margin:0;grid-template-columns:1fr'; const only = el('button', 'on'); only.appendChild(icon('shield', 's16')); only.appendChild(document.createTextNode(t('m.perm.readonly'))); seg.appendChild(only); sh.appendChild(seg);
+    sh.appendChild(el('p', 'sub-t', t('m.chief.permBody')));
+    const done = el('button', 'btn pri full', t('m.done')); done.style.cssText = 'height:52px;margin-top:16px'; done.dataset.act = 'members-done';
+    done.onclick = () => { chiefState.selected = draft.slice(); closeSheet(); renderChief(); };
+    sh.appendChild(done);
+  };
+  draw();
+}
+async function createChief(){
+  if (!chiefState || !chiefState.proposal) return;
+  const btn = document.querySelector('[data-act="chief-create"]'); if (btn) btn.disabled = true;
+  try {
+    const res = await api('/api/chief/groups', { method: 'POST', body: JSON.stringify({ task: chiefState.proposal.task, members: chiefState.selected, team: chiefState.proposal.team ? chiefState.proposal.team.id : null }) });
+    chiefState = null;
+    await openGroup(res.room.id);
+  } catch (e) { if (btn) btn.disabled = false; actionFailed(e, createChief); }
+}
+async function chiefReply(){
+  const i = $('chief-input'); const v = i.value.trim(); if (!v) return; i.value = ''; autoGrow(i);
+  await openChief(chiefState && chiefState.task ? chiefState.task + '\n' + v : v);
+}
+
+// ---------------------------------------------------------------- 群聊 ---
+let groupData = null, groupKey = '';
+async function openGroup(roomId){
+  currentSession = null; currentGroup = roomId; groupData = null; groupKey = '';
+  $('group-feed').innerHTML = ''; $('group-title').textContent = ''; $('group-sub').textContent = ''; $('group-stack').innerHTML = '';
+  show('group-view');
+  await loadGroup();
+}
+async function loadGroup(){
+  if (!currentGroup) return;
+  const v = await api('/api/groups/' + encodeURIComponent(currentGroup) + '/view');
+  groupData = v;
+  const run = v.chief;
+  const key = v.messages.length + ':' + (run ? run.updated_at + run.status : '') + ':' + v.events_next;
+  if (key === groupKey) return;
+  groupKey = key;
+  renderGroup();
+}
+function botOf(id){ return (groupData.bots || []).find(b => b.id === id); }
+function stepFor(run, member){ return run ? run.steps.find(s => s.member === member) : null; }
+function renderGroup(){
+  const v = groupData, run = v.chief;
+  $('group-title').textContent = v.name;
+  $('group-sub').textContent = t('m.group.sub', { n: v.bots.length });
+  const st = $('group-stack'); st.replaceWith(Object.assign(stack(v.bots.map(b => b.mascot)), { id: 'group-stack' }));
+  // 进度
+  const prog = $('group-prog'); prog.innerHTML = '';
+  prog.classList.toggle('hidden', !run);
+  if (run) {
+    const tt = el('div', 't'); tt.appendChild(el('b', '', runProgress(run)));
+    const segs = el('div', 'segs'); run.steps.forEach(s => segs.appendChild(el('i', s.status === 'done' ? 'ok' : s.status === 'running' ? 'run' : s.status === 'failed' ? 'bad' : ''))); tt.appendChild(segs);
+    prog.appendChild(tt);
+  }
+  // @ 成员
+  const at = $('group-at'); at.innerHTML = '';
+  v.bots.forEach(b => { const x = el('button'); x.appendChild(mascot(b.mascot, 'idle', 20)); x.appendChild(document.createTextNode('@' + b.name)); x.onclick = () => { const i = $('group-input'); i.value = ('@' + b.id + ' ' + i.value.replace(/^@\S+\s*/, '')); i.focus(); }; at.appendChild(x); });
+  const feed = $('group-feed'); feed.innerHTML = '';
+  let overviewShown = false, summaryShown = false;
+  v.messages.forEach(m => {
+    if (m.sender === 'user') { feed.appendChild(el('div', 'u', m.content)); return; }
+    if (m.sender === 'chief') {
+      if (run && !overviewShown && /^分成|^Split into/.test(m.content)) { overviewShown = true; feed.appendChild(dispatchCard(run)); return; }
+      if (run && /^@[a-z]/.test(m.content)) return; // 单步分派消息由分派卡表示（@成员 + 进度）
+      if (run && run.summary && /^汇总：|^Summary:/.test(m.content)) { summaryShown = true; feed.appendChild(summaryCard(run)); return; }
+      feed.appendChild(chiefMsg(m.content)); return;
+    }
+    const b = botOf(m.sender);
+    const s = stepFor(run, m.sender);
+    const gm = el('div', 'gm'); gm.appendChild(mascot(b ? b.mascot : 'nyra', m.error ? 'idle' : (s && s.status === 'done' ? 'done' : 'idle'), 28, { label: b ? b.name : m.sender }));
+    const bd = el('div', 'bd'); const nm = el('div', 'nm', b ? b.name : m.sender);
+    if (s) nm.appendChild(el('span', '', m.error ? t('m.group.failed') : t('m.group.returned')));
+    bd.appendChild(nm); bd.appendChild(el('div', 'tx' + (m.error ? ' err' : ''), m.content)); gm.appendChild(bd); feed.appendChild(gm);
+  });
+  if (run && !overviewShown && run.status === 'running') feed.appendChild(chiefMsg(t('m.chief.starting'), 'think'));
+  // 正在处理的成员
+  const status = $('group-status'); status.innerHTML = '';
+  const cur = run && run.steps.find(s => s.status === 'running');
+  if (cur) { const b = botOf(cur.member); status.appendChild(mascot(b ? b.mascot : 'nyra', 'work', 20)); status.appendChild(document.createTextNode(t('m.group.working', { who: b ? b.name : cur.member }))); }
+  window.scrollTo(0, document.body.scrollHeight);
+}
+function dispatchCard(run){
+  const gm = el('div', 'gm'); gm.appendChild(mascot('chief', run.status === 'running' ? 'work' : 'idle', 28, { label: t('m.chief.name') }));
+  const bd = el('div', 'bd'); const nm = el('div', 'nm', t('m.chief.name')); nm.appendChild(el('span', '', t('m.group.dispatch'))); bd.appendChild(nm);
+  bd.appendChild(el('div', 'tx', t('m.group.dispatchLead', { n: run.steps.length })));
+  const asg = el('div', 'asg'); asg.id = 'dispatch-card';
+  run.steps.forEach(s => {
+    const ar = el('div', 'ar'); ar.dataset.step = s.status;
+    const key = memberMascot(run, s.member);
+    ar.appendChild(mascot(key, s.status === 'running' ? 'work' : s.status === 'done' ? 'done' : 'idle', 26));
+    const tt = el('div', 't'); const b = el('b'); b.appendChild(el('span', 'at', '@' + memberName(run, s.member))); b.appendChild(document.createTextNode(' ' + s.title)); tt.appendChild(b);
+    if (s.excerpt && s.status !== 'pending') tt.appendChild(el('small', '', s.excerpt));
+    const bar = el('div', 'bar'); const fill = el('i'); fill.style.width = s.status === 'done' || s.status === 'failed' ? '100%' : s.status === 'running' ? '50%' : '0';
+    fill.style.background = s.status === 'done' ? 'var(--ok)' : s.status === 'failed' ? 'var(--bad)' : 'var(--brand)'; bar.appendChild(fill); tt.appendChild(bar);
+    ar.appendChild(tt);
+    ar.appendChild(el('span', 'st ' + (s.status === 'done' ? 'ok' : s.status === 'failed' ? 'bad' : s.status === 'running' ? 'run' : ''), t('m.step.' + s.status)));
+    asg.appendChild(ar);
+  });
+  bd.appendChild(asg); gm.appendChild(bd); return gm;
+}
+function summaryCard(run){
+  const gm = el('div', 'gm'); gm.appendChild(mascot('chief', run.status === 'done' ? 'done' : 'idle', 28, { label: t('m.chief.name') }));
+  const bd = el('div', 'bd'); const nm = el('div', 'nm', t('m.chief.name')); nm.appendChild(el('span', '', t('m.group.summaryFor'))); bd.appendChild(nm);
+  const sum = el('div', 'sum'); sum.id = 'summary-card'; sum.appendChild(el('div', 'h', run.summary.title));
+  run.summary.lines.forEach(l => {
+    const li = el('div', 'li'); li.appendChild(mascot(memberMascot(run, l.member), 'idle', 18));
+    const sp = el('span'); const b = el('b', '', memberName(run, l.member)); b.style.fontWeight = '600'; sp.appendChild(b); sp.appendChild(document.createTextNode(t('m.colon') + l.text));
+    if (!l.ok) sp.style.color = 'var(--bad-t)';
+    li.appendChild(sp); sum.appendChild(li);
+  });
+  bd.appendChild(sum); gm.appendChild(bd); return gm;
+}
+async function sendGroup(){
+  const i = $('group-input'); const text = i.value.trim(); if (!text || !currentGroup) return;
+  i.value = ''; autoGrow(i);
+  try { await api('/api/groups/' + encodeURIComponent(currentGroup) + '/messages', { method: 'POST', body: JSON.stringify({ text, async: true }) }); toast(t('m.group.sent')); }
+  catch (e) { i.value = text; actionFailed(e, sendGroup); }
+  groupKey = ''; await loadGroup().catch(() => {});
 }
 
 // ---------------------------------------------------------------- 字体 ---
@@ -754,16 +1193,12 @@ function shouldSplash(){
   try { if (sessionStorage.getItem('nyra-splash-shown')) return false; sessionStorage.setItem('nyra-splash-shown', '1'); } catch(e){}
   return true;
 }
-function setThemeColor(c){ document.querySelectorAll('meta[name=theme-color]').forEach(m => { if (!m.dataset.orig) m.dataset.orig = m.content; m.content = c || m.dataset.orig; }); }
 function runSplash(){
   const s = $('splash');
   if (!shouldSplash()) { s.remove(); return; }
   let reduce = false; try { reduce = matchMedia('(prefers-reduced-motion: reduce)').matches; } catch(e){}
-  s.classList.remove('hidden'); s.dataset.state = 'playing'; setThemeColor('#1a1a1a');
-  const finish = () => {
-    s.dataset.state = 'done'; s.classList.add('out'); setThemeColor('');
-    setTimeout(() => s.remove(), 480);
-  };
+  s.classList.remove('hidden'); s.dataset.state = 'playing';
+  const finish = () => { s.dataset.state = 'done'; s.classList.add('out'); setTimeout(() => s.remove(), 480); };
   if (reduce) { s.classList.add('reduce'); s.innerHTML = splashSvg(SPLASH_END); setTimeout(finish, 1400); return; }
   s.classList.add('play');
   let start = null;
@@ -782,6 +1217,7 @@ function runSplash(){
 
 // ---------------------------------------------------------------- 启动 ---
 async function boot(){
+  renderConn();
   await loadInfo();
   await setTab('threads');
   await tick();
@@ -791,39 +1227,53 @@ window.addEventListener('load', async () => {
   applyI18n();
   runSplash();
   loadFonts();
+  renderConn();
   $('pair-btn').onclick = pair;
+  $('pair-code').oninput = syncCodeBoxes; $('pair-code').onfocus = syncCodeBoxes; $('pair-code').onblur = syncCodeBoxes;
+  $('pair-cloud').onclick = cloudSoon;
   $('fab').onclick = newSession;
   $('search-btn').onclick = toggleSearch;
   $('search').oninput = () => { searchQ = $('search').value.trim(); renderThreads(); };
   $('back').onclick = goHome;
-  $('kebab').onclick = toggleMenu;
-  $('menu-new').onclick = () => { $('menu').classList.add('hidden'); newSession(); };
-  $('menu-settings').onclick = () => { $('menu').classList.add('hidden'); setTab('settings'); };
+  document.querySelectorAll('.back-home').forEach(b => { b.onclick = goHome; });
+  document.querySelectorAll('.back-settings').forEach(b => { b.onclick = () => setTab('settings'); });
+  $('kebab').onclick = () => {
+    const sh = openSheet('menu');
+    [['pencil', 'm.newThread', () => { closeSheet(); newSession(); }], ['gear', 'm.tab.settings', () => { closeSheet(); setTab('settings'); }]].forEach(([ic, k, fn]) => {
+      const b = el('button', 'r2 nolead'); b.appendChild(el('span', 'tile')).appendChild(icon(ic)); b.appendChild(el('span', 'k', t(k))); b.onclick = fn; sh.appendChild(b);
+    });
+  };
   $('send-btn').onclick = sendMsg;
-  $('input').oninput = autoGrow;
-  $('auto-add').onclick = () => toast(t('m.auto.addHint'));
+  $('input').oninput = () => autoGrow($('input'));
+  $('chief-send').onclick = chiefReply;
+  $('chief-input').oninput = () => autoGrow($('chief-input'));
+  $('group-send').onclick = sendGroup;
+  $('group-input').oninput = () => autoGrow($('group-input'));
   $('disconnect').onclick = forgetDevice;
+  $('open-skills').onclick = openSkills;
+  $('cloud-row').onclick = cloudSoon;
+  $('dim').onclick = () => { if (sheetMode !== 'approval') closeSheet(); };
   document.querySelectorAll('#nav button').forEach(b => { b.onclick = () => setTab(b.dataset.tab); });
   const m = /^#pair=(\d{6})$/.exec(location.hash || '');
   if (m) {
-    $('pair-code').value = m[1];
+    $('pair-code').value = m[1]; syncCodeBoxes();
     show('pair-view');
     // 扫码打开：自动兑换一次；失败就留在配对页让用户手动输入。
     await pair();
     return;
   }
   if (!token()) { show('pair-view'); return; }
-  try { await boot(); } catch (e) { if (!$('pair-view').classList.contains('hidden')) return; $('fatal').textContent = t('m.loadFailed', { msg: e.message }); }
+  try { await boot(); } catch (e) { if (!$('pair-view').classList.contains('hidden')) return; if (e instanceof NetError) { show('threads-view'); renderOffline(); return; } $('fatal').textContent = t('m.loadFailed', { msg: e.message }); }
 });
 
-// 液态玻璃：页面滚动后顶部栏才变成玻璃（静止时与页面同色）。被动监听，只切一个 class，不逐帧改样式。
+// 页面滚动后顶部栏加一道细线（静止时与页面同色）。被动监听，只切一个 class。
 (function(){
   let on = false;
   const sync = () => {
     const s = (window.scrollY || document.documentElement.scrollTop) > 4;
     if (s === on) return; on = s;
     document.documentElement.classList.toggle('scrolled', s);
-    const hd = document.querySelector('#chat-view .hd'); if (hd) hd.classList.toggle('scrolled', s);
+    document.querySelectorAll('.cbar').forEach(h => h.classList.toggle('scrolled', s));
   };
   window.addEventListener('scroll', sync, { passive: true });
   sync();

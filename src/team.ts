@@ -768,6 +768,28 @@ memberLines,
 ].join("\n");
 }
 
+/**
+ * 真跑分派之前的共用一步（CLI `nyra team dispatch` 与网关 `POST /api/teams/:id/dispatch` 共用）：
+ * 过三道门（planTeamDispatch）→ 参谋长拿 lead 租约（拿不到直接拒绝，不抢）→ 纪元写进计划 →
+ * 生成参谋长任务文本 → 记一条 dispatched 审计。返回计划与任务文本，调用方负责起 chief Agent。
+ */
+export async function prepareTeamDispatch(home: string, idOrName: string, task: string): Promise<{ plan: TeamDispatchPlan; chiefTask: string }> {
+const plan = planTeamDispatch(home, idOrName, task);
+// 动态 import（teamLease → team，静态 import 会循环）。
+const { acquireTeamLease } = await import("./teamLease.ts");
+const leaseRes = acquireTeamLease(home, plan.team.id, plan.chief);
+if (!leaseRes.granted) throw new TeamError(`分派被拒：${leaseRes.reason}`);
+plan.epoch = leaseRes.lease.epoch;
+const chiefTask = buildChiefTask(plan);
+appendTeamAudit(home, { kind: "dispatched", team_id: plan.team.id, chief: plan.chief, members: plan.members.length});
+return { plan, chiefTask };
+}
+
+/** 对外（网关 / 手机）展示的团队：不含审计与内部字段。 */
+export function publicTeam(team: Team): { id: string; name: string; chief: string; members: string[]; status: TeamStatus; created_at: string } {
+return { id: team.id, name: team.name, chief: team.chief, members: [...team.members], status: team.status, created_at: team.created_at };
+}
+
 // ---- CLI：`nyra team <create|list|show|add|remove|dispatch|dissolve|handover>` ----
 
 export interface TeamCliInput {
@@ -1009,20 +1031,14 @@ process.stderr.write("分派需要跑 chief 模型（本命令须在 agent 运�
 return 1;
 }
 // 第 2 批 G-P1-3：真跑之前参谋长拿 lead 租约（10 分钟；拿不到 = 已有
-// 别的 lead 在任，直接拒绝，不抢）。纪元写进计划：chief 任务文本里写
-// 一行，chief Agent 构造时 teamEpoch 也传进去（delegateDetailed 校验它）。
-// 动态 import（teamLease → team，静态 import 会循环）。dry-run 不拿租约。
-const { acquireTeamLease } = await import("./teamLease.ts");
-const leaseRes = acquireTeamLease(home, plan.team.id, plan.chief);
-if (!leaseRes.granted) {
-process.stderr.write(`分派被拒：${leaseRes.reason}\n`);
-return 1;
-}
-plan.epoch = leaseRes.lease.epoch;
-const chiefTask = buildChiefTask(plan);
-emitTeamEvent(input, "team_dispatched", { team_id: plan.team.id, chief: plan.chief, members: plan.members.length});
-appendTeamAudit(home, { kind: "dispatched", team_id: plan.team.id, chief: plan.chief, members: plan.members.length});
-const output = await input.runChief(plan, chiefTask);
+// 别的 lead 在任，直接拒绝，不抢）；纪元写进计划与任务文本（prepareTeamDispatch，
+// 与网关分派共用）。dry-run 不拿租约。
+let prepared: { plan: TeamDispatchPlan; chiefTask: string };
+try { prepared = await prepareTeamDispatch(home, idOrName, task); }
+catch (err) { process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`); return 1; }
+const chiefTask = prepared.chiefTask;
+emitTeamEvent(input, "team_dispatched", { team_id: prepared.plan.team.id, chief: prepared.plan.chief, members: prepared.plan.members.length});
+const output = await input.runChief(prepared.plan, chiefTask);
 process.stdout.write(output + "\n");
 return 0;
 }

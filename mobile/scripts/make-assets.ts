@@ -12,9 +12,12 @@
 //   assets/icon-background.png  1024：纯紫 #8688ff（自适应图标背景；圆形遮罩下就是团子球）
 //   assets/splash.png           2732：#1a1a1a 深色启动图，方块头居中（= 开机动画首帧的位置与底色）
 //   assets/splash-dark.png      2732：与 splash.png 相同（本身就是深色）
-import { mkdirSync, writeFileSync } from "node:fs";
+//   www/index.html              启动器页（登录首屏 + 连家里电脑）：由 www/index.src.html 把 {{MARK}} 换成方块头、
+//                               {{MASCOT:key:state:size}} 换成丸子（src/mascots.ts）生成；测试保证两者同步。
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { MARK_PRESETS, markPng, rgbaPng } from "../../src/brandMark.ts";
+import { MARK_PRESETS, inlineMarkSvg, markPng, rgbaPng } from "../../src/brandMark.ts";
+import { mascotSvg, type MascotState } from "../../src/mascots.ts";
 import { ICON_BG, appIconPng } from "../../src/appIcon.ts";
 
 const ASSETS = join(import.meta.dir, "..", "assets");
@@ -31,6 +34,17 @@ function solidPng(size: number, hex: string): Buffer {
   return rgbaPng(size, size, rgba);
 }
 
+const WWW = join(import.meta.dir, "..", "www");
+
+/** 启动器页：模板里的方块头与丸子占位换成 SVG（id 按出现顺序编号，页面里不重复）。 */
+export function buildLauncherHtml(src = readFileSync(join(WWW, "index.src.html"), "utf-8")): string {
+  let n = 0;
+  return src
+    .replace("{{MARK}}", inlineMarkSvg("mark"))
+    .replace(/\{\{MASCOT:([a-z]+):([a-z]+):(\d+)\}\}/g, (_m, key: string, state: string, size: string) =>
+      `<span style="width:${size}px;height:${size}px">${mascotSvg(key, state as MascotState, Number(size), { id: `l${++n}` })}</span>`);
+}
+
 const outputs: Record<string, Buffer> = {
   "icon.png": appIconPng(1024, "square"),
   "icon-foreground.png": appIconPng(1024, "fg"),
@@ -45,4 +59,6 @@ if (import.meta.main) {
     writeFileSync(join(ASSETS, name), buf);
     console.log(`wrote mobile/assets/${name} (${buf.length} bytes)`);
   }
+  writeFileSync(join(WWW, "index.html"), buildLauncherHtml());
+  console.log("wrote mobile/www/index.html");
 }
