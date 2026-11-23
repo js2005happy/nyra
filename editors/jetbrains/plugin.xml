@@ -1,0 +1,26 @@
+<idea-plugin>
+  <id>com.nyra.editor</id>
+  <name>Nyra</name>
+  <version>0.5.6</version>
+  <vendor email="hello@hollowandscale.com">Nyra</vendor>
+  <description><![CDATA[
+    Nyra agent in your IDE: cursor, selection and diagnostics become agent context.
+    Talks to <code>nyra editor serve --stdio</code> over JSON lines (same protocol as the VS Code host).
+  ]]></description>
+  <depends>com.intellij.modules.platform</depends>
+  <extensions defaultExtensionNs="com.intellij">
+    <!-- 工具窗口：Nyra 问答（问答面板，回答流式回显） -->
+    <toolWindow id="Nyra" anchor="right" factoryClass="com.nyra.editor.NyraToolWindowFactory"/>
+  </extensions>
+  <actions>
+    <action id="Nyra.AskSelection" class="com.nyra.editor.AskSelectionAction"
+            text="Ask Nyra about Selection" description="Ask Nyra with the current selection as context">
+      <add-to-group group-id="EditorPopupMenu" anchor="first"/>
+      <keyboard-shortcut keymap="$default" first-keystroke="alt N"/>
+    </action>
+    <action id="Nyra.SendSnapshot" class="com.nyra.editor.SendSnapshotAction"
+            text="Sync Editor State to Nyra" description="Send the current editor snapshot to Nyra">
+      <add-to-group group-id="ToolsMenu" anchor="first"/>
+    </action>
+  </actions>
+</idea-plugin>
