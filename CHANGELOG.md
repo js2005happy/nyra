@@ -1,3 +1,7 @@
+## Unreleased — 2026-11-23 bounded HTTP POST success body (static only)
+
+- Cap successful POST response reads at 32,001 bytes (32,000 decoded maximum), with an explicit marker when remaining bytes were not read. Preserve the existing 8,000-character display truncation, HTTP status reporting, approvals and no-retry semantics. No new dependencies. Static inspection only; tests not run.
+
 ## Unreleased — 2026-11-23 HTTP POST error-body pre-read guard (static only)
 
 - Check normal-response HTTP status before reading or decoding the body; non-2xx returns the existing fixed failure without processing untrusted error content. 2xx behavior and no-retry policy unchanged. Static inspection only; tests not run.
