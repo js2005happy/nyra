@@ -427,6 +427,10 @@ hitl_takeover: ["handoff", "session", "by"],
 hitl_handback: ["handoff", "session", "by"],
 hitl_cancelled: ["handoff", "session", "by"],
 hitl_bot_held: ["session", "handoff"],
+// G-P1-35 真机电脑操作守卫进证据链：每一次电脑动作的结果与所用授权、
+// 前台窗口（截断），被拒的记原因；输入文本只记长度，绝不记内容原文。
+computer_action: ["action", "result", "grant_id", "window"],
+computer_refused: ["action", "reason"],
 session_shared: ["session", "from", "kind", "items"],
 session_recording_consented: ["session", "by", "consented"],
 // 缺口 40：通话账本进证据链——通话纪要只含数字与 id（时长、字节、帧数、

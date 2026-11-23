@@ -27,6 +27,14 @@ import { research as multiModelResearch } from "./multiModel.ts";
 import type { ProviderLike } from "./providers.ts";
 import { CDPBrowser } from "./cdpBrowser.ts";
 import { ComputerControl, computerErrorMessage } from "./computer.ts";
+// G-P1-35：电脑操作守卫层（blocklist / 可撤销授权 / 前台检查 / 活动账本）。
+// computerGuard.ts 是叶模块（只引 node 内置），tools.ts 静态 import 不成环。
+import {
+  checkComputerAction,
+  recordComputerActivity,
+  MAX_TITLE_LEN,
+  type ComputerGuardDecision,
+} from "./computerGuard.ts";
 import { runHooks } from "./hooks.ts";
 import { reviewToolCall, reviewerConfig, type ReviewerLike } from "./reviewer.ts";
 import { judgeToolCall, buildJudgeRunner, judgeConfig } from "./toolJudge.ts";
@@ -2197,6 +2205,95 @@ async function toolBrowserScreenshot(ctx: ToolContext): Promise<string> {
   return lines.join("\n");
 }
 
+/**
+ * G-P1-35：电脑写动作的守卫——审批之后、动手之前过一遍（禁按按键 /
+ * 前台窗口禁碰名单 / 授权（开了才查）/ 虚拟桌面（开了才查）/ 每分钟限流）。
+ * 不过时记 refused 账本与 computer_refused 事件，再转 ToolError。
+ * 前台窗口读不到时检查跳过（记 unknown，不静默谎称已查）；ctx 没 home
+ * 时只有内存里的默认禁碰名单生效（生产运行 agent 一律带 home）。
+ */
+async function guardComputerAction(
+  ctx: ToolContext,
+  action: "computer_click" | "computer_type" | "computer_key",
+  opts: { x?: number; y?: number; button?: string; key?: string; textLen?: number },
+): Promise<ComputerGuardDecision> {
+  const computer = getComputer(ctx);
+  const maybeActiveWindow = (computer as unknown as { activeWindow?: unknown }).activeWindow;
+  const getForegroundTitle = typeof maybeActiveWindow === "function"
+    ? async (): Promise<string | null> => {
+      try {
+        const win = await (computer as unknown as { activeWindow: () => Promise<{ title?: string } | null> }).activeWindow();
+        return win?.title ?? null;
+      } catch {
+        return null;
+      }
+    }
+    : undefined;
+  try {
+    return await checkComputerAction(ctx.home ?? null, {
+      action,
+      x: opts.x,
+      y: opts.y,
+      button: opts.button,
+      key: opts.key,
+      textLen: opts.textLen,
+      sessionId: ctx.sessionId ?? null,
+      display: process.env.DISPLAY,
+      getForegroundTitle,
+    });
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    recordComputerActivity(ctx.home ?? null, {
+      time: new Date().toISOString(),
+      action,
+      x: opts.x,
+      y: opts.y,
+      button: opts.button,
+      key: opts.key,
+      text_len: opts.textLen,
+      session_id: ctx.sessionId ?? undefined,
+      result: "refused",
+      reason,
+      foreground: "unknown",
+    });
+    try { ctx.onEvent?.("computer_refused", { action, reason: reason.slice(0, 120) }); } catch { /* ignore */ }
+    throw new ToolError(reason);
+  }
+}
+
+/** 电脑动作落账本 + 记 computer_action 事件（输入文本只记长度，不记内容）。 */
+function logComputerAction(
+  ctx: ToolContext,
+  action: "computer_click" | "computer_type" | "computer_key" | "computer_screenshot" | "computer_windows",
+  result: "ok" | "error",
+  decision: ComputerGuardDecision | null,
+  extra: { x?: number; y?: number; button?: string; key?: string; textLen?: number } = {},
+): void {
+  const windowTitle = (decision?.foregroundTitle ?? "").slice(0, MAX_TITLE_LEN);
+  recordComputerActivity(ctx.home ?? null, {
+    time: new Date().toISOString(),
+    action,
+    x: extra.x,
+    y: extra.y,
+    button: extra.button,
+    key: extra.key,
+    text_len: extra.textLen,
+    window: windowTitle || undefined,
+    grant_id: decision?.grantId,
+    session_id: ctx.sessionId ?? undefined,
+    result,
+    foreground: decision ? (decision.foregroundKnown ? "known" : "unknown") : undefined,
+  });
+  try {
+    ctx.onEvent?.("computer_action", {
+      action,
+      result,
+      grant_id: decision?.grantId ?? "",
+      window: windowTitle,
+    });
+  } catch { /* ignore */ }
+}
+
 async function toolComputerScreenshot(ctx: ToolContext): Promise<string> {
   await checkApproval(ctx, "computer_screenshot", tr("sum.screenShot"));
   const computer = getComputer(ctx);
@@ -2204,6 +2301,7 @@ async function toolComputerScreenshot(ctx: ToolContext): Promise<string> {
   try { png = await computer.screenshot(); }
   catch (err: unknown) { throw new ToolError(computerErrorMessage(err)); }
   const path = saveScreenshotPng(ctx, "computer_screenshot", png);
+  logComputerAction(ctx, "computer_screenshot", "ok", null);
   return (
     `已截屏并保存：${path}（PNG，${png.length} 字节）。`
     + "模型暂不能直接看图（视觉接线待接），坐标请来自用户或 "
@@ -2213,25 +2311,40 @@ async function toolComputerScreenshot(ctx: ToolContext): Promise<string> {
 
 async function toolComputerClick(ctx: ToolContext, x: number, y: number, button = "left"): Promise<string> {
   await checkApproval(ctx, "computer_click", tr("sum.click", { x, y, button }));
+  const decision = await guardComputerAction(ctx, "computer_click", { x, y, button });
   const computer = getComputer(ctx);
   try { await computer.click(x, y, button); }
-  catch (err: unknown) { throw new ToolError(computerErrorMessage(err)); }
+  catch (err: unknown) {
+    logComputerAction(ctx, "computer_click", "error", decision, { x, y, button });
+    throw new ToolError(computerErrorMessage(err));
+  }
+  logComputerAction(ctx, "computer_click", "ok", decision, { x, y, button });
   return `已点击（${x}, ${y}，${button}键）`;
 }
 
 async function toolComputerType(ctx: ToolContext, text: string): Promise<string> {
   await checkApproval(ctx, "computer_type", tr("sum.type", { text: text.slice(0, 60) }));
+  const decision = await guardComputerAction(ctx, "computer_type", { textLen: text.length });
   const computer = getComputer(ctx);
   try { await computer.typeText(text); }
-  catch (err: unknown) { throw new ToolError(computerErrorMessage(err)); }
+  catch (err: unknown) {
+    logComputerAction(ctx, "computer_type", "error", decision, { textLen: text.length });
+    throw new ToolError(computerErrorMessage(err));
+  }
+  logComputerAction(ctx, "computer_type", "ok", decision, { textLen: text.length });
   return `已输入 ${text.length} 个字符`;
 }
 
 async function toolComputerKey(ctx: ToolContext, key: string): Promise<string> {
   await checkApproval(ctx, "computer_key", tr("sum.key", { key }));
+  const decision = await guardComputerAction(ctx, "computer_key", { key });
   const computer = getComputer(ctx);
   try { await computer.press(key); }
-  catch (err: unknown) { throw new ToolError(computerErrorMessage(err)); }
+  catch (err: unknown) {
+    logComputerAction(ctx, "computer_key", "error", decision, { key });
+    throw new ToolError(computerErrorMessage(err));
+  }
+  logComputerAction(ctx, "computer_key", "ok", decision, { key });
   return `已按键：${key}`;
 }
 
@@ -2241,6 +2354,7 @@ async function toolComputerWindows(ctx: ToolContext): Promise<string> {
   let found: { id: string; title: string; x?: number; y?: number; width?: number; height?: number }[];
   try { found = await computer.windows(); }
   catch (err: unknown) { throw new ToolError(computerErrorMessage(err)); }
+  logComputerAction(ctx, "computer_windows", "ok", null);
   if (!found.length) return "当前没有可见窗口";
   const lines = found.map((item) => {
     const parts = [`[${item.id}] ${item.title}`];

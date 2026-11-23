@@ -585,6 +585,17 @@ export class ComputerControl {
     return this.macosWindows();
   }
 
+  /**
+   * 当前前台窗口（id + 标题）；拿不到时返回 null（没有前台窗口、
+   * 后端报不出来，都算 null，调用方按“前台未知”处理，不抛错）。
+   * 守卫层（computerGuard.ts）用它拦禁碰窗口。
+   */
+  async activeWindow(): Promise<WindowInfo | null> {
+    if (this.backend === "x11") return this.x11ActiveWindow();
+    if (this.backend === "windows") return this.windowsActiveWindow();
+    return this.macosActiveWindow();
+  }
+
   // ---- 内部：带超时的命令执行 ----
 
   private async run(
@@ -703,6 +714,23 @@ export class ComputerControl {
       }
     }
     return found;
+  }
+
+  private async x11ActiveWindow(): Promise<WindowInfo | null> {
+    let id: string;
+    try {
+      id = (await this.x11Run(["xdotool", "getactivewindow"])).toString("utf-8").trim();
+    } catch {
+      return null;
+    }
+    if (!id) return null;
+    let title = "";
+    try {
+      title = (await this.x11Run(["xdotool", "getwindowname", id])).toString("utf-8").trim();
+    } catch {
+      // 标题读不到也认这个窗口（标题空着，守卫按未知处理）。
+    }
+    return { id, title };
   }
 
   private async x11Screenshot(): Promise<Buffer> {
@@ -871,6 +899,30 @@ export class ComputerControl {
     return found;
   }
 
+  private async macosActiveWindow(): Promise<WindowInfo | null> {
+    let out: string;
+    try {
+      out = await this.macosRun([
+        'tell application "System Events"',
+        "set p to first application process whose frontmost is true",
+        "try",
+        'return (name of p) & "|" & (name of window 1 of p)',
+        "on error",
+        'return (name of p) & "|"',
+        "end try",
+        "end tell",
+      ]);
+    } catch {
+      return null;
+    }
+    const idx = out.indexOf("|");
+    if (idx === -1) return null;
+    const app = out.slice(0, idx).trim();
+    const title = out.slice(idx + 1).trim();
+    if (!app) return null;
+    return { id: app, title: title || app };
+  }
+
   private async macosScreenshot(): Promise<Buffer> {
     const dir = mkdtempSync(joinPath(tmpdir(), "nyra-screenshot-"));
     const file = joinPath(dir, "screenshot.png");
@@ -967,6 +1019,8 @@ export class ComputerControl {
       '  [DllImport("user32.dll")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);',
       '  [DllImport("user32.dll")] public static extern int GetSystemMetrics(int nIndex);',
       '  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out NyraRECT lpRect);',
+      '  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();',
+      '  [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);',
       '  [DllImport("user32.dll")] public static extern uint SendInput(uint nInputs, NyraINPUT[] pInputs, int cbSize);',
       "  public static void TypeText(string text) {",
       "    NyraINPUT[] inputs = new NyraINPUT[text.Length * 2];",
@@ -1082,6 +1136,28 @@ export class ComputerControl {
       });
     }
     return found;
+  }
+
+  private async windowsActiveWindow(): Promise<WindowInfo | null> {
+    const out = await this.windowsRun([
+      ...this.windowsPreamble(),
+      "$hwnd = [NyraWin32]::GetForegroundWindow()",
+      "$sb = New-Object System.Text.StringBuilder(512)",
+      "[NyraWin32]::GetWindowText($hwnd, $sb, 512) | Out-Null",
+      "\"$hwnd|\" + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($sb.ToString()))",
+    ]);
+    const line = out.trim();
+    const idx = line.indexOf("|");
+    if (idx === -1) return null;
+    const id = line.slice(0, idx).trim();
+    if (!id || id === "0") return null;
+    let title = "";
+    try {
+      title = Buffer.from(line.slice(idx + 1).trim(), "base64").toString("utf-8");
+    } catch {
+      return null;
+    }
+    return { id, title };
   }
 
   private async windowsScreenshot(): Promise<Buffer> {
