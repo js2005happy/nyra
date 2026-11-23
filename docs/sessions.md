@@ -21,12 +21,28 @@ nyra session leave <会话> [--who <身份>]    离开会话（任何一方可�
 nyra session delegate <会话> --to <成员> --task <任务> --accept <标准> [--accept <标准> ...] [--from <成员>]
                                             会内委派（验收标准落成缺口 29 的交付契约；交付走缺口 12 的交接）
 nyra session accept <会话> <委派id> [--by <身份>]    被委派方接下任务
-nyra session complete <会话> <委派id> [--by <身份>] [--note <产物摘要>]   被委派方交活
+nyra session verify <会话> <委派id>    看一条委派的验收状态（只读：契约 + 逐项结论，不改状态）
+nyra session complete <会话> <委派id> [--by <身份>] [--note <产物摘要>] [--confirm <检查编号> ...] [--fail <检查编号> ...]
+                                            被委派方交活（交活即按契约跑验收：验收标准须逐项确认，通过用 --confirm、不通过用 --fail，编号见 verify；全通过才标 completed，有一项不通过就标 rejected）
 nyra session share <会话> --kind <种> --label <标签> [--kind <种> --label <标签> ...] [--to <成员>] [--run <运行ID>] [--from <成员>]
                                             会话内共享（只认 product / context / evidence / note）
 nyra session frame <会话> --hash <12位指纹> [--from <成员>]   扇出一帧（本地扇出模型，只记指纹与收件人）
 nyra session record <会话> --consent|--revoke|--status [--who <身份>]   录制同意（全体在会成员同意才允许录制）
 nyra session end <会话> --yes               结束会话（只有机主能结束；帧记录清空，画面默认不留存）
+```
+
+## 交活验收（缺口 39 第二批）
+
+委派时落成的契约不再只是记下来：交活就是跑一次验收。
+
+- 验收标准是 manual 检查项（编号 `a1`、`a2`……，`nyra session verify <会话> <委派id>` 能看到每项的编号、文字与当前结论，不改状态）。
+- 交活的人须逐项确认：`--confirm <编号>` 算通过，`--fail <编号>` 算不通过；全部检查项都要有结论才跑验收，缺一项就拒绝交活、什么都不改（委派还是 accepted，契约不动）。
+- 结论 accepted 时委派标 `completed`，rejected 时标 `rejected`（可以重新委派再做，不静默吞掉失败）；验收经过与结论记进证据链（`session_delegation_verified` 事件，只记委派 id、结论与通过项数）与 `peer-audit.jsonl`。
+- `nyra session show` 里每条委派都显示验收状态（契约状态 + 最近一次几项通过）。
+
+```sh
+nyra session verify <会话> <委派id>
+nyra session complete <会话> <委派id> --by <身份> --note <产物摘要> --confirm a1 --confirm a2
 ```
 
 ## 安全口径（照 Teamly 报告 §4.2）
@@ -65,4 +81,4 @@ nyra session join-decline <会话 id> <请求 id> --yes
 - 没有真 SFU 服务器、没有原生 WebRTC 栈（见缺口 37 的诚实边界）、不拨真实电话、不声称端到端加密；“SFU 转发”是本地确定性扇出模型（一方发帧，按成员表扇出，有记录、可审计），真实多方媒体协商是后续批次的事。
 - 媒体面未加密，别当端到端加密用；本机沙箱禁 UDP sendto，媒体传输只在回环/假媒体上验过。
 - 真实对端未接通过，只在假对端（本机 HTTP MCP）与本地确定性检查上验过委派交付；真 API 未跑通，只在假 provider 上验过；Windows/macOS 真机未验证。
-- 委派的验收目前只记契约（manual 检查项），按契约跑确定性验收是后续批次的事；录制本身的仪表与成本账（缺口 40）本批没做。
+- 录制本身的仪表与成本账是缺口 40 的事（第一批已做，见 `docs/call-ledger.md`）。

@@ -135,8 +135,8 @@
 | `nyra circle <create\|list\|show\|invite\|revoke\|delete\|bind\|unbind\|owner\|check\|bindings>` | 信任圈与跨实例准入：谁能给 agent 发任务（默认全封闭，圈外消息网关直接丢弃；详见 `docs/circles.md`） |
 | `nyra org <create\|list\|show\|add\|remove\|role\|delete\|check>` | 组织与团队 workspace：组织/成员/角色 admin/member/viewer（机主是超级管理员；详见 `docs/orgs.md`） |
 | `nyra org <share\|shared\|unshare\|grant-write\|revoke-write\|grants\|learnings\|workspace\|file-read\|cross-access\|catalog\|tasks\|task-add\|violations\|isolation\|memory>` | 共享 Bot（默认只读、写须主人接受）、租户隔离（任务与记忆带 org_id 归属、文件走组织工作区）、组织内私有目录（详见 `docs/orgs.md`） |
-| `nyra session <create\|list\|show\|join\|leave\|delegate\|accept\|complete\|share\|frame\|record\|end\|join-request\|join-approve\|join-decline\|join-list>` | 跨 agent 联合会话：多人多 agent 视频会（本地扇出模型），会内委派 + 共享任务产物（allowlist），画面默认不留存、录制须全体同意；第 2 批 G-P1-5：好友进会要批（待批请求，批准时重查准入闸，详见 `docs/sessions.md`） |
-| `nyra call <ledger\|show <通话 id>\|summary>` | 通话成本与隐私仪表：每通电话的三本账（传输/媒体/token，本地与云端分开记）+ 录制仪表 + 通话纪要进证据链（详见 `docs/call-ledger.md`） |
+| `nyra session <create\|list\|show\|join\|leave\|delegate\|accept\|verify\|complete\|share\|frame\|record\|end\|join-request\|join-approve\|join-decline\|join-list>` | 跨 agent 联合会话：多人多 agent 视频会（本地扇出模型），会内委派 + 共享任务产物（allowlist），画面默认不留存、录制须全体同意；第 2 批 G-P1-5：好友进会要批（待批请求，批准时重查准入闸）；39-40 后续：交活即按契约跑验收（`verify` 看逐项结论，`complete` 须 `--confirm`/`--fail` 逐项确认，全通过才标 completed，详见 `docs/sessions.md`） |
+| `nyra call <ledger\|show <通话 id>\|summary [--by-person]>` | 通话成本与隐私仪表：每通电话的三本账（传输/媒体/token，本地与云端分开记）+ 录制仪表 + 通话纪要进证据链；39-40 后续：`summary --by-person` 按人分摊（费用与 token 按参与人数平分，时长按各人实际在场时间，录制按各人同意且在场的时间，详见 `docs/call-ledger.md`） |
 | `nyra budget <list\|show\|reserve\|settle\|release\|strict>` | 并发预算预留：模型调用前先预留额度、超上限不发请求；金额未知默认暂停等人工处理（详见 `docs/budget.md`） |
 | `nyra agui <register\|list\|show\|link\|connect\|disconnect\|send\|exec\|accept-write\|revoke-write\|a2a>` | 协议中立接入：接任意 AG-UI endpoint 当 Bot（只读先行，写操作须机主显式接受），A2A 复用名片 + 交接（详见 `docs/agui.md`） |
 | `nyra screen <watch\|activity\|status\|takeover\|handover> <电脑 id>` | 缺口 50：只读看屏（实时画面 + 活动列表，帧指纹不记帧内容）与接管（take the wheel，须确认；接管期间 Bot 暂停、交还后从挂起点继续，全程记审计）；画面里密码/验证码/卡号自动打码（详见 `docs/bot-screen.md`） |
