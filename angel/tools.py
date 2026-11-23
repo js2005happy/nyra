@@ -809,6 +809,14 @@ def _tool_shell(
             ctx.backend.run_command(command, cwd=str(resolved_cwd), timeout=timeout)
         ) or "（无输出）"
 
+def _decode_untrusted_http_text(payload: bytes, charset: str) -> str:
+    """Keep bounded HTTP text available for invalid server codec labels."""
+    try:
+        return payload.decode(charset, errors="replace")
+    except (LookupError, TypeError, ValueError):
+        return payload.decode("utf-8", errors="replace")
+
+
 def _tool_web_fetch(ctx: ToolContext, url: str) -> str:
     try:
         request = urllib.request.Request(url, headers={"User-Agent": "Angel/0.2"})
@@ -817,7 +825,7 @@ def _tool_web_fetch(ctx: ToolContext, url: str) -> str:
             byte_limit = MAX_OUTPUT_CHARS * 4
             payload = response.read(byte_limit + 1)
             clipped = len(payload) > byte_limit
-            text = payload[:byte_limit].decode(charset, errors="replace")
+            text = _decode_untrusted_http_text(payload[:byte_limit], charset)
         cleaned = re.sub(r"<[^>]+>", " ", text)
         cleaned = re.sub(r"\s+", " ", cleaned).strip()
         if clipped:
@@ -905,7 +913,7 @@ def _fetch_search_page(url: str) -> str:
         payload = response.read(byte_limit + 1)
         if len(payload) > byte_limit:
             raise ToolError("搜索页面超过读取上限")
-        return payload.decode(charset, errors="replace")
+        return _decode_untrusted_http_text(payload, charset)
 
 
 def _tool_web_search(ctx: ToolContext, query: str, count: int = 8) -> str:
