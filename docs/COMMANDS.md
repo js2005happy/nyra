@@ -99,6 +99,7 @@
 | `nyra goal <create\|list\|show\|add-item\|start-item\|verify-item\|complete\|pause\|resume\|cancel\|instruct\|link\|split>` | GROK-5（缺口 26/30 深化）：长目标对象——目标陈述 + 动态进度清单 + 逐项验证，全部通过才标完成；中途加指令不丢目标，可暂停/恢复/取消；恢复前重验证；目标可拆成任务板任务（详见 `docs/goal-object.md`） |
 | `nyra trust <register\|list\|show\|evidence\|promote\|demote\|review\|check>` | GROK-6（缺口 43 治理深化）：信任阶梯——新 agent / 新技能默认只读，攒够 N 次连续成功且零违规才升一级（只读 → 起草 → 发送 → 购买）；每次记成功有概率被随机抽查，抽中须复核才计入；降级随时可做（详见 `docs/trust-ladder.md`） |
 | `nyra workflow <import\|list\|show\|run\|dry-run\|resume\|trial\|activate\|remove\|verify\|triggers>` | 缺口 25 其余形态：声明式可复用工作流——三种执行形态（固定图 / 协调者 / 动态）+ 审批节点（复用审阅队列）+ dry-run；激活前须真实数据试跑 + 人工确认；协调者每轮只调一次模型做决定，简单判断仍走 if；触发器执行（定时 cron 与事件，默认关，`triggers enable --yes` 开启，只跑 active 的工作流，详见 `docs/workflow.md`） |
+| `nyra checkpoint <list\|show\|history\|update\|replay\|store>` | 步级检查点 + 时间旅行（G-P1-40）：每步存状态快照，回到某一步改值重放后续步骤；只有 fixed 形态能重放，花钱/审批的步骤须 `--yes`（详见 `docs/step-checkpoints.md`） |
 | `nyra template <list\|show\|builtin\|import\|trial\|activate\|run\|dry-run\|remove\|publish\|install>` | 缺口 46：业务流程模板库——流程 DSL + 连接器 + 验收标准 + 试跑数据，激活前须真实数据试跑 + 人工确认；首批 5 个模板（店铺订单异常跟进打头），随机器人市场分发（详见 `docs/templates.md`） |
 | `nyra script <check\|preauth>` | Pi Bot 借鉴第 1 条：脚本内容判定 + 摘要预授权——纯脚本（白名单静态分析）走快路径不用每次问，例行里的脚本按内容摘要 `script:<SHA-256>` 钉死，内容一改授权自动失效；判定结果写进证据链与审计（详见 `docs/script-purity.md`） |
 | `nyra handover <contract\|checkers>` | Pi Bot 借鉴第 2 条：交接契约的程序化验收——交付物 + 验收项 + 修正轮次上限；验收是程序核对，不调模型，不过打回、轮次用完停下等人；打回与停下记一次信任阶梯违规；结果进证据链与审计（详见 `docs/handover-contract.md`） |

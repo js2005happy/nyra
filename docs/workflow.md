@@ -230,6 +230,14 @@ DSL 用自写的确定性 YAML 子集解析器（无依赖），只认 block 风
 - **总开关默认关**：`nyra workflow triggers enable --yes` 才开（须显式批准）；`status` 看开关与最近触发记录；`disable` 关闭；`run` 手动跑一轮到点触发器。关着时定时与事件触发全部跳过，只记 skipped。
 - **cron 成熟语义（G-P1-38）**：漏跑补跑（默认 once 只补跑一次，窗口默认 120 分钟）、配额 hold（成本上限触顶时挂起并打 `quota_hold_until` 戳）、事故账（`nyra cron incidents` 查漏跑 / 补跑 / hold / 失败），详见 `docs/cron-maturity.md`；策略与 hold 状态用 `nyra cron policy` / `nyra cron hold` 看。
 
+## 步级检查点与时间旅行（G-P1-40）
+
+旧检查点（`src/checkpoints.ts`）是写文件前的快照，`/rewind` 恢复文件；本批的步级检查点是另一套——每步的状态快照，两者不混用、不互相覆盖。
+
+- 每步跑完自动记一条检查点（步骤 id、序号、状态摘要、输入指纹；不记大文件内容与密钥）；store 三档 memory / file（默认）/ remote HTTP，`nyra checkpoint store` 看与改。
+- `nyra checkpoint list|show|history` 查；`nyra checkpoint update <运行 id> <步骤 id> --set 键=值` 改某一步的值，后面的检查点全部作废（作废的不能再改、不能再重放）。
+- `nyra checkpoint replay <运行 id> <步骤 id> [--dry-run] [--yes]` 从那一步重放：分叉新建一条运行（`replayedFrom` 记来源），已跑过的步骤不重跑；只有 fixed 形态能重放，for_each 的检查点重放时整段循环重跑；后面有调模型 / 审批的步骤时须 `--yes`，审批重放时重新问人；月度硬顶与 `--max-cost` 照常。详见 `docs/step-checkpoints.md`。
+
 ## 诚实边界
 
 - dry-run 只能枚举确定性节点的动作；模型节点的动作无法枚举。协调者/动态形态下计划步骤只是候选，新步骤的动作同样无法枚举。
