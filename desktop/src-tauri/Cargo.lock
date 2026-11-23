@@ -2226,7 +2226,7 @@ dependencies = [
 
 [[package]]
 name = "nyra-desktop"
-version = "0.5.8"
+version = "0.5.9"
 dependencies = [
  "serde",
  "serde_json",
