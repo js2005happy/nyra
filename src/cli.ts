@@ -217,10 +217,10 @@ nyra features                   功能开关列表（CLI > config > 默认）
 nyra tools                      工具集体检：每轮 schema 成本与裁剪建议
 nyra config export|import|explain  设置导出/导入/解释（默认剔除密钥）
 nyra vault <...>                凭据保险箱（加密存储，权限 0600）
-nyra gmail <status|auth|search|read|send|labels|label|mark-read|mark-unread|trash|attachment|revoke>   Gmail 原生连接器：读信 / 回复 / 代发草稿 / 附件 / 标签 / 已读 / 回收站
-nyra shopify <auth|status|products|product|orders|order|inventory>   Shopify 原生连接器（只读）：查商品 / 订单 / 库存（详见 docs/connectors.md）
-nyra slack <auth|status|channels|history|send|card>   Slack 原生连接器：读频道 / 消息、发消息（须显式批准）、发审批卡（详见 docs/connectors.md）
-nyra connector <status|list|approve|revoke|auth|install|uninstall|usage>   连接器目录：安装 / 一键授权 / 撤销 / 用量（详见 docs/connectors.md）
+nyra gmail <status|auth|search|read|send|drafts|send-draft|labels|label|mark-read|mark-unread|trash|attachment|revoke>   Gmail 原生连接器：读信 / 回复 / 代发草稿 / 草稿列表与发送草稿 / 附件 / 标签 / 已读 / 回收站
+nyra shopify <auth|status|products|product|orders|order|fulfill|inventory>   Shopify 原生连接器（只读）：查商品 / 订单 / 订单履约核查 / 库存（详见 docs/connectors.md）
+nyra slack <auth|status|channels|history|send|card|callback>   Slack 原生连接器：读频道 / 消息、发消息（须显式批准）、发审批卡、按钮回调回写审批桥（详见 docs/connectors.md）
+nyra connector <status|list|approve|revoke|auth|install|uninstall|usage|flows|flow>   连接器目录：安装 / 一键授权 / 撤销 / 用量 / 业务流程（详见 docs/connectors.md）
 nyra mcp server <status|enable|disable|allow-writes-on|allow-writes-off>   对外 MCP 服务开关：别的 agent 经网关 POST /mcp 调记忆与任务（默认关闭，详见 docs/mcp.md）
 nyra peer <status|enable|disable|list|auth|ask|handoff|card|code|add|request|accept|friends|block|circle|share|grant|proposal|branch|discover|token>   对端协作：问别的 Nyra 实例、交接运行上下文、名片加好友、带 scope 可吊销的 grant、对方写操作提议、外来分支合入、公开发现与 per-peer token、名片 JWS 签名（默认关闭，详见 docs/peer.md 与 docs/peer-discovery.md）
 nyra circle <create|list|show|invite|revoke|delete|bind|unbind|owner|check|bindings>   信任圈：谁能给 agent 发任务（默认全封闭，圈外消息网关直接丢弃，详见 docs/circles.md）
@@ -360,10 +360,10 @@ nyra features                  feature switches (CLI > config > default)
 nyra tools                     tool-pool health: per-turn schema cost and trim advice
 nyra config export|import|explain  settings export/import/explain (secrets stripped)
 nyra vault <...>               credential vault (encrypted at rest, mode 0600)
-nyra gmail <status|auth|search|read|send|labels|label|mark-read|mark-unread|trash|attachment|revoke>   native Gmail connector: read / reply / draft / attachments / labels / read-state / trash
-nyra shopify <auth|status|products|product|orders|order|inventory>   native Shopify connector (read-only): products / orders / inventory (see docs/connectors.md)
-nyra slack <auth|status|channels|history|send|card>   native Slack connector: read channels / messages, send messages (explicit approval required), post approval cards (see docs/connectors.md)
-nyra connector <status|list|approve|revoke|auth|install|uninstall|usage>   connector directory: install / one-click auth / revoke / usage (see docs/connectors.md)
+nyra gmail <status|auth|search|read|send|drafts|send-draft|labels|label|mark-read|mark-unread|trash|attachment|revoke>   native Gmail connector: read / reply / draft / list and send drafts / attachments / labels / read-state / trash
+nyra shopify <auth|status|products|product|orders|order|fulfill|inventory>   native Shopify connector (read-only): products / orders / order fulfillment check / inventory (see docs/connectors.md)
+nyra slack <auth|status|channels|history|send|card|callback>   native Slack connector: read channels / messages, send messages (explicit approval required), post approval cards, button callbacks resolve approvals (see docs/connectors.md)
+nyra connector <status|list|approve|revoke|auth|install|uninstall|usage|flows|flow>   connector directory: install / one-click auth / revoke / usage / business flows (see docs/connectors.md)
 nyra mcp server <status|enable|disable|allow-writes-on|allow-writes-off>   external MCP server switch: other agents call Nyra memory and tasks via gateway POST /mcp (off by default, see docs/mcp.md)
 nyra peer <status|enable|disable|list|auth|ask|handoff|card|code|add|request|accept|friends|block|circle|share|grant|proposal|branch|discover|token>   peer collaboration: ask another Nyra instance, hand off run context, agent card and friends, scoped revocable grants, peer write proposals, foreign branch merges, public discovery with per-peer tokens, agent card JWS signatures (off by default, see docs/peer.md and docs/peer-discovery.md)
 nyra circle <create|list|show|invite|revoke|delete|bind|unbind|owner|check|bindings>   trust circles: who may send tasks to the agent (closed by default, out-of-circle messages are dropped at the gateway, see docs/circles.md)
@@ -4330,6 +4330,8 @@ export async function handleVault(argv: string[], home: string, input?: VaultInp
 export interface GmailCliInput {
   passwords?: string[];
   secrets?: string[];
+  /** 测试注入：假 Gmail API（Shopify/Slack handler 同款；生产永远用全局 fetch）。 */
+  fetchFn?: (url: string, init?: RequestInit) => Promise<Response>;
 }
 
 /** 缺口 6：nyra gmail —— Gmail 连接器的终端入口（状态/授权/搜索/读信/发信/吊销）。 */
@@ -4341,6 +4343,8 @@ export async function handleGmail(argv: string[], home: string, input?: GmailCli
   + "  nyra gmail read <id>                           读一封邮件全文\n"
   + "  nyra gmail send --to <邮箱> --subject <主题> --body <正文> [--cc <邮箱>] [--bcc <邮箱>] [--thread <id>] [--draft] [--yes]\n"
   + "                                                 发一封邮件（默认先展示确认；--yes 跳过确认；--draft 只存草稿）\n"
+  + "  nyra gmail drafts                              列出草稿（只读；主题与收件人用 send-draft 前的确认里展示）\n"
+  + "  nyra gmail send-draft <草稿id> [--yes]         发一封草稿（写操作，须显式确认并过红线；草稿不完整不发）\n"
   + "  nyra gmail labels                              列出标签（只读）\n"
   + "  nyra gmail label <id> <标签id> [--yes]         给邮件加标签（写操作，须显式确认）\n"
   + "  nyra gmail unlabel <id> <标签id> [--yes]       给邮件去标签（写操作，须显式确认）\n"
@@ -4355,7 +4359,7 @@ export async function handleGmail(argv: string[], home: string, input?: GmailCli
     startLoopbackCallbackServer, getGmailStatus, hasGmailTokensEntry, gmailAuthStateLabel,
     revokeRefreshToken, formatGmailSearchResults, formatGmailMessage,
     buildGmailSendEvidence, GmailApiTransport,
-    downloadGmailAttachment, formatGmailAttachmentOutcome, formatGmailLabels,
+    downloadGmailAttachment, formatGmailAttachmentOutcome, formatGmailLabels, formatGmailDrafts,
     gmailWriteRefusal, GMAIL_WRITE_COMMANDS,
     GMAIL_VAULT_CLIENT_ENTRY, GMAIL_VAULT_TOKENS_ENTRY, GmailError,
   } = await import("./connectors/gmail.ts");
@@ -4640,6 +4644,58 @@ export async function handleGmail(argv: string[], home: string, input?: GmailCli
       process.stdout.write(draft ? `已存为草稿（草稿 id：${result.id}）。\n` : `已发送（邮件 id：${result.id}）。\n`);
       return 0;
     }
+    if (cmd === "drafts") {
+      const transport = createGmailTransport(home, loadConfig(home), { ...(input?.fetchFn ? { fetchFn: input.fetchFn } : {}) });
+      const drafts = await transport.listDrafts();
+      process.stdout.write(formatGmailDrafts(drafts) + "\n");
+      return 0;
+    }
+    if (cmd === "send-draft") {
+      const draftId = argv[1];
+      if (!draftId) {
+        process.stderr.write("用法：nyra gmail send-draft <草稿id> [--yes]\n");
+        return 2;
+      }
+      const transport = createGmailTransport(home, loadConfig(home), { ...(input?.fetchFn ? { fetchFn: input.fetchFn } : {}) });
+      const draft = await transport.getDraft(draftId);
+      if (!draft.to.trim() || !draft.subject.trim()) {
+        process.stderr.write(`草稿 ${draftId} 不完整（收件人或主题为空），不发。\n`);
+        return 1;
+      }
+      if (!argv.includes("--yes")) {
+        process.stdout.write(`收件人：${draft.to}\n主题：${draft.subject}\n`);
+        if (draft.snippet) process.stdout.write(`摘要：${draft.snippet}\n`);
+        const ans = (await ask("确认发送这封草稿？[y/N] ")).trim().toLowerCase();
+        if (ans !== "y" && ans !== "yes") {
+          process.stdout.write("已取消，未发送。\n");
+          return 1;
+        }
+      }
+      // 与 send 同款门：发消息是永远须人批档（确认已满足），收紧到永远禁做时即使已批准也拒绝。
+      const gmailRedline = reviewBusinessAction({ home, connector: "gmail", action: "send_message", approved: true });
+      if (gmailRedline.decision === "BLOCK") {
+        try {
+          appendBusinessRedlineAudit(home, { kind: "blocked", connector: "gmail", action: "send_message", tier: "never", via: "cli-gmail-send-draft" });
+        } catch { /* 审计落盘失败不破坏拦截 */ }
+        process.stderr.write(`红线拦截：${gmailRedline.reason}\n`);
+        return 1;
+      }
+      const result = await transport.sendDraft(draftId);
+      try {
+        new EvidenceStore(join(home, "evidence"), "gmail").save("gmail_send", `gmail://${result.id}`, [
+          "工具：gmail_send（草稿发送）",
+          `收件人：${draft.to}`,
+          `主题：${draft.subject}`,
+          ...(draft.threadId ? [`回复原串 threadId：${draft.threadId}`] : []),
+          "批准：用户经终端命令（nyra gmail send-draft）批准（full 模式）",
+          `草稿 id：${draftId}`,
+          `邮件 id：${result.id}`,
+          "正文：发送前未读取（以 Gmail 服务端草稿原文为准）。",
+        ].join("\n"));
+      } catch { /* 证据落盘失败不破坏发送结果 */ }
+      process.stdout.write(`已发送草稿 ${draftId}（邮件 id：${result.id}）。\n`);
+      return 0;
+    }
     if (cmd === "revoke") {
       if (!hasGmailTokensEntry(home)) {
         process.stdout.write("Gmail 未授权，无需吊销。\n");
@@ -4697,6 +4753,8 @@ export async function handleConnector(argv: string[], home: string): Promise<num
   + "  nyra connector install <连接器>                  安装到目录：把连接器登记进你的目录（只装声明里有的；试点装不了）\n"
   + "  nyra connector uninstall <连接器> [--yes]        从目录卸载：同时撤销授权，访问立即断\n"
   + "  nyra connector usage [连接器]                    用量：每个连接器的调用次数（总次数、分操作次数、最后调用时间）\n"
+  + "  nyra connector flows                             列出全部业务流程（每条一条真实业务流程 + 验收标准）\n"
+  + "  nyra connector flow <流程id> [参数]              跑一条业务流程：slack-approval-roundtrip / shopify-order-fulfillment / gmail-draft-send（--json 输出结论）\n"
   + "详见 docs/connectors.md";
   const reg = await import("./connectors/registry.ts");
   const dirMod = await import("./connectors/directory.ts");
@@ -4986,6 +5044,90 @@ export async function handleConnector(argv: string[], home: string): Promise<num
       showOne(target);
       return 0;
     }
+    if (cmd === "flows") {
+      const { listConnectorFlows } = await import("./connectors/flows.ts");
+      for (const f of listConnectorFlows()) {
+        process.stdout.write(`${f.id}（${f.connector}）：${f.title}\n  ${f.description}\n  步骤：${f.steps.join(" → ")}\n  验收：${f.acceptance.join("、")}\n`);
+      }
+      return 0;
+    }
+    if (cmd === "flow") {
+      const flowId = argv[1];
+      if (!flowId) {
+        process.stderr.write("用法：nyra connector flow <流程id> [参数]（nyra connector flows 列出能用的流程）\n");
+        return 2;
+      }
+      const flagValue = (name: string): string | undefined => {
+        const idx = argv.indexOf(name);
+        return idx >= 0 && argv[idx + 1] !== undefined ? argv[idx + 1] : undefined;
+      };
+      const { runConnectorFlow, getConnectorFlow, formatFlowResult } = await import("./connectors/flows.ts");
+      const def = getConnectorFlow(flowId);
+      if (!def) {
+        process.stderr.write(`未知业务流程：${flowId}（nyra connector flows 列出能用的流程）\n`);
+        return 2;
+      }
+      const input: Record<string, unknown> = {};
+      let bridge: import("./bot/approvalBridge.ts").ApprovalBridge | undefined;
+      if (flowId === "slack-approval-roundtrip") {
+        const payloadRaw = flagValue("--payload");
+        if (!payloadRaw) {
+          process.stderr.write("用法：nyra connector flow slack-approval-roundtrip --payload <json> [--by <用户id>]\n");
+          return 2;
+        }
+        input.payload = payloadRaw;
+        const { ApprovalBridge } = await import("./bot/approvalBridge.ts");
+        const { botPolicyFromConfig } = await import("./bot/types.ts");
+        const policy = botPolicyFromConfig(loadConfig(home));
+        bridge = new ApprovalBridge({ home, policy, send: async () => { throw new Error("CLI 不发审批提示"); } });
+        const decidedBy = flagValue("--by") ?? policy.owner ?? "";
+        if (!decidedBy) {
+          process.stderr.write("没配决定人：传 --by <用户id>，或在配置里配 bot.owner（只认 owner/admin 白名单）。\n");
+          return 2;
+        }
+        input.decidedBy = decidedBy;
+      } else if (flowId === "shopify-order-fulfillment") {
+        const orderId = flagValue("--order") ?? argv[2];
+        if (!orderId) {
+          process.stderr.write("用法：nyra connector flow shopify-order-fulfillment --order <id>\n");
+          return 2;
+        }
+        input.orderId = orderId;
+      } else if (flowId === "gmail-draft-send") {
+        const draftId = flagValue("--draft") ?? argv[2];
+        if (!draftId) {
+          process.stderr.write("用法：nyra connector flow gmail-draft-send --draft <id> [--yes]\n");
+          return 2;
+        }
+        input.draftId = draftId;
+        // 发草稿是写操作：先读草稿展示收件人/主题给用户确认（--yes 跳过），确认后才跑流程。
+        const transport = gmailMod.createGmailTransport(home, loadConfig(home));
+        const draft = await transport.getDraft(draftId);
+        if (!draft.to.trim() || !draft.subject.trim()) {
+          process.stderr.write(`草稿 ${draftId} 不完整（收件人或主题为空），不发。\n`);
+          return 1;
+        }
+        if (!argv.includes("--yes")) {
+          process.stdout.write(`收件人：${draft.to}\n主题：${draft.subject}\n`);
+          const rl = createInterface({ input: process.stdin, output: process.stdout });
+          const ans = (await new Promise<string>((resolvePromise) => {
+            rl.question("确认发送这封草稿？[y/N] ", (a) => { rl.close(); resolvePromise(a); });
+          })).trim().toLowerCase();
+          if (ans !== "y" && ans !== "yes") {
+            process.stdout.write("已取消，未发送。\n");
+            return 1;
+          }
+        }
+        input.approved = true;
+      }
+      const result = await runConnectorFlow(home, loadConfig(home), flowId, input, { ...(bridge ? { bridge } : {}) });
+      if (argv.includes("--json")) {
+        process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+      } else {
+        process.stdout.write(formatFlowResult(result) + "\n");
+      }
+      return result.passed ? 0 : 1;
+    }
     process.stderr.write(`未知命令：${cmd}\n${CONNECTOR_USAGE}\n`);
     return 2;
   } catch (err: unknown) {
@@ -5010,6 +5152,7 @@ export async function handleShopify(argv: string[], home: string, input?: Shopif
   + "  nyra shopify orders [--limit N] [--status any|open|closed|cancelled|archived] [--page-info X]\n"
   + "                                                 列出订单（默认全部状态；不含客户邮箱与地址）\n"
   + "  nyra shopify order <id>                          查一个订单\n"
+  + "  nyra shopify fulfill <id>                        订单履约核查：订单详情 + 行项目 + 库存逐项核对（只读，不改订单、不动库存）\n"
   + "  nyra shopify inventory [--location-id N] [--inventory-item-id N] [--limit N] [--page-info X]\n"
   + "                                                 查库存水平（按地点 / 商品过滤）\n"
   + "本批只读：改价、改库存、下单、退款、发折扣码、删单一律拒绝。\n"
@@ -5017,6 +5160,7 @@ export async function handleShopify(argv: string[], home: string, input?: Shopif
   const {
     createShopifyClient, getShopifyStatus, normalizeShopifyShop,
     formatShopifyProducts, formatShopifyOrders, formatShopifyInventoryLevels,
+    checkOrderFulfillment, formatFulfillmentCheck,
     SHOPIFY_VAULT_CREDENTIALS_ENTRY, SHOPIFY_READ_SCOPES, SHOPIFY_WRITE_COMMANDS, SHOPIFY_API_VERSION,
     shopifyWriteRefusal,
   } = await import("./connectors/shopify.ts");
@@ -5171,6 +5315,16 @@ export async function handleShopify(argv: string[], home: string, input?: Shopif
       process.stdout.write(`订单：${o.name || "（无编号）"}\n订单 id：${o.id}\n金额：${o.totalPrice || "?"} ${o.currency || ""}\n付款：${o.financialStatus || "未知"}\n发货：${o.fulfillmentStatus || "未知"}\n创建时间：${o.createdAt || "未知"}\n商品项数：${o.lineItemsCount}\n`);
       return 0;
     }
+    if (cmd === "fulfill") {
+      const id = argv[1];
+      if (!id) {
+        process.stderr.write("用法：nyra shopify fulfill <id>\n");
+        return 2;
+      }
+      const fulfillment = await checkOrderFulfillment(client(), id);
+      process.stdout.write(formatFulfillmentCheck(fulfillment) + "\n");
+      return fulfillment.verdict === "fulfillable" || fulfillment.verdict === "already-fulfilled" ? 0 : 1;
+    }
     if (cmd === "inventory") {
       const locationIds = flagValues("--location-id").map(Number).filter((n) => Number.isFinite(n));
       const inventoryItemIds = flagValues("--inventory-item-id").map(Number).filter((n) => Number.isFinite(n));
@@ -5206,11 +5360,12 @@ export async function handleSlack(argv: string[], home: string, input?: SlackCli
   + "  nyra slack history --channel <id> [--limit N] [--cursor X]  读某频道的消息历史\n"
   + "  nyra slack send --channel <id> --text <内容> [--yes]  发消息到指定频道（须显式批准：--yes 或交互确认）\n"
   + "  nyra slack card --channel <id> --approval <id>  把一条挂起审批发成审批卡（带批准/拒绝按钮）\n"
-  + "删消息、改频道、管理成员一律拒绝；按钮回调本批只记审计，不回写审批桥。\n"
+  + "  nyra slack callback --payload <json> [--by <用户id>]  处理一个审批卡按钮回调：回写审批桥（只认 owner/admin 白名单；--by 省略时取配置的 bot.owner）\n"
+  + "删消息、改频道、管理成员一律拒绝；按钮回调会回写审批桥（重复回调幂等，已处理过的审批不再解决）。\n"
   + "详见 docs/connectors.md 的 Slack 一节";
   const {
     createSlackClient, getSlackStatus, isSlackBotToken, isSlackChannelId,
-    formatSlackChannels, formatSlackMessages,
+    formatSlackChannels, formatSlackMessages, resolveSlackApprovalCallback,
     SLACK_VAULT_CREDENTIALS_ENTRY, SLACK_READ_SCOPES, SLACK_WRITE_SCOPES, SLACK_WRITE_COMMANDS,
     slackWriteRefusal, SlackAuthError,
   } = await import("./connectors/slack.ts");
@@ -5415,8 +5570,40 @@ export async function handleSlack(argv: string[], home: string, input?: SlackCli
         expiresAt: item.expiresAt,
       });
       process.stdout.write(`已发审批卡到频道 ${channelId}（消息 ts=${ts}）。\n`);
-      process.stdout.write("注意：按钮回调本批只记审计，不回写审批桥——审批本身仍是挂起状态，点了按钮也不会自动放行。\n");
+      process.stdout.write("注意：审批本身仍是挂起状态，点了按钮也不会自动放行——按钮回调须经 nyra slack callback（或网关的 Socket Mode 接线）回写审批桥。\n");
       return 0;
+    }
+    if (cmd === "callback") {
+      const payloadRaw = flagValue("--payload");
+      if (!payloadRaw) {
+        process.stderr.write("用法：nyra slack callback --payload <json> [--by <用户id>]\n");
+        return 2;
+      }
+      let payload: unknown;
+      try {
+        payload = JSON.parse(payloadRaw) as unknown;
+      } catch {
+        process.stderr.write("回调 payload 不是合法 JSON。\n");
+        return 2;
+      }
+      // CLI 跑在本机上，等同机主身份（与 nyra bot approvals 同款信任模型）；
+      // 决定人默认取配置的 bot.owner，没配则报 not-approver，不猜。
+      const { ApprovalBridge } = await import("./bot/approvalBridge.ts");
+      const { botPolicyFromConfig } = await import("./bot/types.ts");
+      const policy = botPolicyFromConfig(loadConfig(home));
+      const bridge = new ApprovalBridge({
+        home,
+        policy,
+        send: async () => { throw new Error("CLI 不发审批提示"); },
+      });
+      const decidedBy = flagValue("--by") ?? policy.owner ?? "";
+      if (!decidedBy) {
+        process.stderr.write("没配决定人：传 --by <用户id>，或在配置里配 bot.owner（只认 owner/admin 白名单）。\n");
+        return 2;
+      }
+      const resolution = await resolveSlackApprovalCallback(home, { payload, decidedBy, bridge });
+      process.stdout.write(`${resolution.reason}\n`);
+      return resolution.status === "resolved" || resolution.status === "not-pending" ? 0 : 1;
     }
     process.stderr.write(`未知命令：${cmd}\n${SLACK_USAGE}\n`);
     return 2;
