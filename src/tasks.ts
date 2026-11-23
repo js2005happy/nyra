@@ -169,6 +169,26 @@ export function showTask(runId: string, store?: RunStore, eventLimit = 20): [Run
   return [state, events];
 }
 
+/**
+ * NO_REPLY 静默收敛（与 Heartbeat / 晨间简报同款约定）：任务收尾在末尾输出
+ * NO_REPLY，即“无须打扰用户”。runOne 不写收件箱、不回邮件，workerOnce
+ * 不推 Bot 通知；运行记录本身照常留（证据链不断）。等待审批的任务不适用
+ * ——审批本身就是待办，仍须写收件箱让人看到。
+ */
+export function isNoReplyReply(output: unknown): boolean {
+  if (typeof output !== "string") return false;
+  // 运行记录会在模型回复后追加 "----" 开头的统计行（用时/轮次/花费……）：
+  // 只看模型回复本身，NO_REPLY 须是模型回复的最后一行。
+  const lines = output.split("\n");
+  const body: string[] = [];
+  for (const line of lines) {
+    if (line.trim() === "----") break;
+    body.push(line.trim());
+  }
+  const nonEmpty = body.filter(Boolean);
+  return nonEmpty.length > 0 && nonEmpty[nonEmpty.length - 1] === "NO_REPLY";
+}
+
 export function appendInbox(runId: string, status: string, summary: string, home?: string): void {
   const h = nyraHome(home);
   mkdirSync(h, { recursive: true });
@@ -272,14 +292,18 @@ export async function runOne(
     const final = opts.store.load(recorder.runId);
     // 缺口 8：巡查自己管汇报（按汇报条件写收件箱），runOne 的默认收件箱
     // 入口会打扰人（没发现也记一条），quietInbox 时跳过。
-    if (!opts.quietInbox) appendInbox(final.run_id, final.status, output, opts.home);
+    // NO_REPLY：模型明确说无须打扰，收件箱与邮件回信都跳过（运行记录照常留）。
+    const silent = isNoReplyReply(output);
+    if (!opts.quietInbox && !silent) appendInbox(final.run_id, final.status, output, opts.home);
     // 缺口 22：邮件任务跑完回信（只回白名单发件人、只回原线程、一次一封；
     // 回信失败不破坏任务结果，只记 stderr）。
-    try {
-      const { replyMailResultForRun } = await import("./mailInbox.ts");
-      await replyMailResultForRun(final.run_id, final.status, output, { home: opts.home });
-    } catch (err: unknown) {
-      process.stderr.write(`邮件入口：回信失败：${err instanceof Error ? err.message : String(err)}\n`);
+    if (!silent) {
+      try {
+        const { replyMailResultForRun } = await import("./mailInbox.ts");
+        await replyMailResultForRun(final.run_id, final.status, output, { home: opts.home });
+      } catch (err: unknown) {
+        process.stderr.write(`邮件入口：回信失败：${err instanceof Error ? err.message : String(err)}\n`);
+      }
     }
     return [final, output];
   } catch (err: unknown) {
@@ -304,7 +328,8 @@ export async function workerOnce(opts?: { store?: RunStore; provider?: Provider;
     const state = store.claim(queued[0].run_id);
     const [final, output] = await runOne(state, { store, provider, config: opts?.config, interactive: false, home: opts?.home });
     processed.push([final, output]);
-    if (opts?.onTaskResult) {
+    // NO_REPLY：模型明确说无须打扰，Bot 通知也跳过。
+    if (opts?.onTaskResult && !isNoReplyReply(output)) {
       try {
         // 队列任务没有人名，用 run_id 当标识，摘要放任务正文前 120 字。
         await opts.onTaskResult({ name: final.run_id, status: final.status, summary: final.task.replace(/\n/g, " ").slice(0, 120) });

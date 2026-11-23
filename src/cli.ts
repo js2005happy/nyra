@@ -190,7 +190,7 @@ nyra goal <create|list|show|add-item|start-item|verify-item|complete|pause|resum
 nyra subagent <list|show|register|heartbeat|sweep|resume|suspend|stop|confirm-stopped|cancel-stop|steer>   崩溃自续：子 agent 持久行 + 心跳检查点 + 启动扫荡 + 先验状态再续跑 + 单点停止 + 单点引导（详见 docs/kanban.md、docs/roster.md 与 docs/steer-schema.md）
 nyra roster <list|show>   实时花名册：每个子 agent 一行——状态 + 已耗时 + 当前动作（只读快照，不花 token；token/费用默认不显示，详见 docs/roster.md）
 nyra side-effects <list|show|record|mark|recover>   先存后做的副作用队列：执行前先落库，重启按年龄恢复、带 recovery note（详见 docs/kanban.md）
-nyra heartbeat <add|list|remove|enable|disable|run|commitments>   静默巡查：无事安静、有发现先记证据再写收件箱；推断承诺须用户确认一次、过期自动失效（详见 docs/heartbeat.md）
+nyra heartbeat <add|list|remove|enable|disable|run|wake|check-script|seen-clear|commitments>   静默巡查：无事安静、有发现先记证据再写收件箱；重复异常指纹去重只通知一次；本地脚本预检（零 Token）与唤醒主控默认关；推断承诺须用户确认一次、过期自动失效（详见 docs/heartbeat.md）
 nyra fanout <list|show|recover>   后台扇出：顶层委派立即回 handle，跑完单条回填收件箱；跑一半的进程退出后须 recover 回收（详见 docs/merge-fanout.md）
 nyra team <create|list|show|add|remove|dissolve|dispatch|handover|lead|writer>   团队模式（新缺口 52）：参谋长独占入口，只拆解、分派、汇总；成员须有完整 Charter 才能接单；交接走 inbox/outbox/变更日志；对外动作一律回参谋长/人批；lead 租约 + 纪元防旧参谋长晚到指令（详见 docs/team.md）
 nyra governance <policy|mandate|mode|dry-runs>   企业治理：版本化策略 + 不可变授权 + observe/auto 接单模式 + 干跑记录（详见 docs/governance.md）
@@ -198,7 +198,7 @@ nyra governance caps <set|list|show|check|assign-team|pause|resume|discard|pause
 nyra governance audit <export|verify>   审计导出：治理审计日志导出给 SIEM（JSONL + 哈希链，可验证）
 nyra optimize <propose|list|show|edit|approve|reject|apply|verify|revert>   带人批的自优化环：只起草改指令建议，须人批才生效，三数据集 + holdout 定放行（详见 docs/governance.md）
 nyra trust <register|list|show|evidence|promote|demote|review|check>   信任阶梯（GROK-6，缺口 43 治理深化）：新 agent / 新技能默认只读，攒够 N 次连续成功且零违规才升一级；每次记成功有概率被随机抽查，抽中须复核才计入；降级随时可做（详见 docs/trust-ladder.md）
-nyra workflow <import|list|show|run|dry-run|resume|trial|activate|remove|verify>   声明式可复用工作流（缺口 25）：YAML/JSON 定义 + 三种执行形态（固定图/协调者/动态）+ 审批节点 + dry-run，激活前须真实数据试跑 + 人工确认（详见 docs/workflow.md）
+nyra workflow <import|list|show|run|dry-run|resume|trial|activate|remove|verify|triggers>   声明式可复用工作流（缺口 25）：YAML/JSON 定义 + 三种执行形态（固定图/协调者/动态）+ 审批节点 + dry-run，激活前须真实数据试跑 + 人工确认；触发器执行默认关，须显式开启（详见 docs/workflow.md）
 nyra template <list|show|builtin|import|trial|activate|run|dry-run|remove|publish|install>   业务流程模板库（缺口 46）：流程 DSL + 连接器 + 验收标准 + 试跑数据，激活前须真实数据试跑 + 人工确认，随机器人市场分发（详见 docs/templates.md）
 nyra script check <文件> [--language python|javascript|lua|php]   判定一个脚本纯不纯（白名单静态分析）：纯返回 0，不纯返回 1
 nyra script preauth <list|grant|revoke> --workflow <名字>   脚本摘要预授权：激活时自动钉纯脚本摘要，内容一改授权失效；只在例行里有效（详见 docs/script-purity.md）
@@ -333,7 +333,7 @@ nyra goal <create|list|show|add-item|start-item|verify-item|complete|pause|resum
 nyra subagent <list|show|register|heartbeat|sweep|resume|suspend|stop|confirm-stopped|cancel-stop|steer>   crash resume: persistent sub-agent rows + heartbeat checkpoints + boot sweep + verify-before-resume + per-child stop + per-child steer (see docs/kanban.md, docs/roster.md and docs/steer-schema.md)
 nyra roster <list|show>   live roster: one line per sub-agent — status + elapsed + current action (read-only snapshot, no tokens spent; token/cost hidden by default, see docs/roster.md)
 nyra side-effects <list|show|record|mark|recover>   store-before-do side-effect queue: recorded before execution, recovered oldest-first with a recovery note (see docs/kanban.md)
-nyra heartbeat <add|list|remove|enable|disable|run|commitments>   silent patrol: quiet when nothing is wrong, findings go to evidence first then inbox; inferred commitments need one user confirmation and auto-expire (see docs/heartbeat.md)
+nyra heartbeat <add|list|remove|enable|disable|run|wake|check-script|seen-clear|commitments>   silent patrol: quiet when nothing is wrong, findings go to evidence first then inbox; repeat anomalies are fingerprinted and notified once; local script pre-checks (zero-token) and supervisor wake are off by default; inferred commitments need one user confirmation and auto-expire (see docs/heartbeat.md)
 nyra fanout <list|show|recover>   background fan-out: top-level delegation returns a handle immediately, results backfill the inbox as one message; half-run fan-outs need recover after the process exits (see docs/merge-fanout.md)
 nyra team <create|list|show|add|remove|dissolve|dispatch|handover|lead|writer>   team mode (new gap 52): the chief is the single entry point — splits, dispatches and summarizes only; members need a complete Charter to take work; handovers go through inbox/outbox/change log; outbound actions always go back to the chief / a human for approval; lead lease + epoch guards against stale chief instructions (see docs/team.md)
 nyra governance <policy|mandate|mode|dry-runs>   enterprise governance: versioned policy + immutable mandates + observe/auto intake modes + dry-run ledger (see docs/governance.md)
@@ -341,7 +341,7 @@ nyra governance caps <set|list|show|check|assign-team|pause|resume|discard|pause
 nyra governance audit <export|verify>   audit export: governance audit logs to SIEM (JSONL + hash chain, verifiable)
 nyra optimize <propose|list|show|edit|approve|reject|apply|verify|revert>   human-approved self-optimization loop: drafts instruction changes only, needs approval to apply, three datasets + holdout decide release (see docs/governance.md)
 nyra trust <register|list|show|evidence|promote|demote|review|check>   trust ladder (GROK-6, gap 43 governance): new agents / skills start read-only, earn one level per N consecutive successes with zero violations; each recorded success may be randomly spot-checked and only counts after review; demotion any time (see docs/trust-ladder.md)
-nyra workflow <import|list|show|run|dry-run|resume|trial|activate|remove|verify>   declarative reusable workflows (gap 25): YAML/JSON definitions + three execution modes (fixed graph / coordinator / dynamic) + approval nodes + dry-run; activation needs a real-data trial run + human confirmation (see docs/workflow.md)
+nyra workflow <import|list|show|run|dry-run|resume|trial|activate|remove|verify|triggers>   declarative reusable workflows (gap 25): YAML/JSON definitions + three execution modes (fixed graph / coordinator / dynamic) + approval nodes + dry-run; activation needs a real-data trial run + human confirmation; trigger execution is off by default and needs an explicit opt-in (see docs/workflow.md)
 nyra template <list|show|builtin|import|trial|activate|run|dry-run|remove|publish|install>   business process template library (gap 46): workflow DSL + connectors + acceptance criteria + trial data, distributed through the robot market; activation needs a real-data trial run + human confirmation (see docs/templates.md)
 nyra script check <file> [--language python|javascript|lua|php]   judge whether a script is pure (allowlist static analysis): exit 0 if pure, 1 if not
 nyra script preauth <list|grant|revoke> --workflow <name>   script digest pre-authorization: pure script digests are pinned at activation, a changed script voids the grant; routine-only (see docs/script-purity.md)
@@ -1312,6 +1312,16 @@ async function handleSchedule(argv: string[], workdir: string): Promise<number> 
           const results = runDueHeartbeats(home);
           for (const r of results) {
             if (!r.quiet) process.stdout.write(`[Heartbeat] ${r.agent}：${r.findings.length} 项发现，已写收件箱。\n`);
+          }
+        });
+      // 缺口 25 的尾巴：工作流触发器执行（默认关，须显式开启）。每轮跑一次
+      // 到点的定时触发器；开关关着直接跳过。执行走 runWorkflowByName（非交互、
+      // 成本上限继承定义，审批节点照常挂起）；失败只记 stderr，不破坏定时任务。
+      pollers.push(async () => {
+          const { runDueWorkflowTriggers } = await import("./workflowTriggers.ts");
+          const report = await runDueWorkflowTriggers(home, { workdir });
+          for (const f of report.fired) {
+            process.stdout.write(`[触发器] 工作流 ${f.workflow} 已触发（${f.status === "ok" ? `运行 ${f.runId}` : `失败：${f.error ?? ""}`}）。\n`);
           }
         });
       // Pi Bot 借鉴第 3 条：卡住步骤看门狗（只扫任务板、只标记/重排/停下，

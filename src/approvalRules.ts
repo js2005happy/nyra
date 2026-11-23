@@ -167,6 +167,43 @@ export function suggestPrefix(command: string): string[] | null {
   return [prog];
 }
 
+/**
+ * 命令是否可无人值守执行（巡检脚本用，缺口 25 + Kooyu 零 Token 值守）：
+ * 复用同一套拒绝清单（危险程序、解释器、危险子命令、危险参数前缀），
+ * 但比 suggestPrefix 宽一档：git --version、df -h 这类“程序 + 纯标志”
+ * 也放行——无人值守巡检批准的是整条命令原文，运行时再逐字比对，
+ * 不需要像常驻规则那样抽一个可复用的前缀。返回 false 的一律不能进巡检脚本。
+ */
+export function isUnattendedSafeCommand(command: string): boolean {
+  const words = splitCommand(command);
+  if (!words || words.length === 0) return false;
+  const prog = words[0];
+  if (!prog || prog.includes("/") || prog.includes("\\") || prog.startsWith("-")) return false;
+  const name = prog.toLowerCase();
+  if (NO_RULE_PROGRAMS.has(name)) return false;
+  if (name.endsWith(".exe") && NO_RULE_PROGRAMS.has(name.slice(0, -4))) return false;
+  if (name.startsWith("mkfs")) return false;
+  if (INTERPRETER_RE.test(name)) {
+    if (words.length >= 3 && words[1] === "-m" && MODULE_RE.test(words[2])) {
+      return !NO_RULE_MODULES.has(words[2].split(".")[0]) && !NO_RULE_MODULES.has(words[2]);
+    }
+    return false;
+  }
+  if (Object.prototype.hasOwnProperty.call(SUBCOMMAND_TOOLS, name)) {
+    const banned = SUBCOMMAND_TOOLS[name];
+    if (banned === null) return false;
+    if (words.length >= 2 && !words[1].startsWith("-")) {
+      const sub = words[1];
+      if (!SUBCOMMAND_RE.test(sub) || banned.has(sub)) return false;
+      if ((name === "npm" || name === "pnpm" || name === "yarn") && (sub === "run" || sub === "run-script")) {
+        if (words.length < 3 || !SUBCOMMAND_RE.test(words[2])) return false;
+      }
+    }
+  }
+  if (words.slice(1).some((w) => RISKY_ARG_PREFIXES.some((p) => w.startsWith(p)))) return false;
+  return true;
+}
+
 /** 前缀本身是否允许：至少要和同样几个词的建议前缀一样窄。 */
 export function prefixAllowed(prefix: unknown): prefix is string[] {
   if (!Array.isArray(prefix) || prefix.length === 0) return false;

@@ -13,15 +13,19 @@
 import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeSync } from "node:fs";
 import { copyFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { resolveHome } from "./config.ts";
 import { RunStore } from "./runs.ts";
-import { appendInbox, loadInbox } from "./tasks.ts";
+import { addTask, appendInbox, loadInbox } from "./tasks.ts";
 import { listKanbanTasks } from "./kanban.ts";
 import { listFanouts } from "./fanout.ts";
 import { listSubagentRuns } from "./resume.ts";
 import { getAgentMode, recordDryRun } from "./governance.ts";
 import { pythonJsonDump } from "./pyjson.ts";
+import {
+  describeCheckScriptOutcome, runCheckScript, validateCheckScriptDef,
+  type CheckScriptDef, type SpawnResult,
+} from "./checkScript.ts";
 
 export class HeartbeatError extends Error {
   constructor(message: string) {
@@ -38,6 +42,10 @@ export interface HeartbeatMonitor {
   intervalMinutes: number;
   enabled: boolean;
   checks: CheckKind[];
+  /** 零 Token 值守：本地脚本预检（Kooyu 借鉴，见 checkScript.ts）。 */
+  scripts?: CheckScriptDef[];
+  /** 唤醒总开关：默认关；只对 onHit=wake 的巡检命中生效，须显式开启。 */
+  wakeEnabled?: boolean;
   lastRunAt: string | null;
   lastFindings: number;
 }
@@ -48,7 +56,7 @@ export interface HeartbeatStore {
 }
 
 export interface HeartbeatFinding {
-  kind: CheckKind;
+  kind: CheckKind | "check_script";
   summary: string;
   count: number;
 }
@@ -58,6 +66,12 @@ export interface HeartbeatRunResult {
   findings: HeartbeatFinding[];
   quiet: boolean;
   skipped: string | null;
+  /** 本轮新发现（去重后）：只有这些写收件箱 / 可能唤醒。 */
+  fresh: number;
+  /** 本轮被指纹去重拦下的重复发现（只记审计，不重复通知）。 */
+  deduped: number;
+  /** 本轮唤醒主控入队的任务 run_id。 */
+  woken: string[];
 }
 
 export function heartbeatsPath(home: string): string {
@@ -115,13 +129,68 @@ export function saveHeartbeatStore(home: string, store: HeartbeatStore): void {
   saveJsonLedger(heartbeatsPath(home), store);
 }
 
+// ---- 指纹去重：同一异常只通知一次 ----
+
+export const HEARTBEAT_SEEN_FILE = "heartbeat-seen.json";
+const HEARTBEAT_SEEN_KEEP = 1000;
+
+export function heartbeatSeenPath(home: string): string {
+  return join(home, HEARTBEAT_SEEN_FILE);
+}
+
+export interface HeartbeatSeenStore {
+  version: 1;
+  seen: Record<string, { at: string; kind: string }>;
+}
+
+/** 异常指纹：种类 + 摘要的 SHA-256 前 16 位。摘要变了（比如未读数 3→5、脚本输出变了）就是新异常。 */
+export function heartbeatFingerprint(kind: string, summary: string): string {
+  return `hb:${createHash("sha256").update(`${kind}\n${summary}`).digest("hex").slice(0, 16)}`;
+}
+
+/**
+ * 去重账本只是通知缓存，不是安全控制：损坏就备份后从空开始，
+ * 绝不能因为它坏了就破坏巡查。
+ */
+export function loadHeartbeatSeen(home: string): HeartbeatSeenStore {
+  const p = heartbeatSeenPath(home);
+  const empty: HeartbeatSeenStore = { version: 1, seen: {} };
+  if (!existsSync(p)) return empty;
+  try {
+    const raw = JSON.parse(readFileSync(p, "utf-8")) as Partial<HeartbeatSeenStore>;
+    if (!raw || typeof raw !== "object" || raw.version !== 1 || !raw.seen || typeof raw.seen !== "object") return empty;
+    return { version: 1, seen: raw.seen as Record<string, { at: string; kind: string }> };
+  } catch {
+    backupCorrupt(p);
+    return empty;
+  }
+}
+
+export function saveHeartbeatSeen(home: string, store: HeartbeatSeenStore): void {
+  const keys = Object.keys(store.seen);
+  if (keys.length > HEARTBEAT_SEEN_KEEP) {
+    for (const k of keys.slice(0, keys.length - HEARTBEAT_SEEN_KEEP)) delete store.seen[k];
+  }
+  try {
+    saveJsonLedger(heartbeatSeenPath(home), store);
+  } catch {
+    // 去重记不上不破坏巡查（下轮会再通知一次，不静默丢异常）。
+  }
+}
+
+export function clearHeartbeatSeen(home: string): void {
+  try { rmSync(heartbeatSeenPath(home), { force: true }); } catch { /* 没有就不清 */ }
+}
+
 /** 检查项全是只读（读收件箱、读任务板、读注册表、读运行记录），
 // 巡查本身不写、不发——无人值守时这条同样成立。 */
 export function runChecks(home: string, kinds: CheckKind[]): HeartbeatFinding[] {
   const findings: HeartbeatFinding[] = [];
   for (const kind of kinds) {
     if (kind === "inbox_unread") {
-      const unread = loadInbox(home, true);
+      // 巡查自己的通知不计入：否则每轮都把上一轮的巡查通知当成新的未读，
+      // 未读数每轮涨 1，去重永远不生效（自反馈循环）。
+      const unread = loadInbox(home, true).filter((i) => !String(i.run_id).startsWith("heartbeat-"));
       if (unread.length) findings.push({ kind, summary: `${unread.length} 条未读收件箱消息`, count: unread.length });
     } else if (kind === "kanban_blocked") {
       const blocked = listKanbanTasks(home, { status: "blocked" });
@@ -151,14 +220,14 @@ export function runChecks(home: string, kinds: CheckKind[]): HeartbeatFinding[] 
   return findings;
 }
 
-function appendHeartbeatAudit(home: string, agent: string, findings: HeartbeatFinding[]): void {
+function appendHeartbeatAudit(home: string, agent: string, findings: HeartbeatFinding[], extra?: { fresh?: number; deduped?: number; woken?: string[] }): void {
   const d = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
   const dir = join(home, "evidence", "heartbeat");
   mkdirSync(dir, { recursive: true });
   const path = join(dir, `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}.jsonl`);
   if (existsSync(path) && lstatSync(path).isSymbolicLink()) return;
-  const entry = { at: nowIso(), agent, findings: findings.length, items: findings.map((f) => ({ kind: f.kind, summary: f.summary, count: f.count })) };
+  const entry = { at: nowIso(), agent, findings: findings.length, items: findings.map((f) => ({ kind: f.kind, summary: f.summary, count: f.count })), ...(extra ?? {}) };
   const fd = openSync(path, "a", 0o600);
   try {
     writeSync(fd, pythonJsonDump(entry) + "\n", null, "utf-8");
@@ -168,7 +237,7 @@ function appendHeartbeatAudit(home: string, agent: string, findings: HeartbeatFi
 
 export function addHeartbeatMonitor(
   home: string,
-  opts: { agent: string; intervalMinutes?: number; checks?: CheckKind[] },
+  opts: { agent: string; intervalMinutes?: number; checks?: CheckKind[]; wakeEnabled?: boolean },
 ): HeartbeatMonitor {
   const agent = opts.agent.trim();
   if (!agent) throw new HeartbeatError("agent 不能为空");
@@ -182,7 +251,7 @@ export function addHeartbeatMonitor(
   }
   const store = loadHeartbeatStore(home);
   if (store.monitors.some((m) => m.agent === agent)) throw new HeartbeatError(`已有 agent ${agent} 的 Heartbeat 配置`);
-  const monitor: HeartbeatMonitor = { agent, intervalMinutes, enabled: true, checks, lastRunAt: null, lastFindings: 0 };
+  const monitor: HeartbeatMonitor = { agent, intervalMinutes, enabled: true, checks, scripts: [], wakeEnabled: opts.wakeEnabled === true, lastRunAt: null, lastFindings: 0 };
   store.monitors.push(monitor);
   saveHeartbeatStore(home, store);
   return monitor;
@@ -210,23 +279,130 @@ export function removeHeartbeatMonitor(home: string, agent: string): boolean {
   return true;
 }
 
-export function runHeartbeat(home: string, agent: string, opts?: { force?: boolean; now?: Date }): HeartbeatRunResult {
+// ---- 巡检脚本（零 Token 值守） ----
+
+/** 给 monitor 加一条巡检脚本：命令须过审批规则门禁（validateCheckScriptDef 内校验）。 */
+export function addCheckScript(home: string, agent: string, input: Record<string, unknown>): CheckScriptDef {
+  const def = validateCheckScriptDef(input);
   const store = loadHeartbeatStore(home);
   const monitor = store.monitors.find((m) => m.agent === agent);
   if (!monitor) throw new HeartbeatError(`没有 agent ${agent} 的 Heartbeat 配置（先 nyra heartbeat add --agent ${agent}）`);
-  if (!monitor.enabled) return { agent, findings: [], quiet: true, skipped: "已停用" };
+  const scripts = monitor.scripts ?? [];
+  if (scripts.some((s) => s.name === def.name)) throw new HeartbeatError(`已有同名巡检脚本：${def.name}`);
+  scripts.push(def);
+  monitor.scripts = scripts;
+  saveHeartbeatStore(home, store);
+  return def;
+}
+
+export function listCheckScripts(home: string, agent: string): CheckScriptDef[] {
+  const monitor = loadHeartbeatStore(home).monitors.find((m) => m.agent === agent);
+  if (!monitor) throw new HeartbeatError(`没有 agent ${agent} 的 Heartbeat 配置（先 nyra heartbeat add --agent ${agent}）`);
+  return [...(monitor.scripts ?? [])];
+}
+
+export function removeCheckScript(home: string, agent: string, name: string): boolean {
+  const store = loadHeartbeatStore(home);
+  const monitor = store.monitors.find((m) => m.agent === agent);
+  if (!monitor) throw new HeartbeatError(`没有 agent ${agent} 的 Heartbeat 配置（先 nyra heartbeat add --agent ${agent}）`);
+  const scripts = monitor.scripts ?? [];
+  const idx = scripts.findIndex((s) => s.name === name);
+  if (idx < 0) return false;
+  scripts.splice(idx, 1);
+  monitor.scripts = scripts;
+  saveHeartbeatStore(home, store);
+  return true;
+}
+
+export function setHeartbeatWake(home: string, agent: string, enabled: boolean): HeartbeatMonitor {
+  const store = loadHeartbeatStore(home);
+  const monitor = store.monitors.find((m) => m.agent === agent);
+  if (!monitor) throw new HeartbeatError(`没有 agent ${agent} 的 Heartbeat 配置`);
+  monitor.wakeEnabled = enabled;
+  saveHeartbeatStore(home, store);
+  return monitor;
+}
+
+/** 唤醒任务提示词：只读核查；无须处理就回 NO_REPLY 静默结束（runOne 不写收件箱、worker 不推 Bot 通知）。 */
+export function buildWakePrompt(finding: HeartbeatFinding): string {
+  return `【值守唤醒】巡查发现需要你看一眼：${finding.summary}。\n请只读核查（不要写文件、不要对外发消息）；如确认无须处理，在回复末尾输出 NO_REPLY 静默结束；如确需处理，回复处理建议（由值守记录，不直接发消息）。`;
+}
+
+export function runHeartbeat(home: string, agent: string, opts?: { force?: boolean; now?: Date; spawnFn?: (argv: string[], cwd: string, timeoutMs: number) => SpawnResult }): HeartbeatRunResult {
+  const store = loadHeartbeatStore(home);
+  const monitor = store.monitors.find((m) => m.agent === agent);
+  if (!monitor) throw new HeartbeatError(`没有 agent ${agent} 的 Heartbeat 配置（先 nyra heartbeat add --agent ${agent}）`);
+  if (!monitor.enabled) return { agent, findings: [], quiet: true, skipped: "已停用", fresh: 0, deduped: 0, woken: [] };
   const now = opts?.now ?? new Date();
   if (!opts?.force && monitor.lastRunAt) {
     const last = new Date(monitor.lastRunAt).getTime();
     if (!Number.isNaN(last) && now.getTime() - last < monitor.intervalMinutes * 60_000) {
-      return { agent, findings: [], quiet: true, skipped: "未到间隔" };
+      return { agent, findings: [], quiet: true, skipped: "未到间隔", fresh: 0, deduped: 0, woken: [] };
     }
   }
   const findings = runChecks(home, monitor.checks);
+  // 零 Token 值守：巡检脚本先跑本地命令（不调模型）；命中与执行失败都算发现，
+  // 安静的脚本不产生发现、不花 Token。无效的脚本配置跳过，只记 stderr。
+  const scriptDefs: CheckScriptDef[] = [];
+  for (const s of monitor.scripts ?? []) {
+    try {
+      scriptDefs.push(validateCheckScriptDef(s as unknown as Record<string, unknown>));
+    } catch (err: unknown) {
+      process.stderr.write(`跳过无效巡检脚本 ${s.name}：${err instanceof Error ? err.message : String(err)}\n`);
+    }
+  }
+  // wake 判定要知道哪条发现来自哪条脚本：按发现顺序对齐（脚本发现紧跟在 runChecks 之后）。
+  const scriptFindings: Array<{ finding: HeartbeatFinding; def: CheckScriptDef; hit: boolean }> = [];
+  for (const def of scriptDefs) {
+    let outcome;
+    try {
+      outcome = runCheckScript(def, opts?.spawnFn ? { spawnFn: opts.spawnFn } : undefined);
+    } catch (err: unknown) {
+      outcome = { outcome: "failed" as const, stdout: "", stderr: "", exitCode: null, durationMs: 0, reason: err instanceof Error ? err.message : String(err) };
+    }
+    if (outcome.outcome === "quiet") continue;
+    const finding: HeartbeatFinding = { kind: "check_script", summary: describeCheckScriptOutcome(def, outcome), count: 1 };
+    findings.push(finding);
+    scriptFindings.push({ finding, def, hit: outcome.outcome === "hit" });
+  }
   monitor.lastRunAt = now.toISOString();
   monitor.lastFindings = findings.length;
   saveHeartbeatStore(home, store);
-  appendHeartbeatAudit(home, agent, findings);
+  // 指纹去重：同一异常只通知一次。重复发现只记审计，不写收件箱、不唤醒。
+  const seen = loadHeartbeatSeen(home);
+  const fresh: HeartbeatFinding[] = [];
+  let deduped = 0;
+  for (const f of findings) {
+    const fp = heartbeatFingerprint(f.kind, f.summary);
+    if (seen.seen[fp]) { deduped += 1; continue; }
+    fresh.push(f);
+  }
+  const woken: string[] = [];
+  if (fresh.length) {
+    // 唤醒：只有 fresh 的、onHit=wake 的巡检命中，且 monitor 开了 wake，才入队。
+    // 唤醒任务以 unattended（只读）入队：主控只能看不能写，写操作照样要人批；
+    // 先入队成功再记指纹（入队失败下轮重试，不静默丢异常）。
+    for (const sf of scriptFindings) {
+      if (!sf.hit || sf.def.onHit !== "wake" || monitor.wakeEnabled !== true) continue;
+      if (!fresh.includes(sf.finding)) continue;
+      try {
+        const state = addTask(buildWakePrompt(sf.finding), {
+          workdir: process.cwd(), mode: "auto", unattended: true, maxTurns: 8, home,
+        });
+        woken.push(state.run_id);
+        seen.seen[heartbeatFingerprint(sf.finding.kind, sf.finding.summary)] = { at: now.toISOString(), kind: sf.finding.kind };
+      } catch (err: unknown) {
+        process.stderr.write(`唤醒入队失败：${err instanceof Error ? err.message : String(err)}\n`);
+      }
+    }
+    // 其余 fresh 发现记指纹（唤醒过的上面已记，这里跳过重复记）。
+    for (const f of fresh) {
+      const fp = heartbeatFingerprint(f.kind, f.summary);
+      if (!seen.seen[fp]) seen.seen[fp] = { at: now.toISOString(), kind: f.kind };
+    }
+    saveHeartbeatSeen(home, seen);
+  }
+  appendHeartbeatAudit(home, agent, findings, { fresh: fresh.length, deduped, woken });
   // 缺口 43（DSH-2）：observe 模式下，Heartbeat 发现的待续跑子 agent 只记
   // 干跑、不真干（recordDryRun 自带去重，同一待续跑只留一条未定的记录）。
   if (findings.some((f) => f.kind === "resume_pending") && getAgentMode(home, agent) === "observe") {
@@ -239,11 +415,11 @@ export function runHeartbeat(home: string, agent: string, opts?: { force?: boole
       } catch { /* 干跑记不上不破坏巡查 */ }
     }
   }
-  if (!findings.length) return { agent, findings, quiet: true, skipped: null };
-  // 有发现：先记证据（上一步 audit），再汇报（收件箱，不直接发消息打扰）。
-  const summary = findings.map((f) => f.summary).join("；").slice(0, 200);
+  if (!fresh.length) return { agent, findings, quiet: true, skipped: null, fresh: 0, deduped, woken };
+  // 有新发现：先记证据（上一步 audit），再汇报（收件箱，不直接发消息打扰）。
+  const summary = fresh.map((f) => f.summary).join("；").slice(0, 200);
   appendInbox(`heartbeat-${agent}`, "heartbeat", summary, home);
-  return { agent, findings, quiet: false, skipped: null };
+  return { agent, findings, quiet: false, skipped: null, fresh: fresh.length, deduped, woken };
 }
 
 /** 守护进程每轮调：只跑到期的 monitor；跑失败只记 stderr，不破坏守护进程。 */
@@ -388,12 +564,18 @@ export function remindDueCommitments(home: string, now: Date = new Date()): Comm
 }
 
 const USAGE =
-  "用法：nyra heartbeat <add|list|remove|enable|disable|run|commitments> [选项]\n" +
-  "  add --agent <名字> [--every-minutes N（默认 30，5–1440）] [--checks inbox_unread,kanban_blocked,resume_pending,stale_runs]\n" +
+  "用法：nyra heartbeat <add|list|remove|enable|disable|run|wake|check-script|seen-clear|commitments> [选项]\n" +
+  "  add --agent <名字> [--every-minutes N（默认 30，5–1440）] [--checks inbox_unread,kanban_blocked,resume_pending,stale_runs] [--wake]\n" +
   "  list [--json]\n" +
   "  remove --agent <名字> --yes\n" +
   "  enable|disable --agent <名字>\n" +
-  "  run [--agent <名字>|--all] [--force]   未到间隔的跳过；无事安静，有发现写收件箱\n" +
+  "  run [--agent <名字>|--all] [--force]   未到间隔的跳过；无事安静，有新发现写收件箱\n" +
+  "  wake --agent <名字> --on|--off   唤醒总开关（默认关；只对 onHit=wake 的巡检命中生效）\n" +
+  "  check-script add --agent <名字> --name <名字> --command \"<命令>\" [--mode non-empty-stdout-is-hit|exit-zero-is-hit] [--timeout N（默认 30，5–120）] [--on-hit notify|wake] --yes   加一条本地脚本预检（命令须过审批规则门禁，--yes 即批准该命令）\n" +
+  "  check-script list --agent <名字> [--json]\n" +
+  "  check-script remove --agent <名字> --name <名字> --yes\n" +
+  "  check-script run --agent <名字> --name <名字>   只跑一次看结果（不通知、不唤醒）\n" +
+  "  seen-clear --yes   清空去重账本（下轮重复异常会再通知一次）\n" +
   "  commitments propose \"<内容>\" --remind-at <ISO> --expires-at <ISO> [--agent <名字>] [--channel <渠道>]\n" +
   "  commitments confirm <承诺 id>\n" +
   "  commitments list [--status proposed|confirmed|reminded|expired|done] [--json]\n" +
@@ -417,8 +599,8 @@ export function handleHeartbeat(argv: string[], home: string): number {
       const agent = get("--agent") ?? "";
       const every = get("--every-minutes") ? parseInt(get("--every-minutes")!, 10) : undefined;
       const checks = get("--checks") ? (get("--checks")!.split(",").map((s) => s.trim()).filter(Boolean) as CheckKind[]) : undefined;
-      const monitor = addHeartbeatMonitor(resolvedHome, { agent, intervalMinutes: every, checks });
-      process.stdout.write(`已添加 Heartbeat：agent ${monitor.agent}，每 ${monitor.intervalMinutes} 分钟检查（${monitor.checks.join("、")}）。\n`);
+      const monitor = addHeartbeatMonitor(resolvedHome, { agent, intervalMinutes: every, checks, wakeEnabled: argv.includes("--wake") });
+      process.stdout.write(`已添加 Heartbeat：agent ${monitor.agent}，每 ${monitor.intervalMinutes} 分钟检查（${monitor.checks.join("、")}）${monitor.wakeEnabled ? "，唤醒已开" : "，唤醒未开"}。\n`);
       return 0;
     }
     if (action === "list") {
@@ -484,6 +666,87 @@ export function handleHeartbeat(argv: string[], home: string): number {
         return 0;
       }
       process.stdout.write(`Heartbeat ${agent}：${result.findings.length} 项发现，已写收件箱：${result.findings.map((f) => f.summary).join("；")}\n`);
+      return 0;
+    }
+    if (action === "wake") {
+      const agent = get("--agent") ?? "";
+      if (!argv.includes("--on") && !argv.includes("--off")) {
+        process.stderr.write("错误：用法：nyra heartbeat wake --agent <名字> --on|--off\n");
+        return 2;
+      }
+      const monitor = setHeartbeatWake(resolvedHome, agent, argv.includes("--on"));
+      process.stdout.write(`agent ${monitor.agent} 的 Heartbeat 唤醒已${argv.includes("--on") ? "开启（只对 onHit=wake 的巡检命中生效）" : "关闭"}。\n`);
+      return 0;
+    }
+    if (action === "check-script") {
+      const sub = argv[1] ?? "";
+      const agent = get("--agent") ?? "";
+      if (sub === "add") {
+        if (!argv.includes("--yes")) {
+          process.stderr.write("错误：加巡检脚本须加 --yes，明确批准该命令在无人值守时定期执行（命令须过审批规则门禁）。\n");
+          return 2;
+        }
+        const name = get("--name") ?? "";
+        const command = get("--command") ?? "";
+        const timeout = get("--timeout") ? parseInt(get("--timeout")!, 10) : undefined;
+        const def = addCheckScript(resolvedHome, agent, {
+          name, command,
+          mode: get("--mode"), timeoutSec: timeout, onHit: get("--on-hit"),
+        });
+        process.stdout.write(`已加巡检脚本 ${def.name}（${def.command}，${def.mode}，${def.timeoutSec} 秒，命中${def.onHit === "wake" ? "唤醒主控" : "写收件箱"}）。\n`);
+        return 0;
+      }
+      if (sub === "list") {
+        const scripts = listCheckScripts(resolvedHome, agent);
+        if (argv.includes("--json")) {
+          process.stdout.write(JSON.stringify(scripts, null, 2) + "\n");
+          return 0;
+        }
+        if (!scripts.length) {
+          process.stdout.write("没有巡检脚本。\n");
+          return 0;
+        }
+        for (const s of scripts) {
+          process.stdout.write(`${s.name}  ${s.command}（${s.mode}，${s.timeoutSec} 秒，命中${s.onHit === "wake" ? "唤醒" : "通知"}）\n`);
+        }
+        return 0;
+      }
+      if (sub === "remove") {
+        const name = get("--name") ?? "";
+        if (!argv.includes("--yes")) {
+          process.stderr.write("删除巡检脚本须加 --yes 确认：nyra heartbeat check-script remove --agent <名字> --name <名字> --yes\n");
+          return 2;
+        }
+        if (!removeCheckScript(resolvedHome, agent, name)) {
+          process.stderr.write(`没有巡检脚本 ${name}\n`);
+          return 1;
+        }
+        process.stdout.write(`已删除巡检脚本 ${name}。\n`);
+        return 0;
+      }
+      if (sub === "run") {
+        const name = get("--name") ?? "";
+        const scripts = listCheckScripts(resolvedHome, agent);
+        const def = scripts.find((s) => s.name === name);
+        if (!def) {
+          process.stderr.write(`没有巡检脚本 ${name}\n`);
+          return 1;
+        }
+        const outcome = runCheckScript(def);
+        process.stdout.write(`${describeCheckScriptOutcome(def, outcome)}（${outcome.durationMs} 毫秒${outcome.reason ? `，${outcome.reason}` : ""}）\n`);
+        if (outcome.stdout.trim()) process.stdout.write(`输出：\n${outcome.stdout}\n`);
+        return outcome.outcome === "failed" ? 1 : 0;
+      }
+      process.stderr.write(`错误：未知子命令 check-script ${sub}\n${USAGE}`);
+      return 2;
+    }
+    if (action === "seen-clear") {
+      if (!argv.includes("--yes")) {
+        process.stderr.write("清空去重账本须加 --yes 确认：nyra heartbeat seen-clear --yes\n");
+        return 2;
+      }
+      clearHeartbeatSeen(resolvedHome);
+      process.stdout.write("去重账本已清空（下轮重复异常会再通知一次）。\n");
       return 0;
     }
     if (action === "commitments") {

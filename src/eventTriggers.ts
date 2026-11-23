@@ -599,7 +599,7 @@ export async function pollGmailTriggers(
   }
   let dispatched = 0;
   for (const m of unseen) {
-    const result = dispatchEvent({
+    const event: IncomingEvent = {
       source: "gmail",
       eventType: "gmail.new_mail",
       eventId: m.id,
@@ -611,8 +611,17 @@ export async function pollGmailTriggers(
         subject: m.subject, date: m.date, snippet: m.snippet, labels: m.labels ?? [],
       },
       auth: "gmail-oauth",
-    }, { home });
+    };
+    const result = dispatchEvent(event, { home });
     dispatched += result.dispatched.length;
+    // 缺口 25 的尾巴：同名事件的工作流触发器也跑一遍（全局开关关着直接跳过；
+    // 触发失败只记 stderr，不破坏轮询）。
+    try {
+      const { fireWorkflowEventTriggers } = await import("./workflowTriggers.ts");
+      await fireWorkflowEventTriggers(home, event);
+    } catch (err: unknown) {
+      process.stderr.write(`工作流事件触发失败：${err instanceof Error ? err.message : String(err)}\n`);
+    }
   }
   saveGmailPollState(home, {
     lastPollAt: now.toISOString(),

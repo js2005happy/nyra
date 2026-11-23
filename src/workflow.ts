@@ -2262,7 +2262,7 @@ export function verifyWorkflowRun(home: string, runId: string): { ok: boolean; e
 // ---------------------------------------------------------------------------
 
 const WORKFLOW_USAGE = [
-  "用法：nyra workflow <import|list|show|run|dry-run|resume|trial|activate|remove|verify> [参数]",
+  "用法：nyra workflow <import|list|show|run|dry-run|resume|trial|activate|remove|verify|triggers> [参数]",
   "",
   "  import <文件.yaml|json>              导入工作流定义（校验 DSL 与工具名，状态 draft）",
   "  list                                 列出已导入的工作流与状态",
@@ -2271,7 +2271,8 @@ const WORKFLOW_USAGE = [
   "  dry-run <名字> [--input k=v]...      只列出会写/会发什么，不执行；计划带哈希可 verify",
   "  resume <运行 id>                     审批通过/拒绝后，从挂起的节点继续跑",
   "  trial <名字> --yes [--input k=v]...  拿真实数据试跑一遍（真执行），跑通才记 trial_passed",
-  "  activate <名字> --yes                试跑通过后激活（只有 active 才能挂触发器，触发执行是下一批）",
+  "  activate <名字> --yes                试跑通过后激活（只有 active 的工作流会被触发执行）",
+  "  triggers <status|enable|disable|run>  触发器执行总开关（默认关；enable 须 --yes）与到点触发器手动跑一轮",
   "  remove <名字> --yes                  删除定义与注册（运行记录保留）",
   "  verify <运行 id>                     用定义快照重算 dry-run 计划、比哈希",
   "",
@@ -2433,8 +2434,56 @@ export async function handleWorkflow(argv: string[], home: string): Promise<numb
       if (!name) { process.stderr.write("错误：activate 后面须跟工作流名字\n"); return 2; }
       activateWorkflow(resolvedHome, name, argv.includes("--yes"), req.workdir);
       const pinned = listPreauth(resolvedHome, workflowRoutineId(name)).length;
-      process.stdout.write(`工作流 ${name} 已激活。纯脚本摘要已钉 ${pinned} 个（改了内容须重新 trial + activate；nyra script preauth list --workflow ${name} 查看）。注意：触发器执行是下一批，本批只声明 + 校验触发器入口。\n`);
+      process.stdout.write(`工作流 ${name} 已激活。纯脚本摘要已钉 ${pinned} 个（改了内容须重新 trial + activate；nyra script preauth list --workflow ${name} 查看）。触发器执行默认关闭，须 nyra workflow triggers enable --yes 显式开启后，active 工作流的触发器才会被执行。\n`);
       return 0;
+    }
+    if (action === "triggers") {
+      const sub = argv[1] ?? "";
+      const { describeWorkflowTriggers, runDueWorkflowTriggers, setWorkflowTriggersEnabled } = await import("./workflowTriggers.ts");
+      if (sub === "status") {
+        const st = describeWorkflowTriggers(resolvedHome);
+        process.stdout.write(`触发器执行：${st.enabled ? "已开启" : "未开启（默认关，nyra workflow triggers enable --yes 开启）"}\n`);
+        if (!st.workflows.length) {
+          process.stdout.write("没有 active 且带触发器的工作流。\n");
+          return 0;
+        }
+        for (const w of st.workflows) {
+          const desc = w.triggers.map((t) => (t.type === "schedule" ? `定时 ${t.cron}` : `事件 ${t.event}`)).join("、");
+          process.stdout.write(`${w.name}：${desc}\n`);
+        }
+        return 0;
+      }
+      if (sub === "enable") {
+        if (!argv.includes("--yes")) {
+          process.stderr.write("错误：开启触发器执行须加 --yes，明确允许守护进程按触发器自动跑工作流（只跑 active 的工作流，写操作照常挂起等审批）。\n");
+          return 2;
+        }
+        setWorkflowTriggersEnabled(resolvedHome, true);
+        process.stdout.write("触发器执行已开启：守护进程每轮会跑到点的定时触发器，网关与 Gmail 轮询会触发同名事件的工作流。\n");
+        return 0;
+      }
+      if (sub === "disable") {
+        setWorkflowTriggersEnabled(resolvedHome, false);
+        process.stdout.write("触发器执行已关闭。\n");
+        return 0;
+      }
+      if (sub === "run") {
+        const report = await runDueWorkflowTriggers(resolvedHome, { workdir: req.workdir, now: new Date() });
+        if (report.skipped) {
+          process.stdout.write(`触发器执行跳过：${report.skipped}\n`);
+          return 0;
+        }
+        if (!report.fired.length) {
+          process.stdout.write("本轮没有到点的触发器。\n");
+          return 0;
+        }
+        for (const f of report.fired) {
+          process.stdout.write(`工作流 ${f.workflow} 已触发（${f.status === "ok" ? `运行 ${f.runId}` : `失败：${f.error ?? ""}`}）\n`);
+        }
+        return report.fired.every((f) => f.status === "ok") ? 0 : 1;
+      }
+      process.stderr.write(`错误：未知动作 triggers ${sub}（应为 status|enable|disable|run）\n${WORKFLOW_USAGE}\n`);
+      return 2;
     }
     if (action === "remove") {
       const name = argv[1];

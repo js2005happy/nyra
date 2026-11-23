@@ -1822,6 +1822,15 @@ export class Gateway {
         if ("challenge" in normalized) { this.sendJson(res, 200, { challenge: normalized.challenge }); return; }
         const result = dispatchEvent({ ...normalized.event, auth }, { home: this.home });
         this.sendJson(res, 202, { accepted: true, ...result });
+        // 缺口 25 的尾巴：同名事件的工作流触发器也跑一遍。不等它跑完再回
+        // 202（工作流可能跑很久）；失败只记 stderr，不破坏 webhook 响应。
+        void import("./workflowTriggers.ts").then(async ({ fireWorkflowEventTriggers }) => {
+          try {
+            await fireWorkflowEventTriggers(this.home, { ...normalized.event, auth });
+          } catch (err: unknown) {
+            process.stderr.write(`工作流事件触发失败：${err instanceof Error ? err.message : String(err)}\n`);
+          }
+        }).catch(() => { /* 触发模块载入失败也不破坏 webhook */ });
       } catch (err) {
         if (err instanceof WebhookError) this.sendError(res, err.status, err.message);
         else if (err instanceof EventTriggerError) this.sendError(res, 400, err.message);
