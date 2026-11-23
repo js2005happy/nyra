@@ -1,3 +1,9 @@
+## 2026-11-23 — 未知工具名回显隐私（仅静态）
+
+- 已读取开发分支 README、DESIGN、CHANGELOG、VERIFICATION、ROADMAP、tools/agent，查询近期提交、开放 Issues（无）与 PR #113（固定任务评测）。源码事实：`execute_tool` 的未知工具分支原样插入调用者提供的 `name`；改为固定错误字符串，定义两项未运行回归测试。
+- 2026-11-23 核对外部用户反馈：2026-07-03 [Codex #31015](https://github.com/openai/codex/issues/31015) 报告后置脱敏无法防止原始工具输出进入记录；2026-07-19 [Codex #34233](https://github.com/openai/codex/issues/34233) 报告敏感配置进入工具输出。这是其他产品个案，不是 Angel 已发生事故或总体频率证明。
+- 仅 GitHub 静态阅读与文件写入；未运行测试、编译、CI、安装、真实工具执行、合并 main 或发布。其他工具成功输出、参数展示和模型输入未全局脱敏。
+
 ## 2026-11-23 — 本地 edit_file 缺失路径隐私（仅静态）
 
 - 已读取开发分支 README、DESIGN、CHANGELOG、VERIFICATION、ROADMAP、核心 tools/agent，查询近期提交、开放 Issues（无）、PR #113（评测）及前次提交 CI 状态/关联工作流（均无记录，不能视为通过）。
