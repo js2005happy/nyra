@@ -1,3 +1,10 @@
+## P1 — structured local shell reports (2026-11-24; static only)
+
+- **Observed source fact:** local shell returned text only, and the Agent classified the result by `错误：` prefixes. A zero-exit command printing that prefix could be logged as a failure. **Engineering inference:** in-process exit metadata is more reliable than text heuristics; it is not external side-effect verification.
+- **External user feedback reviewed 2026-11-24:** [Codex #50301](https://github.com/openai/codex/issues/50301), opened 2026-10-02, describes aggregate shell status masking individual command failures; [Codex #24226](https://github.com/openai/codex/issues/24226), opened 2026-05-23, discusses legitimate nonzero command statuses. Neither proves Angel incident prevalence or identical behavior.
+- **Implemented:** local shell structured outcome (high value / medium difficulty / medium safety risk / existing classifier), preserving approvals and user-facing text; timeout reports unknown. **Static only, untested.**
+- **Ranked remaining (value / difficulty / safety risk / dependencies; engineering judgment):** P1 structured HTTP POST report (high / medium / medium / trusted HTTP status path); P1 remote shell report contract (high / high / high / backend protocol); P1 remaining direct-output privacy audit (high / medium / medium / source inventory); P1 pre-model/pre-record privacy protection (high / high / high / policy and consent); P1 independent side-effect receipts (high / high / high / trusted readback). Aggregate shell status cannot establish each command's success.
+
 ## P1 — delegated exception privacy (2026-11-24; static only)
 
 - **Source fact:** `Agent.delegate` previously returned raw `AgentError` text or unexpected exception class/message to the parent model. Child exceptions may contain secrets or private file paths; this is a source-level exposure path, not a confirmed incident.
