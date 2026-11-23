@@ -1,3 +1,10 @@
+## 2026-11-24 — HTTP POST structured outcome (static only)
+
+- Reviewed README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, core Agent/Tools and typed classifier on existing development branch; checked recent commits, open Issues (none), draft PR #113 and available CI metadata. No project code executed.
+- Source fact: HTTP POST previously returned a status-prefixed string and journal/no-progress classification relied on legacy text prefixes. Now the in-process transport branch provides `StructuredToolReport` independently of untrusted body text; non-2xx/HTTPError are reported failures, network exceptions are unknown. Legacy `execute_tool` still returns a string and approval is invoked only once. A 2xx does not verify remote side effects.
+- External feedback checked 2026-11-24: [Codex #58569](https://github.com/openai/codex/issues/58569), November 2026 report, describes successful local side effects preceding HTTP 400 continuation failure; [Codex #59305](https://github.com/openai/codex/issues/59305), opened 2026-11-04, requests distinguishing terminal tool completion from further model turns. These are other-product individual reports, not proof of an Angel incident or measured frequency.
+- **Not executed:** tests, build, CI, live POST, dependency installation, account actions, main merge or release. HTTP 2xx is only a transport report, not a trusted business acceptance receipt. Timeout/connection failure remains unknown and is not retried.
+
 ## 2026-11-24 — local shell structured outcome (static only)
 
 - Inspected development-branch README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, core Agent/Tools, structured classifier, current PR #113 and open issues. No project tests or shell commands executed.
