@@ -1,3 +1,10 @@
+## 2026-11-23 — HTTP POST HTTPError failure status (static-only)
+
+- Reviewed README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, `angel/tools.py`, `angel/agent.py`, `angel/tool_report_status.py`, recent commits, open Issues/PR #113 and preceding commit CI metadata (no statuses or associated PR-triggered runs returned).
+- Source fact: `urllib.error.HTTPError` returned `HTTP <code>` without a recognized failure prefix. Existing classifier recognizes `错误：` and `执行失败：`. This change adds `错误：` only for HTTPError and retains code/body; it cannot establish whether a remote POST was applied.
+- Public evidence reviewed 2026-11-23: Codex #40646 (2026-08-25, unsupported completion claims) and #58639 (2026-11-01 discussion, HTTP 400 failures). External reports are not Angel defect-frequency evidence.
+- Static-only review; no tests, compilation, CI dispatch, HTTP calls, installs, account changes, main merge or production release. Cross-platform behavior and response-body privacy remain unverified.
+
 ## 2026-11-23 — git_status diff 非零退出（仅静态审查）
 
 - 阅读开发分支 README、DESIGN、CHANGELOG、VERIFICATION、ROADMAP、核心 tools/agent；查询近期提交、开放 Issues/PR、上一提交状态及 PR 工作流元数据（状态及工作流均为空，不能认定通过）。
