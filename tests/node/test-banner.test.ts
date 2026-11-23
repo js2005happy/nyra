@@ -12,7 +12,7 @@ import {
 import { textWidth } from "../../src/consoleUi.ts";
 import { TERM_MARK_COLS, TERM_MARK_ROWS } from "../../src/termMark.ts";
 
-const INFO = { version: "0.5.5", model: "deepseek / deepseek-flash", mode: "auto", cwd: "/home/sj/projects/nyra-cli", branch: "main" };
+const INFO = { version: "0.5.6", model: "deepseek / deepseek-flash", mode: "auto", cwd: "/home/sj/projects/nyra-cli", branch: "main" };
 
 test("BannerTest.test_header_snapshot_wide", () => {
   const out = renderHeader(INFO, { width: 100, color: false, unicode: true, home: "/home/sj" }).join("\n");
@@ -21,7 +21,7 @@ test("BannerTest.test_header_snapshot_wide", () => {
     "  ▄██████████████▄",
     " ██████████████████",
     " ██████████████████",
-    " █████▀▀████▀▀█████   Nyra v0.5.5",
+    " █████▀▀████▀▀█████   Nyra v0.5.6",
     " █████  ████  █████   跑在你电脑上的开源 AI Agent",
     " █████  ████  █████",
     " ██████████████████",
@@ -45,13 +45,13 @@ test("BannerTest.test_header_narrow_truncates_then_falls_back_to_single_line", (
   expect(renderHeader(INFO, { width: MARK_MIN_COLS, unicode: true }).join("")).toContain("█");
   expect(renderHeader(INFO, { width: MARK_MIN_COLS - 1, unicode: true }).join("")).not.toContain("█");
   const narrow = renderHeader(INFO, { width: MARK_MIN_COLS - 1, color: false, unicode: true, home: "/home/sj" });
-  expect(narrow.slice(0, 2)).toEqual(["", "✻ Nyra 0.5.5"]);
+  expect(narrow.slice(0, 2)).toEqual(["", "✻ Nyra 0.5.6"]);
   for (const l of lines) expect(textWidth(l)).toBeLessThanOrEqual(50);
 });
 
 test("BannerTest.test_header_compact_for_non_tty", () => {
   const lines = renderHeader(INFO, { width: 120, unicode: true, compact: true });
-  expect(lines[1]).toBe("✻ Nyra 0.5.5");
+  expect(lines[1]).toBe("✻ Nyra 0.5.6");
   expect(lines.join("")).not.toContain("█");
 });
 
@@ -59,7 +59,7 @@ test("BannerTest.test_header_snapshot_ascii", () => {
   const out = renderHeader(INFO, { width: 100, color: false, unicode: false, home: "/home/sj" }).join("\n");
   expect(out).toBe([
     "",
-    "* Nyra 0.5.5",
+    "* Nyra 0.5.6",
     "+------------------------------------------+",
     "| 模型  deepseek / deepseek-flash          |",
     "| 模式   auto                              |",
@@ -89,7 +89,7 @@ test("BannerTest.test_mark_replaces_wordmark", () => {
   expect(mark.length).toBe(TERM_MARK_ROWS);
   for (const l of mark) expect(textWidth(l.slice(0, 1 + TERM_MARK_COLS))).toBeLessThanOrEqual(1 + TERM_MARK_COLS);
   expect(out.join("\n")).not.toContain("██▄   ██");
-  expect(out.join("\n")).toContain("Nyra v0.5.5");
+  expect(out.join("\n")).toContain("Nyra v0.5.6");
 });
 
 test("BannerTest.test_never_angel", () => {

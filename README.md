@@ -187,11 +187,11 @@ chmod +x nyra-linux-x64
 ./nyra-linux-x64 doctor     # 中文自检：Key、网络、目录权限、磁盘
 ```
 
-> 注意：Release 里已有现成二进制（最新版 v0.5.5，见下文「安装」）：Linux x64/arm64、Windows x64、macOS arm64/x64 各一个。想自己编：`bash scripts/build-binaries.sh --only linux-x64`（产物在 `dist/`，Windows/macOS 同理，只编对应目标）。
+> 注意：Release 里已有现成二进制（最新版 v0.5.6，见下文「安装」）：Linux x64/arm64、Windows x64、macOS arm64/x64 各一个。想自己编：`bash scripts/build-binaries.sh --only linux-x64`（产物在 `dist/`，Windows/macOS 同理，只编对应目标）。
 
 还没 Key 也能先跑 `--help` / `--version` / `--list-providers`（不联网、不花钱）。跑模型任务需要 Key：没设 Key 时会直接打印设置说明并退出（退出码 1），不会发请求、不会产生费用。没有 Key 可先用本地模型：`nyra --provider ollama "…"`（需本机装好 Ollama）或 `--provider codex`（复用本机 Codex 登录）。
 
-> 注意：0.5.5 的 Node 二进制是完整版（agent 核心、网页界面、插件市场、创造模式都在内）。Windows/macOS 二进制未签名、未公证，首次运行会有系统提示（见各平台安装文档）。
+> 注意：0.5.6 的 Node 二进制是完整版（agent 核心、网页界面、插件市场、创造模式都在内）。Windows/macOS 二进制未签名、未公证，首次运行会有系统提示（见各平台安装文档）。
 
 **源码方式（想自己构建或看代码）**：见下文「安装 → 从源码构建」。
 
@@ -201,10 +201,10 @@ chmod +x nyra-linux-x64
 
 ## 安装
 
-最新版 **v0.5.5**，所有安装方式都不用装 Python、不用装 Node/Bun（Node 单文件二进制自带运行时）。装完先跑验证，再配 Key（配 Key 的方法见上文「快速开始」）：
+最新版 **v0.5.6**，所有安装方式都不用装 Python、不用装 Node/Bun（Node 单文件二进制自带运行时）。装完先跑验证，再配 Key（配 Key 的方法见上文「快速开始」）：
 
 ```bash
-nyra --version   # 应输出 nyra 0.5.5 (node runtime)
+nyra --version   # 应输出 nyra 0.5.6 (node runtime)
 nyra doctor      # 中文自检：Key、网络、目录权限、磁盘
 nyra setup       # 首次启动向导（中文，三步到第一个任务）
 ```
@@ -217,9 +217,9 @@ nyra setup       # 首次启动向导（中文，三步到第一个任务）
 | --- | --- | --- |
 | Node 二进制（推荐，命令行） | 到 [Releases](https://github.com/js2005happy/nyra/releases) 下最新版，下载 `nyra-windows-x64.exe`，放到固定文件夹（如 `C:\Tools\nyra\`）并把文件夹加进 PATH | 只用命令行 |
 | 一键脚本 | PowerShell 里跑 `irm https://raw.githubusercontent.com/js2005happy/nyra/main/scripts/install-node.ps1 \| iex`（装到 `~\nyra`、加 PATH、建桌面快捷方式） | 想一步到位 |
-| 桌面端（带窗口） | 在 Release 里下载 `Nyra_0.5.5_x64-setup.exe` 或 `Nyra_0.5.5_x64_en-US.msi` | 想要窗口界面 |
+| 桌面端（带窗口） | 在 Release 里下载 `Nyra_0.5.6_x64-setup.exe` 或 `Nyra_0.5.6_x64_en-US.msi` | 想要窗口界面 |
 
-验证：`nyra --version` 应输出 `nyra 0.5.5 (node runtime)`。常见问题：exe 双击后窗口一闪而过是正常的（它是控制台程序，在 PowerShell 里跑）；SmartScreen 警告见上文。详见 [docs/windows-install.md](docs/windows-install.md)，桌面端见 [docs/desktop.md](docs/desktop.md)。
+验证：`nyra --version` 应输出 `nyra 0.5.6 (node runtime)`。常见问题：exe 双击后窗口一闪而过是正常的（它是控制台程序，在 PowerShell 里跑）；SmartScreen 警告见上文。详见 [docs/windows-install.md](docs/windows-install.md)，桌面端见 [docs/desktop.md](docs/desktop.md)。
 
 > 如实说明：Windows 二进制在 CI 的 `windows-latest` 上跑过 `--version` / `--example` 冒烟，但还没在任何一台真 Windows 电脑上跑过。装不上时把报错原文贴到仓库 issue 里。
 
@@ -229,9 +229,9 @@ nyra setup       # 首次启动向导（中文，三步到第一个任务）
 | --- | --- | --- |
 | Node 二进制（推荐，命令行） | `bash scripts/install-node-macos.sh`（从 Releases 下载对应架构：arm64 用 `nyra-macos-arm64`，Intel 用 `nyra-macos-x64`；装到 `~/.local/share/nyra`，链接在 `~/.local/bin/nyra`） | 只用命令行 |
 | 手动下载 | 到 [Releases](https://github.com/js2005happy/nyra/releases) 下最新版，按架构下载 `nyra-macos-arm64` 或 `nyra-macos-x64`，`chmod +x` 后直接跑 | 不想跑脚本 |
-| 桌面端（带窗口，`.dmg`） | 在 Release 里下载 `Nyra_0.5.5_universal.dmg` | 想要窗口界面 |
+| 桌面端（带窗口，`.dmg`） | 在 Release 里下载 `Nyra_0.5.6_universal.dmg` | 想要窗口界面 |
 
-验证：`nyra --version` 应输出 `nyra 0.5.5 (node runtime)`。常见问题：Gatekeeper 首次运行会拦，右键点二进制选“打开”放行一次；`~/.local/bin` 不在 PATH 里时按脚本提示加到 `~/.zshrc`。`.pkg` 安装器没有。详见 [docs/macos-install.md](docs/macos-install.md)，桌面端见 [docs/desktop.md](docs/desktop.md)。
+验证：`nyra --version` 应输出 `nyra 0.5.6 (node runtime)`。常见问题：Gatekeeper 首次运行会拦，右键点二进制选“打开”放行一次；`~/.local/bin` 不在 PATH 里时按脚本提示加到 `~/.zshrc`。`.pkg` 安装器没有。详见 [docs/macos-install.md](docs/macos-install.md)，桌面端见 [docs/desktop.md](docs/desktop.md)。
 
 > 如实说明：macOS 安装脚本是在 Linux 上写好、只做了语法与占位替换检查，**尚未在真 Mac 上跑通过**；桌面 `.dmg` 也没有在真机上手动装过。
 
@@ -241,10 +241,10 @@ nyra setup       # 首次启动向导（中文，三步到第一个任务）
 | --- | --- | --- |
 | Node 二进制（推荐） | `bash scripts/install-node.sh`（从 Releases 下载对应架构：x64 用 `nyra-linux-x64`，arm64 用 `nyra-linux-arm64`；装到 `~/.local/share/nyra`，链接在 `~/.local/bin/nyra`） | 大多数人 |
 | 手动下载 | 到 [Releases](https://github.com/js2005happy/nyra/releases) 下最新版，按架构下载，`chmod +x` 后直接跑 | 不想跑脚本 |
-| `.deb` / tarball | 自己打出来：`bash scripts/build-binaries.sh --only linux-x64 && bash scripts/build-package-node.sh`，再 `sudo dpkg -i dist/nyra-node_0.5.5_amd64.deb`（`.deb` / tarball 不在 Release 里） | Debian/Ubuntu，想装进系统目录 |
+| `.deb` / tarball | 自己打出来：`bash scripts/build-binaries.sh --only linux-x64 && bash scripts/build-package-node.sh`，再 `sudo dpkg -i dist/nyra-node_0.5.6_amd64.deb`（`.deb` / tarball 不在 Release 里） | Debian/Ubuntu，想装进系统目录 |
 | 调度器常驻 | 安装时加 `--with-systemd`，再 `systemctl --user enable --now nyra-scheduler.service`（只装服务文件、不自动启动；不需要 root） | 想让定时任务后台一直跑 |
 
-验证：`nyra --version` 应输出 `nyra 0.5.5 (node runtime)`。常见问题：`nyra: command not found` 是 `~/.local/bin` 不在 PATH 里，加 `export PATH="$HOME/.local/bin:$PATH"` 到 `~/.bashrc`；没用户 systemd 总线的机器（容器、WSL 默认配置）用 `nyra schedule daemon` 在终端里跑。详见 [docs/linux-install.md](docs/linux-install.md)、[docs/linux-packaging.md](docs/linux-packaging.md)、[docs/linux-systemd.md](docs/linux-systemd.md)。
+验证：`nyra --version` 应输出 `nyra 0.5.6 (node runtime)`。常见问题：`nyra: command not found` 是 `~/.local/bin` 不在 PATH 里，加 `export PATH="$HOME/.local/bin:$PATH"` 到 `~/.bashrc`；没用户 systemd 总线的机器（容器、WSL 默认配置）用 `nyra schedule daemon` 在终端里跑。详见 [docs/linux-install.md](docs/linux-install.md)、[docs/linux-packaging.md](docs/linux-packaging.md)、[docs/linux-systemd.md](docs/linux-systemd.md)。
 
 ### 手机 PWA（不用应用商店）与安卓 APK
 

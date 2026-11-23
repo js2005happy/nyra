@@ -52,7 +52,7 @@ test("GatewayHealthTest.test_health_no_token_and_info_needs_token", async () => 
     const withToken = await fetch(`${base}/api/info`, { headers: { "X-Nyra-Token": gw.token } });
     expect(withToken.status).toBe(200);
     const body = await withToken.json() as { version: string; mode: string };
-    expect(body.version).toBe("0.5.5");
+    expect(body.version).toBe("0.5.6");
     expect(body.mode).toBe("full");
     // X-Angel-Token 兼容（spec 07）。
     const angel = await fetch(`${base}/api/info`, { headers: { "X-Angel-Token": gw.token } });
