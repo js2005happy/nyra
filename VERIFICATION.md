@@ -1,3 +1,10 @@
+## 2026-11-23 — grep_search 正则错误信息隐私（仅静态）
+
+- 读取开发分支 README、DESIGN、CHANGELOG、VERIFICATION、ROADMAP、tools/agent 核心源码；查询近期提交、开放 Issues（无）、PR #113（真实任务评测），确认没有重复评测开发。
+- 源码发现：grep_search 本地与远端的 re.error 分支将解析器异常正文返回给模型；本轮改为固定错误信息。正则解析器消息可能包含模式片段属于工程风险推断，未复现泄露。
+- 2026-11-23 核对公开反馈：Codex #34233（2026-07-19，敏感工具输出）及 #31015（2026-07-03，后置脱敏时机），均为外部个案而非 Angel 事故证据。
+- 未运行测试、编译、CI、安装或真实工具执行；跨平台及兼容性未经运行验证。成功搜索结果仍可能含敏感数据。
+
 ## 2026-11-23 — grep_search 缺失路径隐私（仅静态）
 
 - 已检查开发分支 README、DESIGN、CHANGELOG、VERIFICATION、ROADMAP、Agent/Tools 源码、近期提交、开放 Issues/PR 与既有提交 CI 元数据；PR #113 涉及真实任务评测，未重复实现。
