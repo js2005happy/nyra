@@ -115,6 +115,7 @@
 | `nyra optimize <propose\|list\|show\|edit\|approve\|reject\|apply\|verify\|revert\|loop\|arms>` | G-4：带人批的自优化环——只起草改指令建议，须人批才生效，三数据集 + holdout 定放行；G-P1-29：`loop` 读评测报告自动起草提议并按 UCB 排队，`arms` 看臂排行（详见 `docs/governance.md`） |
 | `nyra eval <scenarios\|scorecard\|benchmarks\|import\|benchmark\|remove\|probes\|probe\|manifest>` | G-P1-30：评测当一等公民——场景成绩单 + 外部基准集导入 + 仓内探针 + 可复现清单；跑评测走 `bun run scripts/eval.ts run --scenario/--benchmark/--probe`（详见 `docs/eval.md`） |
 | `nyra review <list\|show\|approve\|reject\|apply…>` | 审阅队列：逐项批准并行线程与定时任务结果 |
+| `nyra hitl <start\|takeover\|handback\|cancel\|status\|list>` | 对话转人工坐席（G-P1-32）：会话转给真人、真人接手、再接回 bot；转人工期间 bot 不自动回（详见 `docs/hitl.md`） |
 
 ## 扩展与集成
 
