@@ -1,3 +1,7 @@
+## Unreleased — 2026-11-24 web_search non-2xx response guard (static only)
+
+- Search backend HTML is now parsed only after an explicitly observed 2xx HTTP status. Non-2xx or missing status is rejected before reading a body; the existing Bing-to-Baidu fallback handles the rejection without exposing remote error bodies. No new dependencies, retries, approvals or outbound calls. Static review only; no tests or CI run.
+
 ## Unreleased — 2026-11-24 web_fetch non-2xx evidence guard (static only)
 
 - Read-only web_fetch now rejects a non-2xx response before reading its body or persisting evidence, including transports that return the status without raising HTTPError. Generic failure text avoids exposing response URLs. No changes to successful fetches, dependencies or approvals.
