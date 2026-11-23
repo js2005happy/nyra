@@ -179,6 +179,33 @@ nyra optimize revert <提议 id> --yes
   `MEMORY.md`、不进 `.nyra/`、不越出工作目录。验证测试只限
   `tests/node/` 下的 `.test.ts` 文件；回归用例 id 须在库里存在。
 
+## 评测驱动的优化闭环（G-P1-29）
+
+`nyra optimize loop` 把评测报告接进自优化环：读报告 → 失败聚类成臂
+→ 自动起草提议 → UCB 排队；verify 的结果回填进臂账本，下一份报告重排。
+
+```bash
+nyra optimize loop --eval-report docs/eval-results/<报告>.json --target docs/notes.md [--json]
+nyra optimize arms [--json]
+```
+
+- **只读已完成的报告**：须是 schemaVersion 1 的 nyra-real-tasks-v1 报告，
+  未跑完、目录外任务 id 都拒绝；loop 不重跑评测（评测要花模型钱），只读
+  人跑好的报告。
+- **聚类**：只看每题第一次尝试；passed/blocked 不进簇；簇键 = 类别
+  （code/browser/research/connector）+ 首个未通过的验收项 id（无验收项
+  记 no-checks）。
+- **起草**：没有未结提议（draft/approved/applied）的簇自动起草一条模板提议
+  （来源 `eval-report`，带 armKey）；已有未结提议的簇复用，不重起。起草
+  的都是 draft，不改文件。
+- **UCB 排队**：臂账本 `~/.nyra/optimizer-arms.json`（原子写 0600）；分数
+  = 均值 + √2·√(ln(总拉动 + 1)/拉动)，没拉过的臂优先，分数相等按 key 升
+  序；`arms` 看排行，loop 结束打印下一条最值得批的提议。
+- **回填**：verify 放行记奖励 1、失败记 0（拉动次数只在 verify 时 +1）；
+  闭环跨报告跑，一轮 loop 只处理一份报告。
+- **apply 仍须人批**：批过才能改文件，验证不过自动回滚——loop 不改变
+  这条硬门。
+
 ## 分层成本上限（缺口 43 第三批）
 
 组织级上限就是已有的月度硬顶（`config.json` 的
