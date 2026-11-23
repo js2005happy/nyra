@@ -3,13 +3,15 @@
 缺口 47 第一批：外部 agent 可以作为 Nyra 的一个 Bot 接入——用对方的
 模型、工具与运行时，Nyra 提供 workspace、治理、记忆与体验。做兼容者，
 不另起协议：Nyra 实现 AG-UI 客户端兼容，能接任意 AG-UI endpoint。
+第二批：反过来，Nyra 自己对外暴露成 AG-UI endpoint，别的 agent /
+编辑器能调用 Nyra（`nyra agui serve`）。
 
 ## 分工（CopilotKit 的划分）
 
 - MCP 管工具（缺口 17：客户端 stdio + Streamable HTTP 已落地，对外 MCP
   服务 `nyra mcp server` 也已落地，见 `docs/mcp.md`）。
 - A2A 管 agent 间通信（缺口 38 的名片 + 缺口 12 的交接）。
-- AG-UI 管 agent—人交互（本批：`nyra agui`）。
+- AG-UI 管 agent—人交互（本批：`nyra agui`；服务端：`nyra agui serve`）。
 
 ## 用法
 
@@ -80,8 +82,69 @@ Bot 方向报告成文时写缺口 17“待做”，但代码已先于本批落�
 ## 本批不做
 
 - Nyra 的 Bot 对外暴露为 AG-UI/A2A endpoint（第二批：对外暴露 +
-  治理接线）。
-- 外部 agent 落在哪台持久电脑上（缺口 42 的电脑分配，第二批随对
-  外暴露一起定）。
+  治理接线）——已做，见下节「服务端：把 Nyra 对外暴露成 AG-UI endpoint」。
+- 外部 agent 落在哪台持久电脑上（缺口 42 的电脑分配）：本批未做——
+  服务端运行目前用主 agent 的工作目录，不分配 Bot 电脑。
 - 真实外部 AG-UI 服务的对接：本批只在假 endpoint（本机 HTTP）上
   验过；真 API 未跑通；Windows/macOS 真机未验证。
+
+## 服务端：把 Nyra 对外暴露成 AG-UI endpoint（缺口 47 第二批）
+
+别的 agent / 编辑器调 Nyra：Nyra 起一个本地 AG-UI endpoint，
+对方按 AG-UI 协议发 run 请求、收 SSE 事件流。
+
+```sh
+nyra agui serve enable                     # 先启用（默认关闭，不启用起不来）
+nyra agui serve token new --name editor    # 建一条调用 token（明文只显示一次）
+nyra agui serve start                      # 前台启动：http://127.0.0.1:8766，Ctrl-C 停
+nyra agui serve status                     # 看配置与 token
+nyra agui serve grant <token-id> --yes     # 给某 token 写提议权
+nyra agui serve token revoke <token-id>    # 吊销 token（立即失效）
+```
+
+协议面（与第一批客户端同款口径，Nyra 自己的客户端能连上另一台 Nyra）：
+
+- **发现**：`GET /` 或 `POST { type: "handshake", protocol: "ag-ui", ... }`
+  回 `{ ok: true, protocol: "ag-ui", version, capabilities }`，不鉴权。
+- **运行**：`POST /`，须 `Authorization: Bearer <token>`（无 token 401、
+  错 token 403），body 是 AG-UI run 请求 `{ threadId, runId, messages,
+  tools?, state? }`，任务取 messages 里最后一条 user 消息；回 SSE 流
+  `RUN_STARTED` → `TEXT_MESSAGE_START`/`TEXT_MESSAGE_CONTENT`（delta
+  是规范的增量字段，第一批客户端也已认）→ `TOOL_CALL_START`/`ARGS`/
+  `END` → `TEXT_MESSAGE_END` → `STATE_SNAPSHOT` → `RUN_FINISHED`，
+  出错发 `RUN_ERROR`（不发 `RUN_FINISHED`）。
+- **多轮**：threadId 对应本地会话（`agui-server-<thread>`），同 thread
+  的后续请求接着上轮上下文跑；state 字段本批只接受、不应用。
+
+安全口径（与第一批镜像，fail-closed）：
+
+1. 默认关闭、只在前台命令跑着时监听，停了端点就不存在；默认只绑
+   127.0.0.1（回环），默认端口 8766（网关是 8765）；`--host 0.0.0.0`
+   是操作者显式选择，启动时打警告。
+2. token 只存 SHA-256 指纹（timingSafeEqual 比对），明文永不落盘，
+   只在 `token new` 时显示一次；配置 `~/.nyra/agui-server.json`
+   原子写 0600。
+3. 对方发来的消息先过确定性注入扫描（与第一批同一套规则），可疑
+   直接以 `RUN_ERROR` 拒掉进证据链（`agui_server_blocked`），不执行、
+   不进模型上下文。
+4. 服务端运行一律以 origin `"peer"` 跑 Agent：只读工具正常执行，
+   写操作进第 2 批 G-P1-10 的 peer 提议门——只记提议（`nyra peer
+   proposal accept <提议 id> --yes` 才能执行），本次不执行。token
+   的写授权（`serve grant --yes`）只决定模型看不看得到写工具：没
+   授权时写工具直接从工具表里拿掉，模型连提议都提不出来；有授权
+   时才能提议，执行仍须机主逐条批。——写操作分两层：提议权与执行权，
+   本批只做到提议权。
+5. 成本硬顶照常（单次 `max_cost_usd` + 月度上限，网关同款口径），
+   超支停下；服务端不自动换模型（只用主 provider，不接 fallback 链）。
+6. 证据链：9 个新运行事件（`agui_server_started` /
+   `agui_server_run_started` / `agui_server_run_finished` /
+   `agui_server_blocked` / `agui_server_tool_proposed` /
+   `agui_server_write_granted` / `agui_server_write_revoked` /
+   `agui_server_token_created` / `agui_server_token_revoked`），只记
+   thread/run/token 名与结论，不记消息原文与 token 明文。
+
+第二批不做：ACP 协议（G-P1-20 的另一半，另排）；A2A 服务端；MCP
+工具暴露给服务端运行（mcpManager 为 null）；服务端运行的独立审查
+模型（peer 提议门已在写操作前面拦住，读操作不需要审查）；真 AG-UI
+客户端（CopilotKit 等）联调——只在 Nyra 自己的客户端 + 假客户端上
+验过；媒体面未加密，别当端到端加密用。
