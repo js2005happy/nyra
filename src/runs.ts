@@ -122,6 +122,12 @@ editor_diagnostics: ["workspace", "file", "errors", "warnings"],
 editor_asked: ["workspace", "chars"],
 editor_preview: ["file", "additions", "deletions"],
 editor_applied: ["file", "additions", "deletions"],
+// 第 6 批：手机云端连接进证据链——连上云端（哪个账号、哪台设备、哪个端点主机名，
+// 不记 token）、同步（推了几条、拉了几条、冲突几条）、冲突（哪个作用域、哪个键、
+// 最后留了哪边；值本身不进事件）。
+cloud_connected: ["account_id", "device_id", "endpoint_host"],
+cloud_synced: ["pushed", "pulled", "conflicts"],
+cloud_sync_conflict: ["scope", "key", "kept"],
 // 内置机器人市场：安装（哪个条目、哪个版本、哪种、哪个源、Bot Ready 评分、
 // 审查模型）、卸载（哪个条目、哪种）、发布（哪个条目、哪个版本、哪种、
 // 许可证、Bot Ready 评分）。事件里只记名字与来源 id，不记绝对路径——

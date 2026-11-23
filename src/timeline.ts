@@ -877,6 +877,19 @@ export function buildTimeline(store: RunStore, runId: string): Timeline {
         push(at, "event", `编辑器预览已应用：${str(ev.file) ?? "?"}（+${num(ev.additions) ?? 0} −${num(ev.deletions) ?? 0}）`, null, null, null);
         break;
       }
+      // 第 6 批：手机云端连接进时间线（只记账号 id、设备 id、端点主机名与计数，不记 token、不记同步的值）。
+      case "cloud_connected": {
+        push(at, "event", `已连上云端 ${str(ev.endpoint_host) ?? "?"}（设备 ${str(ev.device_id) ?? "?"}）`, null, null, null);
+        break;
+      }
+      case "cloud_synced": {
+        push(at, "event", `云端同步：推 ${num(ev.pushed) ?? 0} 条、拉 ${num(ev.pulled) ?? 0} 条、冲突 ${num(ev.conflicts) ?? 0} 条`, null, null, null);
+        break;
+      }
+      case "cloud_sync_conflict": {
+        push(at, "event", `同步冲突 ${str(ev.scope) ?? "?"} / ${str(ev.key) ?? "?"}：最后留了${str(ev.kept) === "local" ? "本机" : "云端"}的版本`, null, null, null);
+        break;
+      }
       case "redline_changed": {
         const connector = str(ev.connector) ?? "未知连接器";
         const action = str(ev.action) ?? "未知动作";

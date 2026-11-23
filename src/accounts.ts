@@ -528,7 +528,7 @@ export class MagicLinkStore implements MagicLinkDirectory {
 }
 
 /** 审计动作：只记动作、provider、账号 id，不记邮箱、不记 token。 */
-export type AccountAuditAction = "login" | "logout" | "link" | "revoke" | "magic_link_requested" | "magic_link_redeemed" | "suspended" | "reactivated";
+export type AccountAuditAction = "login" | "logout" | "link" | "revoke" | "magic_link_requested" | "magic_link_redeemed" | "suspended" | "reactivated" | "cloud_connected" | "cloud_disconnected";
 
 export function appendAccountAudit(
   home: string,
