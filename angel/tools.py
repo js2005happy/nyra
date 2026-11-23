@@ -794,6 +794,8 @@ def _tool_shell(
     cwd: str | None = None,
     timeout: int = 60,
 ) -> str:
+    if ctx.backend is None:
+        return execute_local_shell_report(ctx, command, cwd, timeout)[0]
     denied = _check_shell_denied(command)
     if denied:
         return f"错误：{denied}"
@@ -805,8 +807,7 @@ def _tool_shell(
     if ctx.backend is not None:
         return _truncate(
             ctx.backend.run_command(command, cwd=str(resolved_cwd), timeout=timeout)
-        ) or "（无输出）"    return execute_local_shell_report(ctx, command, cwd, timeout)[0]
-
+        ) or "（无输出）"
 
 def _tool_web_fetch(ctx: ToolContext, url: str) -> str:
     try:
