@@ -1,3 +1,7 @@
+## Unreleased — 2026-11-24 read-only web charset fallback (static only)
+
+- web_fetch and web_search retain bounded HTTP response text when an unsupported/malformed server charset is advertised, falling back to UTF-8 replacement. Valid codec path, caps, evidence and no-retry behavior unchanged. No new dependency, tests, live HTTP, CI, merge or release.
+
 ## Unreleased — 2026-11-24 HTTP POST unsupported charset fallback (static only)
 
 - Treat an unrecognized or malformed response charset as a display-decoding issue, not an unknown POST transport result: fall back to UTF-8 with replacement after a confirmed 2xx response. This prevents a successful HTTP exchange being misreported as an uncertain network failure solely due to server-controlled metadata. Approval, bounded reads, no automatic retries and stdlib-only core are unchanged. Static review only; tests not executed.
