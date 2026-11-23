@@ -16,7 +16,7 @@ import {
 const TOOL_NAMES = ["read_file", "write_file", "edit_file", "apply_patch", "list_dir", "shell",
   "web_fetch", "web_search", "browser_navigate", "browser_click", "browser_screenshot",
   "computer_screenshot", "computer_click", "computer_type", "computer_key", "computer_windows", "describe_image", "export_office", "media_ingest",
-  "multi_model_research", "memory_append", "memory_search", "knowledge_search", "session_search", "memory_forget", "memory_delete", "gmail_search", "gmail_read", "gmail_send", "save_skill", "read_skill", "delegate", "delegate_parallel", "plan",
+  "multi_model_research", "memory_append", "memory_search", "knowledge_search", "session_search", "editor_context", "memory_forget", "memory_delete", "gmail_search", "gmail_read", "gmail_send", "save_skill", "read_skill", "delegate", "delegate_parallel", "plan",
   "grep_search", "git_status", "http_post", "lsp_diagnostics", "lsp_symbols"];
 
 function fullCtx(workdir: string, extra: Partial<ToolContext> = {}): ToolContext {
@@ -26,7 +26,7 @@ function fullCtx(workdir: string, extra: Partial<ToolContext> = {}): ToolContext
 test("ToolsTest.test_schema_names_match_python_24_plus_read_skill", () => {
   const names = TOOL_SCHEMAS.map((s) => (s.function as Record<string, unknown>).name as string);
   expect(names).toEqual(TOOL_NAMES);
-  expect(TOOL_SCHEMAS.length).toBe(39); // 缺口 1 + 缺口 2：新增 memory_search / memory_forget / memory_delete；缺口 3a：新增 delegate_parallel；缺口 6：新增 gmail_search / gmail_read / gmail_send；缺口 24：新增 lsp_diagnostics / lsp_symbols；缺口 16：新增 describe_image；缺口 23：新增 export_office；候选提案 4：新增 media_ingest；缺口 33：新增 knowledge_search；G-P1-14：新增 session_search。
+  expect(TOOL_SCHEMAS.length).toBe(40); // 缺口 1 + 缺口 2：新增 memory_search / memory_forget / memory_delete；缺口 3a：新增 delegate_parallel；缺口 6：新增 gmail_search / gmail_read / gmail_send；缺口 24：新增 lsp_diagnostics / lsp_symbols；缺口 16：新增 describe_image；缺口 23：新增 export_office；候选提案 4：新增 media_ingest；缺口 33：新增 knowledge_search；G-P1-14：新增 session_search；G-P0-3：新增 editor_context。
   const poppy = [POPPY_TOOL_SCHEMA, POPPY_IDENTITY_SCHEMA, POPPY_PERMISSION_SCHEMA]
     .map((s) => (s.function as Record<string, unknown>).name as string);
   expect(poppy).toEqual(["poppy_discover", "poppy_identity_check", "poppy_permission_check"]);
