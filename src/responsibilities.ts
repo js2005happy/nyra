@@ -244,6 +244,52 @@ export function addResponsibility(data: ResponsibilityData, raw: Record<string, 
   return cleaned;
 }
 
+/**
+ * 缺口 45 深化：建好后改复查节奏 / 汇报规则 / 升级条件 / 过期时间 / 归属人。
+ * 改完重跑 validateResponsibility 全量校验（--every 仍须 ≥60 秒、验收标准仍
+ * 须是已知 checker、--expires-at 仍须是 ISO 时间），终态责任（已完成/已过期/
+ * 已取消）拒绝改——终态是终态，改它等于改历史。
+ */
+export function updateResponsibility(data: ResponsibilityData, name: string, patch: Record<string, unknown>): Responsibility {
+  const idx = data.responsibilities.findIndex((r) => r.name === name);
+  if (idx < 0) throw new ResponsibilityError(`没有这个责任：${name}`);
+  const current = data.responsibilities[idx]!;
+  if (current.status === "completed" || current.status === "expired" || current.status === "cancelled") {
+    throw new ResponsibilityError(`责任「${name}」已是终态（${current.status}），不能再改`);
+  }
+  const updated = validateResponsibility({ ...current, ...patch });
+  data.responsibilities[idx] = updated;
+  return updated;
+}
+
+/** 相对时间（“3 小时后”“2 天前”）：列表标记用，不写死绝对日期。 */
+export function formatRelativeTime(targetIso: string | null, now: Date = new Date()): string {
+  if (!targetIso) return "—";
+  const ms = new Date(targetIso).getTime() - now.getTime();
+  if (Number.isNaN(ms)) return "—";
+  const abs = Math.abs(ms);
+  const unit = abs < 60_000 ? "秒" : abs < 3_600_000 ? "分" : abs < 86_400_000 ? "小时" : "天";
+  const n = abs < 60_000 ? Math.floor(abs / 1000)
+    : abs < 3_600_000 ? Math.floor(abs / 60_000)
+    : abs < 86_400_000 ? Math.floor(abs / 3_600_000)
+    : Math.floor(abs / 86_400_000);
+  return ms >= 0 ? `${n}${unit}后` : `${n}${unit}前`;
+}
+
+/** 下次巡查标记：只有进行中的责任才有下次巡查；没巡查过的是待首次巡查。 */
+export function nextCheckLabel(resp: Responsibility, now: Date = new Date()): string {
+  if (resp.status !== "active") return "—";
+  if (!resp.last_check) return "待首次巡查";
+  const next = new Date(new Date(resp.last_check).getTime() + resp.every_seconds * 1000);
+  return `下次巡查 ${formatRelativeTime(next.toISOString(), now)}`;
+}
+
+/** 到期标记：没设过期时间的责任不过期。 */
+export function expiryLabel(resp: Responsibility, now: Date = new Date()): string {
+  if (!resp.expires_at) return "不过期";
+  return `到期 ${formatRelativeTime(resp.expires_at, now)}`;
+}
+
 export function removeResponsibility(data: ResponsibilityData, name: string): boolean {
   const idx = data.responsibilities.findIndex((r) => r.name === name);
   if (idx < 0) return false;

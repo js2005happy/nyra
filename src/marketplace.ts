@@ -43,6 +43,9 @@ import {
   getTemplateEntry, removeTemplateEntry, type TemplateDefinition,
 } from "./templates.ts";
 import { type RunStore } from "./runs.ts";
+import { hasRedlineTable } from "./businessRedlines.ts";
+import { CONNECTOR_CLI_ONLY_TOOLS } from "./connectors/bundle.ts";
+import { CONNECTOR_FLOWS } from "./connectors/flows.ts";
 
 export class MarketplaceError extends Error {
   /** 哪道门拦的（manifest 清单校验 / deterministic 确定性规则 / reviewer 独立审查 / hygiene 脱敏 / license 许可证）；没填就是一般错误。 */
@@ -58,7 +61,7 @@ export class MarketplaceError extends Error {
 export const MARKET_WARNING =
 "社区内容是不受信任的第三方配置；导入前检查，只读起步，发送/购买/删除留在审批后。";
 
-export type MarketKind = "skill" | "bot" | "template";
+export type MarketKind = "skill" | "bot" | "template" | "connector";
 
 export interface MarketEntryMeta {
   id: string;
@@ -293,7 +296,7 @@ export function loadMarketIndex(sourceDir: string): MarketIndex {
     if (!e || typeof e !== "object" || typeof e.id !== "string" || !ENTRY_ID_RE.test(e.id)) {
       throw new MarketplaceError(`市场索引里有无效条目 id：${JSON.stringify(e?.id ?? null)}（只允许小写字母、数字、- 和 _）`);
     }
-    if (e.kind !== "skill" && e.kind !== "bot" && e.kind !== "template") throw new MarketplaceError(`条目 ${e.id} 的 kind 只允许 skill|bot|template`);
+    if (e.kind !== "skill" && e.kind !== "bot" && e.kind !== "template" && e.kind !== "connector") throw new MarketplaceError(`条目 ${e.id} 的 kind 只允许 skill|bot|template|connector`);
     if (typeof e.name !== "string" || !e.name || typeof e.version !== "string" || !e.version || typeof e.path !== "string" || !e.path) {
       throw new MarketplaceError(`条目 ${e.id} 缺少 name/version/path`);
     }
@@ -575,6 +578,66 @@ export function verifyMarketplaceEntry(resolved: ResolvedEntry): EntryVerificati
     }
     return { ok: errors.length === 0, errors, warnings, manifest, skillNames, tools, permissions, highPrivilegeTools: [], files, routines };
   }
+  if (entry.kind === "connector") {
+    // 缺口 44 深化：连接器包（四件套）的清单校验——包是 connector.json +
+    // tools.json / flows.json / redlines.json / permission-statement.txt，
+    // 由 nyra connector bundle 导出；校验只认包里的四件套是否齐全一致，
+    // 不联网、不读凭证。安装不走这里（prepare 里直接拒绝，见下）。
+    const bundlePath = join(dir, "connector.json");
+    if (!existsSync(bundlePath) || !statSync(bundlePath).isFile()) {
+      errors.push(`连接器包缺 connector.json：${entry.path}（用 nyra connector bundle <id> 导出四件套）`);
+    } else {
+      try {
+        const bundle = JSON.parse(readFileSync(bundlePath, "utf-8")) as Record<string, unknown>;
+        if (bundle.kind !== "connector") errors.push(`connector.json 的 kind 不是 connector`);
+        if (bundle.connector !== entry.name && bundle.displayName !== entry.name) errors.push(`connector.json 的连接器是 ${String(bundle.connector ?? "?")}，与索引的 ${entry.name} 不一致`);
+        if (typeof bundle.version === "string" && bundle.version !== entry.version) errors.push(`connector.json 的 version 是 ${bundle.version}，与索引不一致`);
+        const bundleTools = Array.isArray(bundle.tools) ? bundle.tools as Array<Record<string, unknown>> : [];
+        if (!bundleTools.length) errors.push("连接器包没有工具（tools 为空）");
+        for (const t of bundleTools) {
+          const name = String(t.name ?? "");
+          if (!name) { errors.push("连接器包里有没名字的工具"); continue; }
+          tools.push(name);
+          if (t.surface === "model") {
+            if (!KNOWN_TOOLS.has(name)) errors.push(`声明的模型工具 ${name} 不是 Nyra 已知的工具`);
+          } else if (t.surface === "cli") {
+            if (!(name in CONNECTOR_CLI_ONLY_TOOLS)) errors.push(`声明的终端工具 ${name} 不在 CLI-only 白名单里`);
+          } else {
+            errors.push(`工具 ${name} 的 surface 既不是 model 也不是 cli`);
+          }
+        }
+        const bundleFlows = Array.isArray(bundle.flows) ? bundle.flows as Array<Record<string, unknown>> : [];
+        if (!bundleFlows.length) errors.push("连接器包没有业务流程（flows 为空）");
+        for (const f of bundleFlows) {
+          const id = String(f.id ?? "");
+          const def = CONNECTOR_FLOWS.find((x) => x.id === id);
+          if (!def) { errors.push(`流程 ${id} 不存在（nyra connector flows 列出能用的）`); continue; }
+          if (!Array.isArray(f.acceptance) || !(f.acceptance as unknown[]).length) errors.push(`流程 ${id} 没有验收标准`);
+        }
+        const redlineTable = String(bundle.redlineTable ?? "");
+        if (!redlineTable || !hasRedlineTable(String(bundle.connector ?? ""))) errors.push("连接器包没有有效的默认红线表（redlineTable）");
+        // 权限声明只按包里工具实际用到的业务动作派生（不是整张红线表）：
+        // 只读连接器的包不该凭空多出 approve:send_message。
+        const permSet = new Set<string>();
+        for (const t of bundleTools) {
+          if (typeof t.action === "string" && t.tier === "approve") permSet.add(`approve:${t.action}`);
+          else if (typeof t.action === "string" && t.tier === "never") permSet.add(`never:${t.action}`);
+        }
+        permissions.push(...permSet);
+        permissions.unshift(`connector:${String(bundle.connector ?? entry.name)}`);
+        const statementPath = join(dir, "permission-statement.txt");
+        if (!existsSync(statementPath) || !readFileSync(statementPath, "utf-8").trim()) {
+          errors.push("连接器包缺 permission-statement.txt（权限声明文本）");
+        }
+        for (const f of ["tools.json", "flows.json", "redlines.json"]) {
+          if (!existsSync(join(dir, f))) errors.push(`连接器包缺 ${f}`);
+        }
+      } catch (err: unknown) {
+        errors.push(`connector.json 解析失败：${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    return { ok: errors.length === 0, errors, warnings, manifest, skillNames, tools, permissions, highPrivilegeTools: [], files, routines };
+  }
   try {
     manifest = parseBotManifest(dir);
   } catch (err: unknown) {
@@ -750,6 +813,15 @@ export function scanMarketplaceEntry(resolved: ResolvedEntry): ScanHit[] {
     }
     return hits;
   }
+  if (entry.kind === "connector") {
+    // 缺口 44 深化：连接器包没有可执行步骤，扫一遍包里的文本文件（声明、
+    // 工具、流程、红线、权限声明）找高危模式；包里不许出现 shell / http_post
+    // 这类工具名以外的可执行指令。
+    for (const f of ["connector.json", "tools.json", "flows.json", "redlines.json", "permission-statement.txt", "market-entry.json"]) {
+      pushFile(join(dir, f), f);
+    }
+    return hits;
+  }
   const skillsDir = join(dir, "skills");
   if (existsSync(skillsDir)) {
     for (const f of readdirSync(skillsDir).sort()) {
@@ -830,6 +902,11 @@ export function computeBotReadyForDir(entry: MarketEntryMeta, dir: string): BotR
   // 模板不参与 Bot Ready 评分：模板的“就绪”是试跑 + 人工确认，不是静态分。
   if (entry.kind === "template") {
     return { score: 0, missing: ["模板不参与 Bot Ready 评分（须试跑 + 人工确认后才激活）"] };
+  }
+  // 缺口 44 深化：连接器包也不参与评分——它的“就绪”是安装授权 + 流程试跑，
+  // 不是静态分（包本身的完整性由 verifyMarketplaceEntry 的 connector 分支验）。
+  if (entry.kind === "connector") {
+    return { score: 0, missing: ["连接器不参与 Bot Ready 评分（须安装授权 + 试跑流程后才可用）"] };
   }
   let skillsOk = false;
   let toolsKnown = true;
@@ -980,6 +1057,13 @@ export async function prepareMarketplaceInstall(
 ): Promise<InstallPrepared> {
   const resolved = resolveMarketEntry(home, id);
   if (!resolved) throw new MarketplaceError(`市场里没有条目 ${id}（先 nyra market list 看看）`);
+  // 缺口 44 深化：连接器条目只验证、不安装——内置连接器已在代码里（nyra
+  // connector list），包里的四件套（声明/工具/流程/红线）没有地方可以“装”
+  // 进去：声明是代码、凭证只存密码箱。第三方连接器安装是下一批（须先有
+  // 第三方声明注册表），现在装了也落不了地，不如明说拒绝。
+  if (resolved.entry.kind === "connector") {
+    throw new MarketplaceError("连接器条目只验证、不安装：内置连接器已在代码里（nyra connector list 看看），第三方连接器安装是下一批");
+  }
   const verification = verifyMarketplaceEntry(resolved);
   if (!verification.ok) {
     throw new MarketplaceError(`清单校验不过，拒绝安装：\n${verification.errors.map((e) => `- ${e}`).join("\n")}`, "manifest");

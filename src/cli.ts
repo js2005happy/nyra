@@ -222,7 +222,7 @@ nyra vault <...>                凭据保险箱（加密存储，权限 0600）
 nyra gmail <status|auth|search|read|send|drafts|send-draft|labels|label|mark-read|mark-unread|trash|attachment|revoke>   Gmail 原生连接器：读信 / 回复 / 代发草稿 / 草稿列表与发送草稿 / 附件 / 标签 / 已读 / 回收站
 nyra shopify <auth|status|products|product|orders|order|fulfill|inventory>   Shopify 原生连接器（只读）：查商品 / 订单 / 订单履约核查 / 库存（详见 docs/connectors.md）
 nyra slack <auth|status|channels|history|send|card|callback>   Slack 原生连接器：读频道 / 消息、发消息（须显式批准）、发审批卡、按钮回调回写审批桥（详见 docs/connectors.md）
-nyra connector <status|list|approve|revoke|auth|install|uninstall|usage|flows|flow>   连接器目录：安装 / 一键授权 / 撤销 / 用量 / 业务流程（详见 docs/connectors.md）
+nyra connector <status|list|approve|revoke|auth|install|uninstall|usage|flows|flow|bundle>   连接器目录：安装 / 一键授权 / 撤销 / 用量 / 业务流程 / 导出连接器包（详见 docs/connectors.md）
 nyra mcp server <status|enable|disable|allow-writes-on|allow-writes-off>   对外 MCP 服务开关：别的 agent 经网关 POST /mcp 调记忆与任务（默认关闭，详见 docs/mcp.md）
 nyra peer <status|enable|disable|list|auth|ask|handoff|card|code|add|request|accept|friends|block|circle|share|grant|proposal|branch|discover|token>   对端协作：问别的 Nyra 实例、交接运行上下文、名片加好友、带 scope 可吊销的 grant、对方写操作提议、外来分支合入、公开发现与 per-peer token、名片 JWS 签名（默认关闭，详见 docs/peer.md 与 docs/peer-discovery.md）
 nyra circle <create|list|show|invite|revoke|delete|bind|unbind|owner|check|bindings>   信任圈：谁能给 agent 发任务（默认全封闭，圈外消息网关直接丢弃，详见 docs/circles.md）
@@ -253,7 +253,7 @@ nyra task <add|list|show|cancel|worker|approve>   管理后台任务队列
 nyra review <list|show|approve|reject|apply|verify|enqueue>   审阅队列：并行线程与定时任务结果逐项批（详见 docs/review-queue.md）
 nyra events <list|add|remove|enable|disable|test|poll>   事件触发任务：webhook 与新邮件触发进任务队列（详见 docs/event-triggers.md）
 nyra mail-inbox <status|enable|disable|allowlist|set|poll>   邮件即任务入口：白名单发件人的邮件直接进任务队列，跑完回信（详见 docs/mail-inbox.md）
-nyra responsibility <list|add|remove|enable|disable|check|pause|resume|complete|cancel|brief|show>   持续责任语义：责任对象（归属人 + 验收标准 + 升级条件 + 过期时间）与晨间简报，无事安静（详见 docs/responsibilities.md）
+nyra responsibility <list|add|set|remove|enable|disable|check|pause|resume|complete|cancel|brief|show>   持续责任语义：责任对象（归属人 + 验收标准 + 升级条件 + 过期时间）与晨间简报，无事安静（详见 docs/responsibilities.md）
 nyra bot telegram <start|stop|status>   Bot 方向 Phase 1：Telegram 渠道（长轮询收消息、会话串行、去重配额、确定性指令；外部用户强制只读，详见 docs/bot.md）
 nyra bot discord <start|stop|status>   Bot 渠道：Discord（Gateway 收消息 + REST 发消息，详见 docs/bot.md）
 nyra bot slack <start|stop|status>   Bot 渠道：Slack（Socket Mode 收事件 + Web API 发消息，需 app token + bot token，详见 docs/bot.md）
@@ -366,7 +366,7 @@ nyra vault <...>               credential vault (encrypted at rest, mode 0600)
 nyra gmail <status|auth|search|read|send|drafts|send-draft|labels|label|mark-read|mark-unread|trash|attachment|revoke>   native Gmail connector: read / reply / draft / list and send drafts / attachments / labels / read-state / trash
 nyra shopify <auth|status|products|product|orders|order|fulfill|inventory>   native Shopify connector (read-only): products / orders / order fulfillment check / inventory (see docs/connectors.md)
 nyra slack <auth|status|channels|history|send|card|callback>   native Slack connector: read channels / messages, send messages (explicit approval required), post approval cards, button callbacks resolve approvals (see docs/connectors.md)
-nyra connector <status|list|approve|revoke|auth|install|uninstall|usage|flows|flow>   connector directory: install / one-click auth / revoke / usage / business flows (see docs/connectors.md)
+nyra connector <status|list|approve|revoke|auth|install|uninstall|usage|flows|flow|bundle>   connector directory: install / one-click auth / revoke / usage / business flows / export connector bundle (see docs/connectors.md)
 nyra mcp server <status|enable|disable|allow-writes-on|allow-writes-off>   external MCP server switch: other agents call Nyra memory and tasks via gateway POST /mcp (off by default, see docs/mcp.md)
 nyra peer <status|enable|disable|list|auth|ask|handoff|card|code|add|request|accept|friends|block|circle|share|grant|proposal|branch|discover|token>   peer collaboration: ask another Nyra instance, hand off run context, agent card and friends, scoped revocable grants, peer write proposals, foreign branch merges, public discovery with per-peer tokens, agent card JWS signatures (off by default, see docs/peer.md and docs/peer-discovery.md)
 nyra circle <create|list|show|invite|revoke|delete|bind|unbind|owner|check|bindings>   trust circles: who may send tasks to the agent (closed by default, out-of-circle messages are dropped at the gateway, see docs/circles.md)
@@ -400,7 +400,7 @@ nyra task <add|list|show|cancel|worker|approve>   manage the background task que
 nyra review <list|show|approve|reject|apply|verify|enqueue>   review queue: approve parallel threads and scheduled-task results one by one (see docs/review-queue.md)
 nyra events <list|add|remove|enable|disable|test|poll>   event-triggered tasks: webhooks and new mail enqueue tasks (see docs/event-triggers.md)
 nyra mail-inbox <status|enable|disable|allowlist|set|poll>   mail as task entry: allowlisted senders' mail enqueues tasks, results mailed back (see docs/mail-inbox.md)
-nyra responsibility <list|add|remove|enable|disable|check|pause|resume|complete|cancel|brief|show>   standing responsibilities: responsibility objects (owner + acceptance criteria + escalation conditions + expiry) and the morning briefing, quiet when nothing is wrong (see docs/responsibilities.md)
+nyra responsibility <list|add|set|remove|enable|disable|check|pause|resume|complete|cancel|brief|show>   standing responsibilities: responsibility objects (owner + acceptance criteria + escalation conditions + expiry) and the morning briefing, quiet when nothing is wrong (see docs/responsibilities.md)
 nyra bot telegram <start|stop|status>   bot direction phase 1: Telegram channel (long polling, per-session serial queue, dedup + quotas, deterministic commands; external users forced read-only, see docs/bot.md)
 nyra bot discord <start|stop|status>   bot channel: Discord (Gateway receive + REST send, see docs/bot.md)
 nyra bot slack <start|stop|status>   bot channel: Slack (Socket Mode receive + Web API send, needs app token + bot token, see docs/bot.md)
@@ -1581,7 +1581,7 @@ async function handleResponsibility(argv: string[], workdir: string): Promise<nu
   const action = argv[0];
   const home = resolveHome();
   if (!action) {
-    process.stdout.write("用法：nyra responsibility <list|add|remove|enable|disable|check|pause|resume|complete|cancel|brief|show> [选项]\n");
+    process.stdout.write("用法：nyra responsibility <list|add|set|remove|enable|disable|check|pause|resume|complete|cancel|brief|show> [选项]\n");
     return 2;
   }
   const get = (flag: string): string | undefined => {
@@ -1589,7 +1589,7 @@ async function handleResponsibility(argv: string[], workdir: string): Promise<nu
     return i >= 0 ? argv[i + 1] : undefined;
   };
   try {
-    const { loadResponsibilities, saveResponsibilities, addResponsibility, removeResponsibility, setResponsibilityStatus, completeResponsibility, sweepExpiredResponsibilities, responsibilitiesPath, runPatrol } = await import("./responsibilities.ts");
+    const { loadResponsibilities, saveResponsibilities, addResponsibility, updateResponsibility, nextCheckLabel, expiryLabel, removeResponsibility, setResponsibilityStatus, completeResponsibility, sweepExpiredResponsibilities, responsibilitiesPath, runPatrol } = await import("./responsibilities.ts");
     const data = loadResponsibilities(responsibilitiesPath(home));
     // 每次进责任命令先扫一遍过期：到期自动失效，不永久驻留。
     if (sweepExpiredResponsibilities(data, new Date(), home).length > 0) {
@@ -1597,7 +1597,7 @@ async function handleResponsibility(argv: string[], workdir: string): Promise<nu
     }
     if (action === "list") {
       for (const r of data.responsibilities) {
-        process.stdout.write(`${r.name}\t${r.status}\t${r.owner}\t每 ${r.every_seconds} 秒\t${r.report === "always" ? "每次汇报" : "有发现汇报"}\t${r.last_status ?? ""}\t${r.goal.slice(0, 60)}\n`);
+        process.stdout.write(`${r.name}\t${r.status}\t${r.owner}\t每 ${r.every_seconds} 秒\t${nextCheckLabel(r)}\t${expiryLabel(r)}\t${r.report === "always" ? "每次汇报" : "有发现汇报"}\t${r.last_status ?? ""}\t${r.goal.slice(0, 60)}\n`);
       }
       return 0;
     }
@@ -1622,6 +1622,31 @@ async function handleResponsibility(argv: string[], workdir: string): Promise<nu
         });
       saveResponsibilities(data, responsibilitiesPath(home));
       process.stdout.write(`已添加常驻责任：${added.name}（每 ${added.every_seconds} 秒巡查一次，只读，${added.report === "always" ? "每次汇报" : "有发现才汇报"}）\n`);
+      return 0;
+    }
+    if (action === "set") {
+      // 缺口 45 深化：建好后改复查节奏 / 汇报规则 / 升级条件 / 过期时间 / 归属人。
+      // 只改传了的项，没传的不动；--expires-at none 是清掉过期时间（不过期）。
+      const name = get("--name") ?? argv[1];
+      if (!name) { process.stderr.write("错误：responsibility set 需要 --name\n"); return 2; }
+      const patch: Record<string, unknown> = {};
+      const everyRaw = get("--every");
+      if (everyRaw !== undefined) patch.every_seconds = parseInt(everyRaw, 10);
+      const report = get("--report");
+      if (report !== undefined) patch.report = report;
+      const escalateOn = get("--escalate-on");
+      if (escalateOn !== undefined) patch.escalate_on = escalateOn;
+      const expiresAt = get("--expires-at");
+      if (expiresAt !== undefined) patch.expires_at = expiresAt === "none" ? null : expiresAt;
+      const owner = get("--owner");
+      if (owner !== undefined) patch.owner = owner;
+      if (Object.keys(patch).length === 0) {
+        process.stderr.write("错误：responsibility set 至少要改一项（--every / --report / --escalate-on / --expires-at / --owner）\n");
+        return 2;
+      }
+      const updated = updateResponsibility(data, name, patch);
+      saveResponsibilities(data, responsibilitiesPath(home));
+      process.stdout.write(`责任「${updated.name}」已更新：每 ${updated.every_seconds} 秒巡查、${updated.report === "always" ? "每次汇报" : "有发现汇报"}、归属 ${updated.owner}${updated.expires_at ? `、到期 ${updated.expires_at}` : "、不过期"}\n`);
       return 0;
     }
     if (action === "remove") {
@@ -4773,6 +4798,7 @@ export async function handleConnector(argv: string[], home: string): Promise<num
   + "  nyra connector usage [连接器]                    用量：每个连接器的调用次数（总次数、分操作次数、最后调用时间）\n"
   + "  nyra connector flows                             列出全部业务流程（每条一条真实业务流程 + 验收标准）\n"
   + "  nyra connector flow <流程id> [参数]              跑一条业务流程：slack-approval-roundtrip / shopify-order-fulfillment / gmail-draft-send（--json 输出结论）\n"
+  + "  nyra connector bundle <连接器> [--out <目录>]    导出连接器包（四件套：权限声明 + 工具清单 + 业务流程 + 红线表，机器人市场验证用）\n"
   + "详见 docs/connectors.md";
   const reg = await import("./connectors/registry.ts");
   const dirMod = await import("./connectors/directory.ts");
@@ -5145,6 +5171,32 @@ export async function handleConnector(argv: string[], home: string): Promise<num
         process.stdout.write(formatFlowResult(result) + "\n");
       }
       return result.passed ? 0 : 1;
+    }
+    if (cmd === "bundle") {
+      // 缺口 44 深化：导出连接器包（四件套）到目录，机器人市场验证用。
+      // 导出前先校验（声明/红线表/流程/工具四件套齐全才导出，fail-closed）。
+      const target = argv[1];
+      if (!target) {
+        process.stderr.write("用法：nyra connector bundle <连接器> [--out <目录>]\n");
+        return 2;
+      }
+      const decl = reg.getDeclaration(target);
+      if (!decl) {
+        process.stderr.write(`未知连接器：${target}（已知：${knownIds}）\n`);
+        return 2;
+      }
+      const outIdx = argv.indexOf("--out");
+      const outDir = outIdx >= 0 && argv[outIdx + 1] !== undefined
+        ? argv[outIdx + 1]!
+        : join(process.cwd(), `nyra-connector-${target}`);
+      const { exportConnectorBundle } = await import("./connectors/bundle.ts");
+      const { TOOL_SCHEMAS } = await import("./tools.ts");
+      const exported = exportConnectorBundle(home, target, outDir, new Set(Object.keys(TOOL_SCHEMAS)));
+      process.stdout.write(`已导出 ${decl.displayName} 连接器包到 ${exported.dir}\n`);
+      process.stdout.write(`工具 ${exported.bundle.tools.length} 个（模型 ${exported.bundle.tools.filter((t) => t.surface === "model").length}、终端 ${exported.bundle.tools.filter((t) => t.surface === "cli").length}）、流程 ${exported.bundle.flows.length} 条、红线表 ${exported.bundle.redlineTable}\n`);
+      process.stdout.write(`文件：${exported.files.join("、")}\n`);
+      process.stdout.write(`市场验证：把包放进策展仓库索引后，用 nyra market verify connector-${target} 校验（连接器条目只验证、不安装）。\n`);
+      return 0;
     }
     process.stderr.write(`未知命令：${cmd}\n${CONNECTOR_USAGE}\n`);
     return 2;

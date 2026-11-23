@@ -340,7 +340,7 @@ connector_revoked: ["connector", "user_id"],
 // 不记 token、不记响应内容、不记客户信息。
 connector_installed: ["connector", "user_id"],
 connector_uninstalled: ["connector", "user_id"],
-connector_call: ["connector", "operation", "records", "duration_ms"],
+connector_call: ["connector", "operation", "records", "duration_ms", "user_id"],
 // 缺口 21：多 agent 执行时间线——子任务起止与单次模型调用 span。
 // delegate_start/end 只记元数据（不记任务文本）；llm_span 只记模型、耗时、
 // token 数（不记 prompt/回答内容）。子任务的 run 链靠 task_id 串联：父级

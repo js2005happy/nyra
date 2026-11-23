@@ -311,7 +311,17 @@ export function reviewBusinessAction(opts: {
  * 写工具落地时，在这里加映射——映射本身就是“这个工具在干什么业务”。
  */
 const TOOL_BUSINESS_ACTIONS: Record<string, { connector: string; action: BusinessAction }> = {
+  gmail_search: { connector: "gmail", action: "query" },
+  gmail_read: { connector: "gmail", action: "query" },
   gmail_send: { connector: "gmail", action: "send_message" },
+  // 缺口 44 深化：Shopify / Slack 模型工具的业务动作映射（只读是 query，
+  // 发消息是 send_message；Shopify 本批只读，没有写工具可映射）。
+  shopify_products: { connector: "shopify", action: "query" },
+  shopify_orders: { connector: "shopify", action: "query" },
+  shopify_inventory: { connector: "shopify", action: "query" },
+  slack_channels: { connector: "slack", action: "query" },
+  slack_history: { connector: "slack", action: "query" },
+  slack_send: { connector: "slack", action: "send_message" },
 };
 
 export function businessActionForTool(tool: string): { connector: string; action: BusinessAction } | null {

@@ -745,7 +745,7 @@ export function removeTemplateEntry(home: string, name: string): void {
 export const BUILTIN_TEMPLATE_SHOP_ORDER = `name: shop_order_followup
 version: 1.0.0
 license: MIT
-description: "店铺订单异常跟进（Hollow & Scale）：查订单邮件、核对物流、起草客户回复、等批发出。查订单目前走 Gmail 订单邮件，Shopify 订单直查工具尚未接入，等缺口 44 补齐工具后替换第一步。"
+description: "店铺订单异常跟进（Hollow & Scale）：订单号直查 Shopify 订单（shopify_orders 工具），核对物流、起草客户回复、等批发出。"
 connectors:
   - "shopify"
   - "gmail"
@@ -762,9 +762,6 @@ trial:
     order_id: "ORD-TEST-001"
     customer_email: "test@example.com"
     draft_path: "draft.txt"
-trial_files:
-  - path: "order-mail.txt"
-    content: "样例订单邮件：订单号 ORD-TEST-001，客户 test@example.com，商品宠物牵引绳，状态物流异常，客户问什么时候发货。真实试跑仍查 Gmail 里的同订单邮件。"
 workflow:
   name: shop_order_followup
   version: 1
@@ -774,15 +771,14 @@ workflow:
     customer_email: "test@example.com"
     draft_path: "draft.txt"
   steps:
-    - id: find_mail
+    - id: fetch_order
       type: tool
-      tool: gmail_search
+      tool: shopify_orders
       args:
-        query: "{{inputs.order_id}}"
-        limit: 5
+        order_id: "{{inputs.order_id}}"
     - id: check_logistics
       type: llm
-      prompt: "根据以下订单邮件核对物流状态，写出三行结论：订单号、当前物流状态、下一步该做什么。邮件内容：{{steps.find_mail.output}}"
+      prompt: "根据以下 Shopify 订单直查结果核对物流状态，写出三行结论：订单号、当前物流状态、下一步该做什么。订单结果：{{steps.fetch_order.output}}"
     - id: draft_reply
       type: llm
       prompt: "按物流核对结论起草一封给客户的回复邮件，语气平实，说清当前状态与下一步，不承诺做不到的时间。核对结论：{{steps.check_logistics.output}}"
