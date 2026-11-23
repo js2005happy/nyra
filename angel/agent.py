@@ -14,6 +14,7 @@ from .tools import (
     ToolContext, ToolError, _check_approval, execute_tool,
     execute_local_list_dir_report,
     execute_local_shell_report,
+    execute_http_post_report,
     execute_local_read_file_report,
 )
 from .skills import Skill, load_skills, match_skills, render_skill
@@ -409,6 +410,16 @@ class Agent:
                         # performed side effects before termination.
                         try:
                             result, trusted_report = execute_local_shell_report(
+                                self.ctx, **args
+                            )
+                        except TypeError:
+                            result = "错误：工具参数不正确"
+                    elif fn_name == "http_post":
+                        # HTTP transport status is authoritative for the tool report,
+                        # not the remote response body or its error-like prefix.
+                        # A network exception leaves remote side effects unknown.
+                        try:
+                            result, trusted_report = execute_http_post_report(
                                 self.ctx, **args
                             )
                         except TypeError:
