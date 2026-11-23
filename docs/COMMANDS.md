@@ -33,6 +33,7 @@
 | `nyra cost --estimate "<任务>"` | 成本预估（含回忆感知的下调） |
 | `nyra savings [任务]` | 省钱机制汇总 + 辅助模型实测节省 + 逐模型明细 |
 | `nyra stats [--heatmap]` | 本月用量与每日热力图 |
+| `nyra telemetry [status\|spans\|metrics\|export\|enable\|disable\|otlp]` | 可观测性：trace（span 落盘 + OTLP 导出）+ metrics（计数器与直方图）+ 运行事件 trace 关联（详见 `docs/telemetry.md`） |
 
 ## 配置与开关
 
