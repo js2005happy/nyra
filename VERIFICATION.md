@@ -1,3 +1,10 @@
+## 2026-11-23 — git_status diff 非零退出（仅静态审查）
+
+- 阅读开发分支 README、DESIGN、CHANGELOG、VERIFICATION、ROADMAP、核心 tools/agent；查询近期提交、开放 Issues/PR、上一提交状态及 PR 工作流元数据（状态及工作流均为空，不能认定通过）。
+- 源码事实：git status 已检查非零退出，git diff --stat 原先仅在退出码为零时附加统计，但在非零时仍返回部分状态。改为固定错误，不回显 git stderr；新增两个未执行回归测试定义。
+- 公开反馈：2026-10-02 Codex #50301（批次失败被掩盖），2026-04-02 Codex #16619（命令空输出故障）；2026-11-23 查阅，属于外部个案，不证明 Angel 事故。
+- 未运行测试、编译、CI、真实 Git 命令、安装或外部账户操作；未合并 main、未发布。静态代码变更不能证明运行正确或跨平台兼容。
+
 ## 2026-11-23 — 本地 shell 退出码状态（静态检查）
 
 - 阅读现有 `angel/tools.py` 的 `_tool_shell` 和 `angel/tool_report_status.py`：旧逻辑丢失 `CompletedProcess.returncode`，非零退出无输出时会报告「（无输出）」。
