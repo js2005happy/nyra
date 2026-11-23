@@ -13,6 +13,7 @@ from .tools import (
     TOOL_SCHEMAS, POPPY_TOOL_SCHEMA, POPPY_PERMISSION_SCHEMA, POPPY_IDENTITY_SCHEMA,
     ToolContext, ToolError, _check_approval, execute_tool,
     execute_local_list_dir_report,
+    execute_local_shell_report,
     execute_local_read_file_report,
 )
 from .skills import Skill, load_skills, match_skills, render_skill
@@ -398,6 +399,16 @@ class Agent:
                         # Local filesystem control flow, not model-visible file text.
                         try:
                             result, trusted_report = execute_local_read_file_report(
+                                self.ctx, **args
+                            )
+                        except TypeError:
+                            result = "错误：工具参数不正确"
+                    elif fn_name == "shell" and self.ctx.backend is None:
+                        # Exit code is trusted local metadata; output is not.
+                        # Timeout is unknown because a child process may have
+                        # performed side effects before termination.
+                        try:
+                            result, trusted_report = execute_local_shell_report(
                                 self.ctx, **args
                             )
                         except TypeError:
