@@ -781,6 +781,11 @@ def _tool_shell(
         if combined and not combined.endswith("\n"):
             combined += "\n"
         combined += "标准错误：\n" + result.stderr
+    # The process exit status is trusted local metadata; output text is not.
+    # Preserve stdout/stderr for diagnosis, but never report a nonzero exit as
+    # an empty successful command. This is not an external side-effect receipt.
+    if result.returncode != 0:
+        return f"错误：命令退出码 {result.returncode}\n" + (_truncate(combined) or "（无输出）")
     return _truncate(combined) or "（无输出）"
 
 
