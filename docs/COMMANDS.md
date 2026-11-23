@@ -112,6 +112,7 @@
 | `nyra governance audit <export\|verify>` | 缺口 43 第三批：审计导出——治理审计日志导出给 SIEM（JSONL + 哈希链，可验证；详见 `docs/governance.md`） |
 | `nyra kanban pause <id> "<原因>"` / `nyra kanban resume <id>` | 缺口 43 第三批：任务板 `paused` 状态——分层上限触顶暂停（可恢复，attempts 不动） |
 | `nyra optimize <propose\|list\|show\|edit\|approve\|reject\|apply\|verify\|revert\|loop\|arms>` | G-4：带人批的自优化环——只起草改指令建议，须人批才生效，三数据集 + holdout 定放行；G-P1-29：`loop` 读评测报告自动起草提议并按 UCB 排队，`arms` 看臂排行（详见 `docs/governance.md`） |
+| `nyra eval <scenarios\|scorecard\|benchmarks\|import\|benchmark\|remove\|probes\|probe\|manifest>` | G-P1-30：评测当一等公民——场景成绩单 + 外部基准集导入 + 仓内探针 + 可复现清单；跑评测走 `bun run scripts/eval.ts run --scenario/--benchmark/--probe`（详见 `docs/eval.md`） |
 | `nyra review <list\|show\|approve\|reject\|apply…>` | 审阅队列：逐项批准并行线程与定时任务结果 |
 
 ## 扩展与集成
