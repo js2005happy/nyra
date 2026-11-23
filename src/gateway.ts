@@ -58,6 +58,7 @@ import { listArtifacts, getArtifact } from "./artifacts.ts";
 import { summarizeLastTurn, type TurnSummary } from "./turnSummary.ts";
 import { projectMemoryView, projectMemoryFile } from "./projectMemory.ts";
 import { EvidenceStore } from "./evidence.ts";
+import { activeHandoffForSession, isBotMutedForSession } from "./hitl.ts";
 import { GroupStore, type BotConfig, type RoomMessage } from "./groups.ts";
 import {
   GroupEventHub, ChiefError, CHIEF_MAX_MEMBERS, CHIEF_PERMISSION,
@@ -908,6 +909,18 @@ export class Gateway {
     if (run.status === "running") throw new Error("这个会话正在执行任务，请等它完成");
     run.events = [];
     run.error = "";
+    // G-P1-32 对话转人工坐席：会话转人工期间 bot 不再自动回复——这条消息
+    // 不建 agent、不调模型，只记事件与收件箱，等真人接手或接回。账本损坏、
+    // 状态不明时也不回（fail-closed，见 hitl.ts 的 isBotMutedForSession）。
+    if (isBotMutedForSession(this.home, sessionId)) {
+      const handoff = activeHandoffForSession(this.home, sessionId);
+      run.status = "done";
+      this.record(run, "hitl_bot_held", { session: sessionId, handoff: handoff?.id ?? "" });
+      try {
+        appendInbox(sessionId, "hitl-held", `会话 ${sessionId} 已转人工，有新消息未回（转人工单 ${handoff?.id ?? "未知"}）`, this.home);
+      } catch { /* 收件箱失败不破坏静默 */ }
+      return run;
+    }
     run.status = "running";
     try {
       if (!run.agent) {

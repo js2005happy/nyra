@@ -258,6 +258,7 @@ nyra --json "任务"             单次非交互任务，输出 JSON Lines
 nyra schedule <list|add|remove|run|daemon>   管理定时任务
 nyra task <add|list|show|cancel|worker|approve>   管理后台任务队列
 nyra review <list|show|approve|reject|apply|verify|enqueue>   审阅队列：并行线程与定时任务结果逐项批（详见 docs/review-queue.md）
+nyra hitl <start|takeover|handback|cancel|status|list>   对话转人工坐席：会话转给真人、真人接手、再接回 bot；转人工期间 bot 不自动回（详见 docs/hitl.md）
 nyra events <list|add|remove|enable|disable|test|poll>   事件触发任务：webhook 与新邮件触发进任务队列（详见 docs/event-triggers.md）
 nyra mail-inbox <status|enable|disable|allowlist|set|poll>   邮件即任务入口：白名单发件人的邮件直接进任务队列，跑完回信（详见 docs/mail-inbox.md）
 nyra responsibility <list|add|set|remove|enable|disable|check|pause|resume|complete|cancel|brief|show>   持续责任语义：责任对象（归属人 + 验收标准 + 升级条件 + 过期时间）与晨间简报，无事安静（详见 docs/responsibilities.md）
@@ -409,6 +410,7 @@ nyra --json "task"             one non-interactive task, JSON Lines output
 nyra schedule <list|add|remove|run|daemon>   manage scheduled tasks
 nyra task <add|list|show|cancel|worker|approve>   manage the background task queue
 nyra review <list|show|approve|reject|apply|verify|enqueue>   review queue: approve parallel threads and scheduled-task results one by one (see docs/review-queue.md)
+nyra hitl <start|takeover|handback|cancel|status|list>   human handoff: hand a conversation to a human, take over, hand back to the bot; the bot stays silent while handed off (see docs/hitl.md)
 nyra events <list|add|remove|enable|disable|test|poll>   event-triggered tasks: webhooks and new mail enqueue tasks (see docs/event-triggers.md)
 nyra mail-inbox <status|enable|disable|allowlist|set|poll>   mail as task entry: allowlisted senders' mail enqueues tasks, results mailed back (see docs/mail-inbox.md)
 nyra responsibility <list|add|set|remove|enable|disable|check|pause|resume|complete|cancel|brief|show>   standing responsibilities: responsibility objects (owner + acceptance criteria + escalation conditions + expiry) and the morning briefing, quiet when nothing is wrong (see docs/responsibilities.md)
@@ -7109,6 +7111,10 @@ export async function main(argv: string[]): Promise<number> {
   if (args.subcommand === "sso") return handleSso(args.subArgs ?? [], home);
   if (args.subcommand === "task") return handleTask(args.subArgs ?? [], resolve(args.workdir));
   if (args.subcommand === "review") return handleReview(args.subArgs ?? [], home);
+  if (args.subcommand === "hitl") {
+    const { handleHitl } = await import("./hitlCli.ts");
+    return handleHitl(args.subArgs ?? [], home);
+  }
   if (args.subcommand === "kb" || args.subcommand === "knowledge") return knowledgeMain(args.subArgs ?? []);
   if (args.subcommand === "plugin") return handlePlugin(args.subArgs ?? [], home);
   if (args.subcommand === "creator") return handleCreator(args.subArgs ?? [], home, resolve(args.workdir));

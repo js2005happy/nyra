@@ -416,6 +416,13 @@ session_delegation_verified: ["session", "delegation", "verdict", "passed", "tot
 // 深挖；只记数字与档位，不记召回内容原文。
 active_memory_recalled: ["tier", "hits", "escalated"],
 active_memory_escalated: ["tier", "hits"],
+// G-P1-32 对话转人工坐席进证据链：只记单号、会话 id 与操作人身份，
+// 不记对话原文；hitl_bot_held 是转人工期间网关拦下 bot 自动回复的那次。
+hitl_started: ["handoff", "session", "by"],
+hitl_takeover: ["handoff", "session", "by"],
+hitl_handback: ["handoff", "session", "by"],
+hitl_cancelled: ["handoff", "session", "by"],
+hitl_bot_held: ["session", "handoff"],
 session_shared: ["session", "from", "kind", "items"],
 session_recording_consented: ["session", "by", "consented"],
 // 缺口 40：通话账本进证据链——通话纪要只含数字与 id（时长、字节、帧数、
