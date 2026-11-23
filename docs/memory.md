@@ -65,6 +65,35 @@ Nyra 的三层存储正好对得上，写清分工、不要混用：
   结论，两边都留；检索结果的注入风格参照了它的“历史，需复核”标注。
 - CLI：`nyra memory search <关键词> [--limit N] [--session <会话 id>]`。
 
+## 主动记忆（G-P1-31，OpenClaw active-memory 借鉴）
+
+- OpenClaw 的做法：回复前先搜记忆，简单召回不够时升级用 recall agent
+  深挖；每会话可开关，跨会话记忆要显式开“Remember across
+  conversations”。Nyra 的确定性版本（`src/activeMemory.ts`）：两档都
+  是确定性搜索，不调模型、不花 token。
+- **两档召回**：quick 档搜 MEMORY.md（BM25，5 条）+ 各知识库（BM25，
+  每库 3 条）；命中少于 2 条就升级 deep 档——放宽上限（记忆 10 条、
+  知识库每库 10 条）再加会话全文搜索（FTS5，每会话 2 条片段）。
+  deep 档包含 quick 的结果，按分数合并去重。
+- **开关**：全局默认关；`nyra memory recall on|off [会话 id]`——不给
+  会话 id 改全局，给了只改该会话（会话开关优先于全局）；
+  `nyra memory recall status` 看状态。开了才在回复前召回。
+- **跨会话**：默认关。deep 档里关时只搜本会话；`nyra memory recall
+  cross-on` 显式开了才搜别的会话。MEMORY.md 与知识库是本机的长期
+  记忆，quick 档就搜；会话历史是跨会话的部分，只在 deep 档里按这
+  条口径搜。
+- **只读起步**：召回结果只注入提示词（附来源，标“历史内容，需复核”，
+  会话片段先过脱敏），不改记忆、不发消息、不花钱。召回失败（库损坏、
+  会话库不存在等）不拦运行，只是不注入；每轮先清掉上一轮的段落，
+  不复用旧召回。
+- **试跑**：`nyra memory recall test <问题> [--session <会话 id>]`
+  只读跑一次召回，打印档位与命中，不进模型、不看开关。
+- **证据链**：新运行事件 `active_memory_recalled`（档位、命中数、是否
+  升级）与 `active_memory_escalated`（档位、命中数），只记数字与档位，
+  不记召回内容原文。
+- **不在本批**：模型 agent 深挖（deep 是更宽的确定性搜索，不是模型
+  agent）；对话里自动提炼记忆（G-P1-34，另排）；向量检索（另算）。
+
 ## 缺口 2：删除与控制
 
 - 工具 `memory_forget` / `memory_delete`（同义，两个名字都留着：

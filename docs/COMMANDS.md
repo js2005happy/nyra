@@ -61,6 +61,7 @@
 | `nyra recall "<任务>" [--cross-dir]` | 查这个任务有哪些历史可复用 |
 | `nyra memory <export\|import\|search\|forget…>` | 记忆交换与检索/删除 |
 | `nyra memory <remember\|entries\|entry\|update\|rejections>` | 结构化记忆条目（证据门：写记忆须附用户原话依据，见本页“记忆证据门”一节）；`remember`/`entries` 支持 `--org` 组织记忆 |
+| `nyra memory recall <status\|on\|off\|cross-on\|cross-off\|test>` | 主动记忆（G-P1-31）：回复前召回，不够升级深挖；默认关，按会话可开关，跨会话须显式开 |
 | `nyra soul <show\|status\|list\|init\|add\|remove\|enable\|disable\|edit\|export\|import>` | Soul 身份层：每 agent 的身份与 Tenets，不变量编译进规则层、代码拦截；Charter 角色契约（`soul charter <set\|show\|clear>`，团队接单须有完整 Charter，详见 `docs/soul.md` 与 `docs/team.md`） |
 | `nyra style <learn\|show\|list\|delete…>` | 分应用文风学习 |
 | `nyra skills <status\|enable\|disable\|draft\|drafts\|show\|approve\|reject\|archive\|sweep>` | 技能自沉淀：成功任务自动起草技能草稿，人工批准后才安装，低质自动归档（详见 `docs/skill-sedimentation.md`） |
