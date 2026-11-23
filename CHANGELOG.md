@@ -1,3 +1,7 @@
+## Unreleased — 2026-11-24 delegated exception privacy (static only)
+
+- `Agent.delegate` no longer forwards child `AgentError` or unexpected exception messages/types to the parent model. Both branches return fixed legacy failure-prefixed text and mark execution status unknown; no automatic retry, permission or dependency changes. Static source review only; tests and CI not run.
+
 ## Unreleased — 2026-11-23 web_fetch evidence URL privacy (static only)
 
 - Do not echo the fetched URL in the model-visible `web_fetch` evidence marker: URL query parameters and userinfo may contain secrets. Keep the existing evidence save and its source metadata unchanged; this is not full output redaction. No dependencies, approvals or network behavior changed. Static review only; tests not run.
