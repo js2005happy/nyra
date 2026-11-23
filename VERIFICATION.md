@@ -1,3 +1,10 @@
+## 2026-11-23 — bounded successful HTTP POST response read (static-only)
+
+- Reviewed development-branch README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, core Tools/Agent, recent repository commits, open Issues (none), PR #113 (separate evaluation work), and prior commit status (no statuses returned). Original angel URL resolves to js2005happy/nyra.
+- **Source fact:** `_tool_http_post` previously used an unbounded `response.read()` before truncating displayed text. Now it reads at most 32,001 bytes, decodes at most 32,000 bytes, and marks any unread remainder. This is a byte cap, not a guarantee of exact character count or complete response retrieval.
+- **External evidence reviewed 2026-11-23:** Codex #55684 and #37121, linked in ROADMAP. External user reports are demand signals, not evidence of an Angel incident or representative statistics. Issue creation dates were not independently verified.
+- **Not executed:** tests, compilation, CI, HTTP requests, dependency installation, external account access, main merge, production release. No runtime or cross-platform guarantee. Successful content may contain secrets; other network tools may still read unbounded content.
+
 ## 2026-11-23 — HTTP POST non-2xx body pre-read guard (static-only)
 
 - Inspected development-branch README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, core Tools/Agent source, recent commits, open Issues (none), PR #113 (evaluation work already in progress), and prior commit status (no checks returned). The original angel URL resolves to js2005happy/nyra.
