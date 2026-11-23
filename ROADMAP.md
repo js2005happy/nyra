@@ -1,3 +1,10 @@
+## 2026-11-23 — P1 HTTP POST error response classification (static-only)
+
+- **Source fact**: `_tool_http_post` returned `HTTP <code>` for `urllib.error.HTTPError`; `classify_tool_report` only treats `错误：` or `执行失败：` as legacy failure prefixes. A 4xx/5xx HTTP error could therefore be journaled as reported success. The patch adds a fixed `错误：` prefix to the HTTPError path while preserving status and truncated response body. This is an HTTP failure report, not proof that remote side effects did not occur; no automatic retry.
+- **External user report, reviewed 2026-11-23**: [Codex #40646](https://github.com/openai/codex/issues/40646), opened 2026-08-25, reports completion claims not supported by tool traces; [Codex #58639](https://github.com/openai/codex/issues/58639), discussed 2026-11-01, reports repeated HTTP 400 errors stalling goals. These are reports about other products, not evidence of Angel incident frequency or this specific defect.
+- **Engineering inference and ranked candidates (value / difficulty / security risk / dependency)**: (1) P1 HTTPError explicit failure **high / low / low / existing tool classifier** (implemented, untested); (2) P1 trusted structured HTTP/Shell outcome **high / medium / medium / Agent-tool contract**; (3) P1 other direct-output privacy audit **high / medium / medium / tool contracts**; (4) P1 pre-model/pre-record privacy boundary **high / high / high / policy and compatibility**; (5) P1 independent side-effect receipts **high / high / high / trusted readback**.
+- **Limitations**: HTTP response bodies can contain secrets; the patch does not sanitize them, change approval, retry, transport, or dependency behavior. No tests/CI executed.
+
 ## 2026-11-23 — P1 本地 git diff 非零退出失败关闭（静态增量）
 
 - **源码事实**：本地 git_status 的首阶段 status 退出码已检查，但第二阶段 git diff --stat 非零退出时原先仍返回首阶段状态，可能被误认为完整快照。本轮改为固定失败文本，不输出可能含私人路径的 git stderr；新增两项未执行回归定义。远端 backend 不变。
