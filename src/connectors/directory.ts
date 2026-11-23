@@ -268,7 +268,9 @@ export function uninstallConnector(
 
 /** 调用计数进运行记录：用量账本 + connector_call 事件。审计那一行已经由
  * 各客户端的 audit() 记了，这里不重复记审计。最佳努力：用量是派生计数，
- * 记不上不拦调用本身（返回 null）；未知连接器的调用不记（fail-closed）。 */
+ * 记不上不拦调用本身（返回 null）；未知连接器的调用不记（fail-closed）。
+ * 缺口 44 深化：事件里带 user_id——报告要求调用记录写明“谁”调的（调了
+ * 哪个系统、读了什么、写了什么、谁批准的里的“谁”）；没传 userId 时不写该字段。 */
 export function recordConnectorCall(
   home: string,
   call: {
@@ -277,6 +279,7 @@ export function recordConnectorCall(
     runId?: string | null;
     records?: number;
     durationMs?: number;
+    userId?: string;
   },
 ): ConnectorUsageEntry | null {
   try {
@@ -287,6 +290,7 @@ export function recordConnectorCall(
       operation: call.operation,
       records: call.records ?? 0,
       duration_ms: call.durationMs ?? 0,
+      ...(call.userId ? { user_id: call.userId } : {}),
     });
     return entry;
   } catch {

@@ -349,6 +349,7 @@ export async function runConnectorFlow(
         operation: `flow:${def.id}`,
         records: checks.filter((c) => c.passed).length,
         durationMs: result.durationMs,
+        userId,
       });
     } catch { /* 用量记不上不改结论 */ }
     try {

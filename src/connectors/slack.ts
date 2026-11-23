@@ -252,7 +252,7 @@ export class SlackApiClient {
       ...(reason ? { reason } : {}),
     });
     // 缺口 44 第一批：调用计数进用量账本与运行记录（最佳努力，记不上不拦调用）。
-    recordConnectorCall(this.home, { connector: "slack", operation, records, durationMs: Date.now() - startedAt });
+    recordConnectorCall(this.home, { connector: "slack", operation, records, durationMs: Date.now() - startedAt, userId: this.userId });
   }
 
   private async callApi(method: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
