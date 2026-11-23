@@ -121,6 +121,8 @@ nyra connector auth <连接器>                     一键连接：走该连接�
 nyra connector install <连接器>                  安装到目录：把连接器登记进你的目录（只装声明里有的；试点装不了）
 nyra connector uninstall <连接器> [--yes]        从目录卸载：同时撤销授权，访问立即断
 nyra connector usage [连接器]                    用量：每个连接器的调用次数（总次数、分操作次数、最后调用时间）
+nyra connector flows                             列出全部业务流程（每条一条真实业务流程 + 验收标准）
+nyra connector flow <流程id> [参数]              跑一条业务流程（见“业务流程（G-P0-6）”一节）
 ```
 
 `nyra gmail status` 也会多一行授权状态；`nyra gmail auth` 成功后自动在
@@ -158,12 +160,31 @@ Shopify 的 OAuth 授权码流程要一个公网回调地址，Nyra 跑在本机
 | `nyra shopify product <id>` | 查一个商品 |
 | `nyra shopify orders [--limit N] [--status any\|open\|closed\|cancelled\|archived] [--page-info X]` | 列出订单（默认全部状态） |
 | `nyra shopify order <id>` | 查一个订单 |
+| `nyra shopify fulfill <id>` | 订单履约核查：订单详情 + 行项目 + 库存逐项核对（只读，不改订单、不动库存） |
 | `nyra shopify inventory [--location-id N] [--inventory-item-id N] [--limit N] [--page-info X]` | 查库存水平（按地点 / 商品过滤） |
 | `nyra shopify status` | 查看状态（是否启用、是否已授权、店铺域名） |
 
 订单输出**不含客户邮箱与地址**（`customer` 对象整个不解析）；每次调用
 记一行审计（`connector-audit.jsonl`，`action: "call"`），只记操作名、
 记录数、耗时，不记 token、不记响应内容、不记客户信息。
+
+### 订单履约核查（G-P0-6 做深，只读）
+
+```
+nyra shopify fulfill <id>
+```
+
+查一个订单能不能发货：先读订单详情（含行项目），再按库存项 id 查库存
+水平，逐项核对“可售 ≥ 要发”，出四档结论之一：
+
+- `fulfillable`：每项库存都够，可以发货；
+- `short`：有项缺货（或无法核查），现在发不了，缺几件写清楚；
+- `already-fulfilled`：订单已发货，无需再核；
+- `cancelled`：订单已取消（看 `cancelled_at`，不是发货状态），不发货。
+
+无法核查按缺货算（fail-closed）：行项目没有 `inventory_item_id`、或库存
+接口没返回该项，记“无法核查”，不静默跳过。结论只读判断——不改订单状
+态、不动库存、不下单；退出码：可以发货 / 已发货为 0，缺货 / 已取消为 1。
 
 ### 写操作一律拒绝
 
@@ -231,11 +252,17 @@ nyra slack card --channel <id> --approval <id>
 不带参数原文）。账本没有、损坏、找不到这条、已处理、已过期都直接报错、
 不发卡。
 
-**按钮回调本批只记审计，不回写审批桥**：Slack 把按钮点击以交互请求发回
-来时，`handleApprovalCallback` 只解析出结论（批准/拒绝 + 审批 id）并记
-一行审计（`operation: "approval_callback"`），审批本身仍是挂起状态——
-点了按钮也不会自动放行。回写进 ApprovalBridge（点了按钮就真的批/拒）
-是下一批；这点写在这里，不假装接通。
+**按钮回调回写审批桥（G-P0-6 做深）**：Slack 把按钮点击以交互请求发回
+来时，`resolveSlackApprovalCallback` 解析出结论（批准/拒绝 + 审批 id），
+调审批桥 `decide`（via `"button"`，档位 `once`），再记一行解决审计
+（`operation: "approval_callback_resolved"`）。只认 owner/admin 白名单
+（不在白名单的决定人报 `not-approver`，审批仍挂起）；找不到审批报
+`not-found`；已处理过的审批报 `not-pending`，重复回调不重复解决（幂等）。
+CLI 入口：`nyra slack callback --payload <json> [--by <用户id>]`（`--by`
+省略时取配置的 `bot.owner`，没配就报用法错）；真正的 Socket Mode / Events
+接线调用同一个 resolver，网关接线是下一步，不在本批假装接通。`handleApprovalCallback`
+仍只做“收到并记审计”，两处审计各记各的——“收到回调”和“审批已解决”
+是两行，不混成一行。
 
 ### 写操作管控
 
@@ -292,6 +319,20 @@ nyra gmail mark-unread <id> [--yes]      # 标未读（加上 UNREAD 标签）
 一律取消、不改。注意：`nyra gmail read <id>` 仍是读一封邮件全文，已读/
 未读改用 `mark-read` / `mark-unread`（`read` 这个词已被占用）。
 
+### 草稿列表与发送草稿（G-P0-6 做深）
+
+```
+nyra gmail drafts                      # 只读：列出草稿（id 与邮件 id）
+nyra gmail send-draft <草稿id> [--yes] # 发一封草稿（写操作，须显式确认并过红线）
+```
+
+`drafts` 只列草稿 id 与邮件 id——主题与收件人要发之前再取（`send-draft`
+先读草稿详情，确认时把收件人、主题、摘要展示给用户看，答 y 才发）。
+草稿不完整（收件人或主题为空）不发。发草稿与 `send` 同款门：须显式批准
+（`--yes` 或交互确认），且过缺口 51 红线（收紧到永远禁做时即使已批准也
+拒绝）；发完写发送证据（`gmail_send`，只记收件人、主题、草稿 id、邮件 id，
+正文发送前未读取、证据里明说这一点，不编一个空正文）。
+
 ### 删除：只进回收站，永久删除不提供
 
 ```
@@ -313,12 +354,36 @@ Registry 里 Gmail 的声明已补全：读 scope（`gmail.readonly`）与写 sc
 每次调用记一行审计（`connector-audit.jsonl`，`action: "call"`），只记
 操作名、记录数、耗时，不记 token、不记邮件内容、不记附件内容。
 
-## 已知局限（诚实边界）
+## 业务流程（G-P0-6 做深）
+
+报告 G-P0-6 的要求：“别拼数量，按缺口 44 已有的队形做深——每个接进来
+的系统都要能跑通一条真实业务流程并有验收标准。”所以本批不加新连接器，
+只给已有的三家各补一条端到端流程，每条带验收检查（跑完出“通过 / 不通过”
+的结论，不只打印一堆数据）：
+
+| 流程 id | 连接器 | 跑通的业务 | 验收检查 |
+|---|---|---|---|
+| `slack-approval-roundtrip` | Slack | 审批卡闭环：按钮回调回写审批桥 | `callback-parsed`、`approver-allowed`、`approval-resolved` |
+| `shopify-order-fulfillment` | Shopify | 订单履约核查：订单详情 + 行项目 + 库存逐项核对 | `order-found`、`order-not-cancelled`、`items-covered` |
+| `gmail-draft-send` | Gmail | 草稿闭环：列草稿、读草稿、发草稿 | `draft-found`、`draft-complete`、`draft-sent` |
+
+```\nnyra connector flows                             # 列出全部业务流程\nnyra connector flow <流程id> [参数] [--json]     # 跑一条流程，退出码：通过 0、不通过 1、用法错 2\nnyra connector flow slack-approval-roundtrip --payload <json> [--by <用户id>]\nnyra connector flow shopify-order-fulfillment --order <id>\nnyra connector flow gmail-draft-send --draft <id> [--yes]\n```\n\n运行器（`src/connectors/flows.ts` 的 `runConnectorFlow`）只做三件事：
+按 id 找流程、跑它、把结论记进审计（`operation: "flow:<流程 id>"`）+
+用量（`recordConnectorCall`）+ 证据文件（`evidence/connector/` 下的
+`connector_flow` 报告）。验收检查是流程自己评的，运行器不替流程编结论；
+流程里抛出的前置错误（缺参数、没批准、没桥）也收成“不通过”的结论返回，
+只有未知的流程 id 才抛错。事件复用已有的 `connector_call`，不新增事件
+类型；模型工具不新增，流程只走 CLI + 库函数。\n\n发草稿那条仍是写操作：`nyra connector flow gmail-draft-send` 先读草稿
+展示收件人/主题给用户确认（`--yes` 跳过），确认后才跑流程；流程内再过
+一次缺口 51 红线。Slack 那条要审批桥：CLI 按本机配置建（`bot.owner`），
+网关传运行中 BotRunner 的桥——模块不自己建桥，免得两处各建一个桥、各读
+一份账本。\n\n## 已知局限（诚实边界）
 
 - 真实 Gmail OAuth 授权未在真应用上跑通，只在假 vault / 假 OAuth 上验过。
 - 真实 Shopify 店铺未接通，只在假 API 上验过；自定义应用 token 的授权流程未在真店上跑通。
-- 真实 Slack workspace 未接通，只在假 API 上验过；Bot token 的授权流程未在真 workspace 上跑通；审批卡按钮回调本批只记审计，不回写审批桥。
+- 真实 Slack workspace 未接通，只在假 API 上验过；Bot token 的授权流程未在真 workspace 上跑通；审批卡按钮回调回写审批桥已在假审批桥 + 假回调上验过，真实 Socket Mode / Events 接线还没接（网关接线是下一步）。
 - Gmail 深化已落地（附件只读下载、标签、标已读、进回收站）；Shopify 写操作是以后的一批。
+- G-P0-6 三条业务流程只在假 API / 假审批桥上验过：Slack 回调回写没走过真实 Socket Mode，Shopify 履约核查没对过真实店铺的订单与库存，Gmail 草稿发送没在真实 Gmail 账号上发过（真机 Gmail 授权仍卡在 Google 同意页提交转圈，本批没再试）。
 - 过期只在 refresh 失败时标记：access token 正常过期不标（它会被自动刷新）。
 - 授权状态按本机当前会话的 account_id 隔离；网关多用户权限模型是缺口 41
   的下一批，本批不碰。

@@ -125,10 +125,10 @@
 | `nyra hooks list` | 列出已安装的钩子 |
 | `nyra permissions` | Poppy 站点授权意向（本地账本，只记录不授权） |
 | `nyra eigenflux` | EigenFlux 接入检测与本地网络限制 |
-| `nyra gmail <status\|auth\|search\|read\|send\|labels\|label\|unlabel\|mark-read\|mark-unread\|trash\|attachment\|revoke>` | Gmail 连接器：读邮件、按 thread 回复、代发草稿（发信走审批）；附件只读下载、标签、标已读、进回收站（写操作须显式确认；永久删除不提供，详见 `docs/connectors-gmail.md`） |
-| `nyra connector <status\|list\|approve\|revoke\|auth\|install\|uninstall\|usage>` | 连接器目录：安装 / 一键授权 / 撤销 / 用量（详见 `docs/connectors.md`） |
-| `nyra shopify <auth\|status\|products\|product\|orders\|order\|inventory>` | Shopify 连接器（只读）：查商品、订单、库存；写操作一律拒绝（详见 `docs/connectors.md`） |
-| `nyra slack <auth\|status\|channels\|history\|send\|card>` | Slack 连接器：读频道/消息、发消息（须显式批准）、发审批卡；删消息/改频道/管理成员一律拒绝（详见 `docs/connectors.md`） |
+| `nyra gmail <status\|auth\|search\|read\|send\|drafts\|send-draft\|labels\|label\|unlabel\|mark-read\|mark-unread\|trash\|attachment\|revoke>` | Gmail 连接器：读邮件、按 thread 回复、代发草稿（发信走审批）；草稿列表与发送草稿（G-P0-6 做深）；附件只读下载、标签、标已读、进回收站（写操作须显式确认；永久删除不提供，详见 `docs/connectors-gmail.md`） |
+| `nyra connector <status\|list\|approve\|revoke\|auth\|install\|uninstall\|usage\|flows\|flow>` | 连接器目录：安装 / 一键授权 / 撤销 / 用量 / 业务流程（详见 `docs/connectors.md`） |
+| `nyra shopify <auth\|status\|products\|product\|orders\|order\|fulfill\|inventory>` | Shopify 连接器（只读）：查商品、订单、库存；订单履约核查（G-P0-6 做深）；写操作一律拒绝（详见 `docs/connectors.md`） |
+| `nyra slack <auth\|status\|channels\|history\|send\|card\|callback>` | Slack 连接器：读频道/消息、发消息（须显式批准）、发审批卡、按钮回调回写审批桥（G-P0-6 做深）；删消息/改频道/管理成员一律拒绝（详见 `docs/connectors.md`） |
 | `nyra mcp server <status\|enable\|disable\|allow-writes-on\|allow-writes-off>` | 对外 MCP 服务开关：别的 agent 经网关 `POST /mcp` 调 Nyra 的记忆与任务（默认关闭；写操作须显式开且过独立审查，详见 `docs/mcp.md`） |
 | `nyra peer <status\|enable\|disable\|list\|auth\|ask\|handoff\|card\|code\|add\|request\|accept\|friends\|block\|circle\|share\|grant\|proposal\|branch\|discover\|token>` | 对端协作：问别的 Nyra 实例、交接运行上下文、名片加好友（默认关闭；对外发送须开独立审查，详见 `docs/peer.md`）；第 2 批 G-P1-5/G-P1-6/G-P1-8/G-P1-10：名片 per-circle 可见性、带 scope 可吊销的 grant、对方写操作默认进提议、外来任务隔离分支；第 3 批 G-P1-4/G-P1-7：公开发现（well-known 名片 + 验签，不靠线下传码）、per-peer token（出站，每好友一条）、名片 JWS 签名（详见 `docs/peer-discovery.md`） |
 | `nyra circle <create\|list\|show\|invite\|revoke\|delete\|bind\|unbind\|owner\|check\|bindings>` | 信任圈与跨实例准入：谁能给 agent 发任务（默认全封闭，圈外消息网关直接丢弃；详见 `docs/circles.md`） |

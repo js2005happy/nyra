@@ -55,6 +55,8 @@ nyra gmail auth                                浏览器授权（回环回调）
 nyra gmail search <查询> [--limit N]           按 Gmail 搜索语法找邮件（默认 10 封，最多 25）
 nyra gmail read <id>                           读一封邮件全文
 nyra gmail send --to <邮箱> --subject <主题> --body <正文>
+nyra gmail drafts                              列出草稿（只读；G-P0-6 做深）
+nyra gmail send-draft <草稿id> [--yes]         发一封草稿（写操作，须显式确认并过红线；草稿不完整不发，详见 docs/connectors.md）
                 [--cc <邮箱>] [--bcc <邮箱>] [--thread <id>] [--draft] [--yes]
                                                发一封（默认先展示确认；--draft 只存草稿）
 nyra gmail labels                              列出标签（只读）
