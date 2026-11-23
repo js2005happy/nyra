@@ -1,3 +1,9 @@
+## 2026-11-24 — web_search non-2xx status guard (static only)
+
+- **Source fact:** _fetch_search_page previously accepted any adapter-returned HTTP response and parsed its body, without an explicit status check. Standard urllib usually raises HTTPError, but alternative adapters may return non-2xx normally. The new guard rejects non-2xx or missing status before reading HTML; the existing source fallback remains.
+- **External feedback reviewed 2026-11-24:** [Codex #34233](https://github.com/openai/codex/issues/34233) (opened 2026-07-19) reports secrets in tool output; [Codex #24823](https://github.com/openai/codex/issues/24823) (opened 2026-05-27) requests inspectable approvals. These are external user reports, not evidence of this exact Angel bug or prevalence. **Inference:** avoid treating an error page as search evidence and avoid unnecessary processing of untrusted error bodies.
+- **Static verification:** compared targeted _fetch_search_page and _tool_web_search paths; no tests, compile, network, CI dispatch, account actions, main merge or release. Alternate transport compatibility and runtime behavior unverified.
+
 ## 2026-11-24 — web_fetch non-2xx evidence guard (static only)
 
 - **Source fact:** web_fetch previously processed and could persist a response body without inspecting response.status; urllib transports normally raise HTTPError, but alternate response adapters can return non-2xx directly. The new guard returns a fixed error before read/save.
