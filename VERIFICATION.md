@@ -1,3 +1,10 @@
+## 2026-11-24 — local shell structured outcome (static only)
+
+- Inspected development-branch README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, core Agent/Tools, structured classifier, current PR #113 and open issues. No project tests or shell commands executed.
+- Source observation: local shell used only a text prefix for result classification; a successful command printing `错误：` could be misclassified as failed, while a timeout needed conservative unknown handling. Local shell now reports process outcome separately. This does not prove task success or external side effects.
+- External report: [Codex #50301](https://github.com/openai/codex/issues/50301), opened 2026-10-02, describes batch shell failures obscured by aggregate exit codes. [Codex #24226](https://github.com/openai/codex/issues/24226), opened 2026-05-23, discusses shell exit-code interpretation. These are individual reports in another project, not Angel incidence statistics. Reviewed 2026-11-24.
+- **Not executed:** tests, builds, CI, runtime commands, dependency installation, account actions, main merge or release. Remote shell remains legacy text-based; command chains still expose only aggregate process status.
+
 ## 2026-11-24 — delegated exception privacy (static only)
 
 - Inspected development-branch README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, core Agent/Tools, tool report classifier, recent main commits, open issues (none), PR #113 and previous commit status (no statuses returned). `js2005happy/angel` resolves to `js2005happy/nyra`.
