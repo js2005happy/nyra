@@ -1128,7 +1128,7 @@ def _tool_http_post(
             text = exc.read().decode("utf-8", errors="replace")
         except Exception:
             text = ""
-        return f"HTTP {exc.code}\n{_truncate(text)}"
+        # urllib raised HTTPError: preserve status/body, but classify as failure.\n        # A POST may have taken effect remotely; never auto-retry.\n        return f"错误：HTTP {exc.code}\n{_truncate(text)}"
     except Exception:
         # POST errors can include private URLs, tokens or request metadata.
         # A failed request may already have reached the remote service; do not retry.
