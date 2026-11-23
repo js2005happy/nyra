@@ -381,9 +381,9 @@ test("splash: 方块头转眼球入场动画，只在手机主屏幕独立窗口
     expect(page).toContain("(display-mode: standalone)");
     expect(page).toContain("navigator.standalone");
     expect(page).toContain("prefers-reduced-motion: reduce");
-    // 方块头 splash：0–3.6 s 动画（轻落回弹 → 睁眼 → 左看停 → 右看停 → 慢转一圈 → 连眨两下 → 字标 + 笑眼歪头）、终帧停到 4.05 s 再淡出；不能点击跳过。
+    // 方块头 splash：0–3.6 s 动画（轻落回弹 → 睁眼 → 左看停 → 右看停 → 慢转一圈 → 连眨两下 → 字标 + 竖眼正视轻歪头）、终帧停到 4.05 s 再淡出；不能点击跳过。
     expect(page).toContain("SPLASH_END=3.6, SPLASH_HOLD=4.05");
-    expect(page).toContain("function smile(t)");
+    expect(page).not.toContain("function smile(t)"); // 不要笑眼：结尾保持正常竖眼正视
     expect(page).toContain("function land(t)");
     // 按屏宽定尺寸：方块头宽 min(14vw, 64px)、整条居中（20:9 长屏方块头中心在屏高 50%）。
     expect(page).toContain("--sp-head:min(14vw,64px)");

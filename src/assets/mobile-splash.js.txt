@@ -1,5 +1,5 @@
 // 入场动画：方块头转眼球（设计源 docs/design/splash/splash.js 的 frame(t) 原样移植，逐帧一致）。
-// 分镜：轻落压扁回弹、睁眼微弹 → 往左看停一下 → 往右看停一下 → 往上慢转一圈（轻抬头）→ 连眨两下 → 上移、下方浮现字标 Nyra，笑眼 + 轻歪头 → 淡出。
+// 分镜：轻落压扁回弹、睁眼微弹 → 往左看停一下 → 往右看停一下 → 往上慢转一圈（轻抬头）→ 连眨两下 → 上移、下方浮现字标 Nyra，竖眼正视 + 轻歪头 → 淡出。
 // 时间线 0–3.6 s 动画、停在终帧到 4.05 s，然后整层淡出露出应用（约 4.5 s）；不能点击跳过（用户要求自动进入）。
 // 只在主屏幕独立窗口里、每次冷启动播一次；减少动态效果时只淡入终帧。
 var NyraSplash=(function(){
@@ -37,8 +37,6 @@ function lid(t){
   const open=0.08+0.92*eBack(P(t,0.46,0.78));
   return open*blinkAt(t,2.74,0.20)*blinkAt(t,3.00,0.13);
 }
-// 笑眼（0 → 1）：字标浮现时眼睛压扁成短横、再弯成 ∩。
-function smile(t){return eInOut(P(t,3.16,3.50));}
 // 落地挤压：从上方轻落，下落时略拉长，触地压扁后衰减回弹（底边为轴）。返回 [下落位移, 竖向缩放]。
 function land(t){
   const f=P(t,0,0.44), drop=lerp(-16,0,eIn(f));
@@ -49,9 +47,9 @@ function land(t){
 function frame(t,lang){
   const fade=eOut(P(t,0,0.50));             // 从暗处浮现
   const rise=eInOut(P(t,2.86,3.28));        // 方块头上移、让出字标的位置
-  const [gx,gy]=gaze(t), lo=lid(t), sm=smile(t), [drop,sy]=land(t);
+  const [gx,gy]=gaze(t), lo=lid(t), [drop,sy]=land(t);
   const up=Math.max(0,-gy);                 // 往上看时轻轻抬头
-  const tilt=gx*1.6-5*Math.sin(Math.PI*P(t,3.22,3.60))*eOut(P(t,3.22,3.40)); // 头随视线微转；结尾歪一下头再回正
+  const tilt=gx*1.6-2.5*Math.sin(Math.PI*P(t,3.22,3.60))*eOut(P(t,3.22,3.40)); // 头随视线微转；结尾轻轻歪一下头再回正
   const sx=1+(1-sy)*0.8, syy=sy+0.012*up;
   const cx=W/2+gx*S*0.02, by0=lerp(H/2,HEAD_Y1,rise)+S/2+drop-up*S*0.03;
   const k=S/100, ox=cx-50*k*sx, oy=by0-100*k*syy;
@@ -59,14 +57,9 @@ function frame(t,lang){
   const ex=gx*11, ey=gy*10, nar=1-0.07*Math.abs(gx);
   let eyes="";
   [-1,1].forEach(s=>{
-    const w=EW*nar, ecx=50+s*EDX+ex, ecy=ECY+ey-2*sm;
-    if(sm<0.45){
-      const h=Math.max(lerp(EH*lo,w*0.6,eInOut(sm/0.45)),w*0.34), x=ecx-w/2, y=ecy-h/2;
-      eyes+=`<rect x="${f2(x)}" y="${f2(y)}" width="${f2(w)}" height="${f2(h)}" rx="${f2(Math.min(w,h)/2)}" fill="${EYE}"/>`;
-    }else{
-      const q=eOut((sm-0.45)/0.55), sw=w*0.6, hw=lerp((w-sw)/2,w*0.62,q), b=lerp(0,EH*0.2,q);
-      eyes+=`<path d="M${f2(ecx-hw)} ${f2(ecy+b/2)}A${f2(hw)} ${f2(Math.max(b,0.01))} 0 0 1 ${f2(ecx+hw)} ${f2(ecy+b/2)}" fill="none" stroke="${EYE}" stroke-width="${f2(sw)}" stroke-linecap="round"/>`;
-    }
+    const w=EW*nar, ecx=50+s*EDX+ex, ecy=ECY+ey;
+    const h=Math.max(EH*lo,w*0.34), x=ecx-w/2, y=ecy-h/2;
+    eyes+=`<rect x="${f2(x)}" y="${f2(y)}" width="${f2(w)}" height="${f2(h)}" rx="${f2(Math.min(w,h)/2)}" fill="${EYE}"/>`;
   });
   const gcy=by0-S/2;
   const glow=`<circle cx="${f2(cx)}" cy="${f2(gcy)}" r="${f2(S*1.55)}" fill="url(#ng)" opacity="${f2(0.55*fade)}"/>`;

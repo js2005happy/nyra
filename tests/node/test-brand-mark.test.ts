@@ -39,6 +39,15 @@ test("方块头几何 = 应用图标 C（同色、眼睛逐点一致、圆角 22
   // 运行时的 frame 与设计源逐字一致。
   const body = (src: string) => src.slice(src.indexOf("const W=1280"), src.indexOf("\n}", src.indexOf("function frame(")) + 2);
   expect(body(splash)).toBe(body(design));
+  // 结尾不弯成笑眼：终帧（也是减少动态效果时显示的帧）是两只正常竖眼、正视。
+  const S = require(join(ROOT, "docs", "design", "splash", "splash.js"));
+  for (const t of [3.3, 3.45, S.END, 4.05]) {
+    const svg: string = S.frame(t);
+    expect(svg).not.toContain("stroke-linecap");
+    const eyes = [...svg.matchAll(new RegExp(`<rect x="([\\d.-]+)" y="([\\d.-]+)" width="([\\d.]+)" height="([\\d.]+)"[^>]*fill="${MARK_EYE}"`, "g"))];
+    expect(eyes.length).toBe(2);
+    if (t >= S.END) for (const m of eyes) { expect(+m[3]).toBeCloseTo(e.w, 1); expect(+m[4]).toBeCloseTo(e.h, 1); }
+  }
 });
 
 test("仓库里的标志 / 应用图标 SVG 与 src/brandMark.ts、src/appIcon.ts 同步（bun scripts/make-icons.ts 生成）", () => {
