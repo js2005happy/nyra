@@ -309,6 +309,10 @@ workflow_node: ["workflow_run_id", "workflow", "node_id", "node_type", "status",
 workflow_awaiting_approval: ["workflow_run_id", "workflow", "node_id", "review_item_id"],
 workflow_completed: ["workflow_run_id", "workflow", "spent_usd", "nodes"],
 workflow_failed: ["workflow_run_id", "workflow", "error"],
+// G-P1-40：步级检查点 + 时间旅行——改状态（改了哪一步、作废了几个后续检查点）、
+// 重放（从哪个运行的哪一步重放、重放了几步）。只记元数据，不记状态原文。
+step_checkpoint_updated: ["workflow_run_id", "step_id", "invalidated"],
+step_checkpoint_replayed: ["workflow_run_id", "from_run_id", "step_id", "steps_replayed"],
 // 缺口 25 其余形态：协调者每轮的决定（第几轮、什么动作、哪个步骤、这次决定
 // 花了多少）、动态生成的新步骤（哪个步骤、什么类型）、协调者停下来问人
 // （第几轮、哪个审阅项）。只记元数据与 id，不记提示词原文、不记决定全文、

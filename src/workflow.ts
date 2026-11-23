@@ -67,6 +67,17 @@ import {
 } from "./scriptPreauth.ts";
 // scriptPreauth 只依赖 scriptPurity 与 node 内置模块，是叶子模块，
 // 静态导入不会形成循环（本模块对 tools.ts 的动态 import 惯例不受影响）。
+// stepCheckpoints 同款叶子模块（只引 node 内置 + config）：recordNode 里
+// 每节点记一条步级检查点；本模块绝不被它反向 import。
+import {
+  buildStepCheckpoint,
+  planReplay,
+  resolveStepCheckpointStore,
+  snapshotStepsState,
+  upsertCheckpoint,
+  type ReplayPlan,
+  type StepCheckpointStore,
+} from "./stepCheckpoints.ts";
 import { RunStore } from "./runs.ts";
 import { enqueueReviewItem, getReviewItem } from "./reviewQueue.ts";
 import { UsageLedger, monthKeyString } from "./usageLedger.ts";
@@ -240,6 +251,8 @@ export interface WorkflowRun {
   dryRunPlanHash: string | null;
   /** 协调者运行态（fixed 形态为 null；挂起 resume 后从这里续跑）。 */
   coordinator: WorkflowCoordinatorState | null;
+  /** 时间旅行重放的来源（G-P1-40）：从哪个运行的哪一步重放过来；正常运行为 null。 */
+  replayedFrom?: { runId: string; stepId: string; at: string } | null;
 }
 
 /** 协调者最多跑几轮（定义里没配用默认值 10，上限 20）。 */
@@ -1193,6 +1206,8 @@ export interface WorkflowRunOptions {
   providerFactory?: () => Promise<ProviderLike>;
   dryRun?: boolean;
   trial?: boolean;
+  /** 步级检查点 store（G-P1-40；测试传内存 store，不传默认按配置解析）。 */
+  stepCheckpointStore?: StepCheckpointStore;
 }
 
 function truncateOutput(text: string, max = MAX_OUTPUT_CHARS): string {
@@ -1243,6 +1258,8 @@ class WorkflowRunner {
   coordState: WorkflowCoordinatorState | null;
   badDecisions = 0;
   knownTools: Set<string> | null = null;
+  /** 步级检查点 store（G-P1-40）：recordNode 每节点记一条；远端后端在运行里是 best-effort。 */
+  stepCheckpointStore: StepCheckpointStore;
 
   constructor(def: WorkflowDefinition, inputs: Record<string, unknown>, opts: WorkflowRunOptions, existingRun?: WorkflowRun) {
     this.def = def;
@@ -1256,6 +1273,7 @@ class WorkflowRunner {
     this.store = new RunStore(join(opts.home, "runs"));
     this.ledger = new UsageLedger(opts.home);
     this.config = loadConfig(opts.home);
+    this.stepCheckpointStore = opts.stepCheckpointStore ?? resolveStepCheckpointStore(opts.home, { config: this.config });
     this.monthlyLimit = resolveMonthlyLimit(this.config);
     this.scope = { inputs: inputs as ScopeValue, steps: {}, loop: {} };
     if (existingRun) {
@@ -1378,7 +1396,38 @@ class WorkflowRunner {
       spent_usd: result.spentUsd,
     });
     this.saveRun();
+    this.recordStepCheckpoint(result);
     this.checkMaxCostOrThrow();
+  }
+
+  /**
+   * G-P1-40：每节点跑完记一条步级检查点（状态快照 + 输入指纹 + 输出摘要）。
+   * 检查点写失败绝不破坏运行（静默跳过——检查点是“能回放就回放”的能力，
+   * 不是运行正确性的前提；缺了它只是那一步没法时间旅行）。
+   * 远端后端在运行里是 best-effort（fire-and-forget，CLI 操作才 await）。
+   */
+  private recordStepCheckpoint(result: WorkflowNodeResult): void {
+    try {
+      const baseId = result.id.replace(/\[\d+\]$/, "");
+      const stepIndex = this.def.steps.findIndex((s) => s.id === baseId);
+      const cp = buildStepCheckpoint({
+        runId: this.run.id,
+        workflow: this.def.name,
+        node: result,
+        stepIndex: stepIndex >= 0 ? stepIndex : 0,
+        stepsState: snapshotStepsState(this.scope.steps as Record<string, { output?: unknown; ok?: unknown }>),
+      });
+      const store = this.stepCheckpointStore;
+      if (store.saveSync && store.loadSync) {
+        const list = store.loadSync(this.run.id);
+        store.saveSync(this.run.id, upsertCheckpoint(list, cp));
+      } else {
+        void (async () => {
+          const list = await store.load(this.run.id);
+          await store.save(this.run.id, upsertCheckpoint(list, cp));
+        })().catch(() => { /* 远端检查点写失败不破坏运行 */ });
+      }
+    } catch { /* 检查点写失败不破坏运行 */ }
   }
 
   async executeStep(step: WorkflowStep, parallelDepth: number, forEachDepth: number): Promise<WorkflowNodeResult> {
@@ -1994,6 +2043,8 @@ export interface WorkflowRunRequest {
   interactive: boolean;
   maxCostUsd?: number;
   providerFactory?: () => Promise<ProviderLike>;
+  /** 步级检查点 store（G-P1-40；测试传内存 store，不传默认按配置解析）。 */
+  stepCheckpointStore?: StepCheckpointStore;
 }
 
 /** 模型 provider 懒加载：只有跑到 llm / delegate / skill 节点时才建（buildProvider 在 tasks.ts）。 */
@@ -2062,6 +2113,7 @@ export async function runWorkflowByName(home: string, name: string, inputOverrid
     home, workdir: req.workdir, mode: req.mode, interactive: req.interactive,
     maxCostUsd: req.maxCostUsd,
     providerFactory: req.providerFactory ?? defaultProviderFactory(home),
+    stepCheckpointStore: req.stepCheckpointStore,
   });
   return runner.runFrom(0);
 }
@@ -2092,6 +2144,7 @@ export async function trialWorkflow(home: string, name: string, inputOverrides: 
     maxCostUsd: req.maxCostUsd,
     providerFactory: req.providerFactory ?? defaultProviderFactory(home),
     trial: true,
+    stepCheckpointStore: req.stepCheckpointStore,
   });
   const run = await runner.runFrom(0);
   if (run.status === "completed") {
@@ -2172,6 +2225,7 @@ export async function resumeWorkflow(home: string, runId: string, req: WorkflowR
     home, workdir: req.workdir, mode: req.mode, interactive: req.interactive,
     maxCostUsd: req.maxCostUsd,
     providerFactory: req.providerFactory ?? defaultProviderFactory(home),
+    stepCheckpointStore: req.stepCheckpointStore,
   }, run);
   const clearPending = (): void => {
     run.pendingNodeId = null;
@@ -2247,6 +2301,82 @@ export async function resumeWorkflow(home: string, runId: string, req: WorkflowR
     return run;
   }
   throw new WorkflowError(`审阅项 ${item.id} 还没批复（当前 ${item.status}），先 nyra review approve/reject 再 resume`);
+}
+
+/**
+ * G-P1-40 时间旅行：从某一步的检查点重放后续步骤。
+ *
+ * 做法是“分叉重放”，不是原地改写：原运行的记录不动，新建一条运行
+ * （replayedFrom 记来源），节点取原运行到检查点为止的前缀——其中被
+ * update_state 改过的步骤输出，先按检查点里的新值换掉——再从下一步
+ * 接着跑。已跑过的步骤不重跑；审批节点重放时重新问人（不复用旧批复）；
+ * 月度硬顶与 --max-cost 照常（前缀已花的钱算进新运行的 spentKnown）。
+ * 只有 fixed 形态能重放；后面有调模型 / 审批的步骤时，没 --yes 直接拒绝。
+ */
+export interface ReplayWorkflowResult {
+  run: WorkflowRun | null;
+  plan: ReplayPlan;
+}
+
+export async function replayWorkflowFromCheckpoint(
+  home: string,
+  runId: string,
+  stepId: string,
+  req: WorkflowRunRequest,
+  opts?: { stepCheckpointStore?: StepCheckpointStore; confirmCosted?: boolean; dryRun?: boolean },
+): Promise<ReplayWorkflowResult> {
+  const run = getWorkflowRun(home, runId);
+  if (!run) throw new WorkflowError(`没有这个运行：${runId}`);
+  const store = opts?.stepCheckpointStore ?? req.stepCheckpointStore ?? resolveStepCheckpointStore(home);
+  const checkpoints = await store.load(runId);
+  if (!checkpoints.length) throw new WorkflowError(`运行 ${runId} 没有步级检查点（还没跑过步骤，或检查点后端里没有这条运行）`);
+  const plan = planReplay(run.definition, checkpoints, stepId);
+  if (!plan.supported) throw new WorkflowError(plan.reason ?? "这个运行不支持重放");
+  if (plan.needsConfirmation && !opts?.confirmCosted && !opts?.dryRun) {
+    const costed = plan.steps.filter((s) => s.kind !== "deterministic").map((s) => s.id).join("、");
+    throw new WorkflowError(`重放后面有调模型 / 审批的步骤（${costed}），须加 --yes 确认（先 --dry-run 看计划）`);
+  }
+  if (opts?.dryRun) return { run: null, plan };
+  // 前缀：到检查点节点为止（含它）；被改过的步骤输出按检查点状态换掉。
+  const cp = checkpoints.find((c) => c.stepId === plan.fromNodeId) ?? null;
+  const cutIndex = run.nodes.findIndex((n) => n.id === plan.fromNodeId);
+  if (cutIndex < 0 || !cp) throw new WorkflowError(`运行 ${runId} 里找不到检查点 ${plan.fromNodeId} 对应的节点`);
+  const prefix = run.nodes.slice(0, cutIndex + 1).map((n) => ({ ...n }));
+  for (const [key, value] of Object.entries(cp.state)) {
+    const m = /^steps\.(.+)\.output$/.exec(key);
+    if (!m || typeof value !== "string") continue;
+    const node = prefix.find((n) => n.id === m[1]);
+    if (node) node.output = value;
+  }
+  const replayed: WorkflowRun = {
+    ...run,
+    id: newWorkflowRunId(),
+    status: "running",
+    nodes: prefix,
+    spentUsd: null,
+    startedAt: nowIso(),
+    endedAt: null,
+    dryRun: false,
+    trial: false,
+    error: null,
+    pendingNodeId: null,
+    pendingNodeIndex: null,
+    reviewItemId: null,
+    dryRunPlanHash: null,
+    coordinator: null,
+    replayedFrom: { runId, stepId: plan.fromStepId, at: nowIso() },
+  };
+  const runner = new WorkflowRunner(run.definition, run.inputs, {
+    home, workdir: req.workdir, mode: req.mode, interactive: req.interactive,
+    maxCostUsd: req.maxCostUsd,
+    providerFactory: req.providerFactory ?? defaultProviderFactory(home),
+    stepCheckpointStore: store,
+  }, replayed);
+  runner.emit("step_checkpoint_replayed", {
+    from_run_id: runId, step_id: plan.fromStepId, steps_replayed: plan.steps.length,
+  });
+  const result = await runner.runFrom(plan.nextIndex);
+  return { run: result, plan };
 }
 
 export function verifyWorkflowRun(home: string, runId: string): { ok: boolean; expectedHash: string; actualHash: string; run: WorkflowRun } {
