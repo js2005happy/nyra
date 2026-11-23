@@ -1,3 +1,7 @@
+## Unreleased — 2026-11-23 HTTP POST error-body pre-read guard (static only)
+
+- Check normal-response HTTP status before reading or decoding the body; non-2xx returns the existing fixed failure without processing untrusted error content. 2xx behavior and no-retry policy unchanged. Static inspection only; tests not run.
+
 ## Unreleased — 2026-11-23 HTTP POST non-2xx response classification (static only)
 
 - When a transport returns a non-2xx response normally instead of raising HTTPError, `http_post` now reports a fixed `错误：HTTP <status>` without exposing the response body. Existing 2xx output, approval and no-retry policy are unchanged. Static review only; tests not run.
