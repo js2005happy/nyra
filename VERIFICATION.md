@@ -1,3 +1,10 @@
+## 2026-11-23 — 通用 ToolError 异常隐私（仅静态）
+
+- 已读取开发分支 README、DESIGN、CHANGELOG、VERIFICATION、ROADMAP、tools/agent、既有回归定义；查询近期仓库提交、开放 Issues（无）、开放 PR #113（真实任务评测）及 CI 可用元数据。
+- **源码事实**：`execute_tool` 原先将显式 `ToolError` 的异常正文插入模型可见错误；例如权限账本异常可包裹系统错误字符串。改为固定错误提示，保留 `错误：` 前缀。新增三项回归测试定义但**未执行**。
+- **外部事实（2026-11-23 核对）**：2026-07-03 [Codex #31015](https://github.com/openai/codex/issues/31015) 报告后置脱敏不足；2026-07-19 [Codex #34233](https://github.com/openai/codex/issues/34233) 报告敏感工具输出。均为外部个案，不证明 Angel 已泄漏，也不能推断总体频率。
+- **工程推断与限制**：显式异常可能含私人路径/令牌，固定文本降低此路径的回显风险；但也损失错误类型细节。正常工具返回、MCP 直接结果、HTTP 响应、模型入参和会话记录仍可能含敏感数据。本次未运行测试、编译、CI、真实工具或跨平台验证；未合并 main、未发布。
+
 ## 2026-11-23 — grep_search 正则错误信息隐私（仅静态）
 
 - 读取开发分支 README、DESIGN、CHANGELOG、VERIFICATION、ROADMAP、tools/agent 核心源码；查询近期提交、开放 Issues（无）、PR #113（真实任务评测），确认没有重复评测开发。
