@@ -1,0 +1,15 @@
+[package]
+name = "nyra-editor-bridge"
+version = "0.5.6"
+edition = "2021"
+description = "Nyra editor bridge protocol core (std-only): JSON-lines framing for the Zed host"
+license = "MIT"
+
+[dependencies]
+# 刻意零依赖：本机走代理时 crates.io 返回 403，拉不到 zed_extension_api；
+# 协议核只用 std 写，cargo test 可离线跑。完整 Zed 扩展接线（register_extension、
+# slash 命令、agent server）须在能访问 crates.io 的真机上补，见 README.md。
+
+[lib]
+name = "nyra_editor_bridge"
+path = "src/lib.rs"
