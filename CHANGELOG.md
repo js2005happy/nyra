@@ -1,3 +1,7 @@
+## Unreleased — 2026-11-24 HTTP POST unsupported charset fallback (static only)
+
+- Treat an unrecognized or malformed response charset as a display-decoding issue, not an unknown POST transport result: fall back to UTF-8 with replacement after a confirmed 2xx response. This prevents a successful HTTP exchange being misreported as an uncertain network failure solely due to server-controlled metadata. Approval, bounded reads, no automatic retries and stdlib-only core are unchanged. Static review only; tests not executed.
+
 ## Unreleased — 2026-11-24 HTTP POST structured outcome (static only)
 
 - HTTP POST now reports trusted in-process transport status independently of remote response text. 2xx is `reported_ok` (not side-effect verification), non-2xx/HTTPError is `reported_error`, and transport exceptions are `unknown`. Legacy string dispatch and approval-once behavior remain; no automatic retries, new dependencies or account actions. Static inspection only; tests and CI not run.
