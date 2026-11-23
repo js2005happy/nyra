@@ -1,3 +1,10 @@
+## 2026-11-23 — HTTP POST non-2xx body pre-read guard (static-only)
+
+- Inspected development-branch README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, core Tools/Agent source, recent commits, open Issues (none), PR #113 (evaluation work already in progress), and prior commit status (no checks returned). The original angel URL resolves to js2005happy/nyra.
+- **Source fact:** Normal-response HTTP POST read/decoded the entire body before the non-2xx guard. The guard now executes before body access and returns the existing fixed failure. 2xx body handling, approvals and no-retry semantics are unchanged.
+- **External evidence:** 2026-07-03 Codex #31015 and 2026-07-19 Codex #34233, linked in ROADMAP; external user reports are not proof of an Angel incident. Static risk inference: avoiding unnecessary error-body processing reduces exposure to untrusted response content.
+- **Not executed:** unit tests, compilation, CI, real POST, dependency installation, external account access, main merge or release. No cross-platform or transport-specific runtime claims. Success bodies remain unbounded and model-visible.
+
 ## 2026-11-23 — HTTP POST non-2xx response classification (static-only)
 
 - Inspected development-branch README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP and core tools/agent; checked recent commits, open issues/PR #113 and prior commit status (no statuses returned). The requested angel repository resolves to js2005happy/nyra; current main has independent TypeScript/AG-UI changes, not touched here.
