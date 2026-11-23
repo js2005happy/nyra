@@ -1138,12 +1138,19 @@ def _tool_git_status(ctx: ToolContext, path: str = ".") -> str:
     return _truncate(out)
 
 
-def _tool_http_post(
+def execute_http_post_report(
     ctx: ToolContext,
     url: str,
     body: str = "",
     content_type: str = "application/json",
-) -> str:
+) -> tuple[str, "StructuredToolReport"]:
+    """Report transport HTTP status separately from untrusted response text.
+
+    An HTTP 2xx is not evidence that a remote side effect was committed.
+    Never automatically replay a POST after an uncertain transport failure.
+    """
+    from .tool_report_status import StructuredToolReport
+
     _check_approval(ctx, "http_post", f"POST 请求：{url}")
     try:
         request = urllib.request.Request(
@@ -1157,7 +1164,7 @@ def _tool_http_post(
             # Some transports return non-2xx responses without HTTPError.
             # POST side effects are uncertain; never retry automatically.
             if not 200 <= response.status < 300:
-                return f"错误：HTTP {response.status}"
+                return f"错误：HTTP {response.status}", StructuredToolReport("reported_error")
             charset = response.headers.get_content_charset() or "utf-8"
             # Bound network input before decoding. A 4-byte UTF-8 character
             # can require four bytes per displayed character; other encodings
@@ -1169,13 +1176,21 @@ def _tool_http_post(
             result = _truncate(text)
             if clipped:
                 result += "\n……（响应正文超过读取上限，剩余内容未读取）"
-            return f"HTTP {response.status}\n{result}"
+            return f"HTTP {response.status}\n{result}", StructuredToolReport("reported_ok")
     except urllib.error.HTTPError as exc:
         # Untrusted response bodies can echo tokens or submitted data.
         # Preserve trusted status only; never retry an uncertain POST.
-        return f"错误：HTTP {exc.code}"
+        return f"错误：HTTP {exc.code}", StructuredToolReport("reported_error")
     except Exception:
-        return "错误：POST 请求失败"
+        return "错误：POST 请求失败", StructuredToolReport("unknown")
+
+
+def _tool_http_post(
+    ctx: ToolContext, url: str, body: str = "",
+    content_type: str = "application/json",
+) -> str:
+    # Preserve the string-returning public dispatch API and approval exactly once.
+    return execute_http_post_report(ctx, url, body, content_type)[0]
 
 
 def _tool_poppy_discover(ctx: ToolContext, site: str) -> str:
