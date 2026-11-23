@@ -334,12 +334,16 @@ export function resolveInterrupt(
   return it;
 }
 
-/** 测试用：账本文件权限（0600）是否达标。 */
+/** 测试用：账本文件权限（0600）是否达标。
+ *  Windows 没有 POSIX 权限位（chmod 只映射只读位，mode 拿不到 0600），
+ *  退化为“不能是全开”，与 tests/node/fsPerms.ts 的 expectPerms 同款。 */
 export function interruptsLedgerModeOk(home: string): boolean {
   const p = interruptsPath(home);
   if (!existsSync(p)) return true;
   try {
-    return (statSync(p).mode & 0o777) === 0o600;
+    const mode = statSync(p).mode & 0o777;
+    if (process.platform === "win32") return mode !== 0o777;
+    return mode === 0o600;
   } catch {
     return false;
   }
