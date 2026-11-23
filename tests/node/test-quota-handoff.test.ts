@@ -3,7 +3,8 @@
 // 通知引用，不自动开新会话续跑、不自动重试已失败的调用。
 // 假 provider / 临时 home 上验证（真 API 未跑通，见 CHANGELOG 诚实边界）。
 import { test, expect } from "bun:test";
-import { mkdtempSync, rmSync, existsSync, readFileSync, appendFileSync, statSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, readFileSync, appendFileSync } from "node:fs";
+import { expectPerms } from "./fsPerms.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -228,7 +229,7 @@ test("接力记录：存取往返、坏行跳过、同 id 不重复追加", () =
     })!;
     expect(recordQuotaHandoff(home, h)).not.toBeNull();
     expect(existsSync(join(home, QUOTA_HANDOFF_FILE))).toBe(true);
-    expect((statSync(join(home, QUOTA_HANDOFF_FILE)).mode & 0o777)).toBe(0o600);
+    expectPerms(join(home, QUOTA_HANDOFF_FILE), 0o600);
     expect(readQuotaHandoffs(home).map((x) => x.id)).toEqual(["qh_store00001"]);
     expect(getQuotaHandoff(home, "qh_store00001")?.to).toBe("xai");
     expect(getQuotaHandoff(home, "qh_nope")).toBeNull();
