@@ -64,6 +64,12 @@ import {
   SandboxUnavailableError,
   type SandboxMode, type ResolvedSandbox, type SandboxProbe,
 } from "./sandbox.ts";
+// G-P1-39：命令后端可换——后端分发在 toolShell 里（审批之后、执行之前）。
+// commandBackends.ts 是叶子模块，只引 node 内置，这里静态导入不会形成循环导入。
+import {
+  runBackendCommand,
+  type CommandBackendDeps,
+} from "./commandBackends.ts";
 import { discoverPoppy, inspectPoppyIdentity, PermissionLedger } from "./poppy.ts";
 import { assertPublicUrl } from "./net.ts";
 import { isToolErrorResult } from "./repeatGuard.ts";
@@ -318,6 +324,12 @@ export interface ToolContext {
   /** 沙箱探测覆盖（仅测试用，透传给 resolveSandboxBackend 的 probe 参数）：
    * 模拟其他平台/后端可用性，验证 macOS/Windows 分支；生产调用不传。 */
   sandboxProbe?: SandboxProbe | null;
+  /** G-P1-39：命令后端可换——CLI/Agent 透传的生效后端 id（resolveActiveBackend
+   * 已按 --backend > 环境变量 > 配置文件解析过）；null/undefined/\"local\"
+   * = 走原有本机路径，不进后端分发。 */
+  commandBackend?: string | null;
+  /** 命令后端的可注入依赖（仅测试用：docker/ssh 的 runner 替身；生产调用不传）。 */
+  commandBackendDeps?: CommandBackendDeps | null;
   /** auto 回落到工具级时的提示是否已给过（每个 ToolContext 只给一次）。 */
   sandboxFallbackWarned?: boolean;
   /**
@@ -1811,6 +1823,36 @@ async function toolShell(ctx: ToolContext, command: string, cwd?: string | null,
   if (ctx.backend?.runCommand) {
     return truncate(ctx.backend.runCommand(command, String(resolvedCwd), timeout)) || "（无输出）";
   }
+  // G-P1-39：命令后端可换——后端分发在审批之后、执行之前，非 local 后端
+  // 接管本次执行（docker/ssh 真跑；e2b/云端 fail-closed 报错，不回落本机）。
+  // 后端赢过 --sandbox：命令在 docker/远端跑时，本机沙箱那一轴不再适用。
+  if (ctx.commandBackend && ctx.commandBackend !== "local") {
+    const backendId = ctx.commandBackend;
+    try {
+      const onStream = ctx.streamToolOutput && ctx.onEvent
+        ? (stream: "stdout" | "stderr", text: string) => {
+            for (const rawLine of text.split("\n")) {
+              if (rawLine === "" && text.endsWith("\n")) continue;
+              const line = rawLine.replace(/\r$/, "");
+              try { ctx.onEvent?.("tool_stream", { name: "shell", stream, text: line }); } catch { /* ignore */ }
+            }
+          }
+        : undefined;
+      const result = await runBackendCommand(backendId, command, {
+        home: ctx.home ?? "",
+        workdir: resolvedCwd,
+        allowNet: ctx.sandbox?.allowNet === true,
+        mode: ctx.sandbox?.mode === "read-only" ? "read-only" : "workspace-write",
+        timeout,
+        signal: ctx.cancelSignal,
+        onStream,
+        deps: ctx.commandBackendDeps ?? undefined,
+      });
+      return formatSandboxResult(result);
+    } catch (err) {
+      return `错误：命令后端 ${backendId} 执行失败，命令未完成：${err instanceof Error ? err.message : String(err)}（未降级为本机；改回 --backend local 可显式回本机）`;
+    }
+  }
   // 调研报告第 9 项：OS 级分级沙箱（学 Codex CLI）——后端选择在审批之后、
   // 执行之前：审批（何时问人）与沙箱（物理上能做什么）是两轴，互不替代。
   // PreToolUse 钩子已在 checkApproval 之前于宿主机跑过（见 hooks.ts 接线），
@@ -1882,6 +1924,18 @@ async function toolShell(ctx: ToolContext, command: string, cwd?: string | null,
         return `错误：沙箱启动失败，命令未执行（未降级为裸奔）：${err.message}`;
     }
       return `错误：沙箱执行失败，命令未完成：${err instanceof Error ? err.message : String(err)}（未降级为裸奔；改用 --sandbox local 可显式退出 OS 沙箱）`;
+    }
+  }
+  if (sandbox !== null && sandbox.level === "e2b") {
+    // G-P1-39：--sandbox e2b 解析成功只说明 E2B_API_KEY 配好了；沙箱内跑命令
+    // 须 SDK、未接线，这里直接报错，绝不回落本机裸奔（runBackendCommand 抛错）。
+    try {
+      await runBackendCommand("e2b", command, {
+        home: ctx.home ?? "", workdir: resolvedCwd, timeout, signal: ctx.cancelSignal,
+      });
+      return "（无输出）";
+    } catch (err) {
+      return `错误：e2b 执行失败，命令未完成：${err instanceof Error ? err.message : String(err)}（未降级为本机；改回 --sandbox local 可显式回本机）`;
     }
   }
   if (sandbox !== null && sandbox.level === "tool-level" && sandbox.requested === "auto" && !ctx.sandboxFallbackWarned) {

@@ -114,6 +114,8 @@ import { t, getLang, setLang, detectLang, extractLangFlag, normalizeLang, type M
 // 调研报告第 9 项：OS 级分级沙箱（学 Codex CLI）——main 入口做 fail-closed 校验，
 // buildAgent 把解析出的沙箱配置透传给 Agent（再进 ToolContext）。
 import { resolveSandboxBackend, getSandboxStatus } from "./sandbox.ts";
+// G-P1-39：命令后端可换——buildAgent 把解析出的生效后端 id 透传给 Agent。
+import { resolveActiveBackend } from "./commandBackends.ts";
 import { runExampleTask } from "./exampleTask.ts";
 import { printNoKeyAndExitCode } from "./noKey.ts";
 import { defaultExampleFile, runWizard } from "./wizard.ts";
@@ -265,6 +267,7 @@ nyra events <list|add|remove|enable|disable|test|poll>   事件触发任务：we
 nyra thread <create|list|search|show|copy|prune|state|history|runs|cron-add|cron-remove|crons|archive|unarchive|remove>   远端线程操作 API：建线程、搜线程、复制接着跑、剪历史、读写状态、给线程绑 cron（详见 docs/threads.md）
 nyra automation <list|show|install|remove|suggested>   自动化 bundle：一次装好整条自动化，自带建议触发器（详见 docs/automations.md）
 nyra cron <incidents|policy|hold>   cron 成熟语义：漏跑补跑策略（once/skip）+ 配额 hold + 事故账（详见 docs/cron-maturity.md）
+nyra backend <list|use|status|docker|ssh|e2b>   命令后端可换：本机 / Docker / SSH / E2B 控制面 / 云端（未接线），默认本机（详见 docs/command-backends.md）
 nyra mail-inbox <status|enable|disable|allowlist|set|poll>   邮件即任务入口：白名单发件人的邮件直接进任务队列，跑完回信（详见 docs/mail-inbox.md）
 nyra responsibility <list|add|set|remove|enable|disable|check|pause|resume|complete|cancel|brief|show>   持续责任语义：责任对象（归属人 + 验收标准 + 升级条件 + 过期时间）与晨间简报，无事安静（详见 docs/responsibilities.md）
 nyra bot telegram <start|stop|status>   Bot 方向 Phase 1：Telegram 渠道（长轮询收消息、会话串行、去重配额、确定性指令；外部用户强制只读，详见 docs/bot.md）
@@ -421,6 +424,7 @@ nyra events <list|add|remove|enable|disable|test|poll>   event-triggered tasks: 
 nyra thread <create|list|search|show|copy|prune|state|history|runs|cron-add|cron-remove|crons|archive|unarchive|remove>   remote thread operations API: create/search/copy/prune threads, read/write state, bind crons to a thread (see docs/threads.md)
 nyra automation <list|show|install|remove|suggested>   automation bundles: install a whole automation at once, with suggested triggers included (see docs/automations.md)
 nyra cron <incidents|policy|hold>   cron maturity: missed-run catch-up policy (once/skip) + quota hold + incident ledger (see docs/cron-maturity.md)
+nyra backend <list|use|status|docker|ssh|e2b>   swappable command backends: local / Docker / SSH / E2B control plane / cloud (not wired), local by default (see docs/command-backends.md)
 nyra mail-inbox <status|enable|disable|allowlist|set|poll>   mail as task entry: allowlisted senders' mail enqueues tasks, results mailed back (see docs/mail-inbox.md)
 nyra responsibility <list|add|set|remove|enable|disable|check|pause|resume|complete|cancel|brief|show>   standing responsibilities: responsibility objects (owner + acceptance criteria + escalation conditions + expiry) and the morning briefing, quiet when nothing is wrong (see docs/responsibilities.md)
 nyra bot telegram <start|stop|status>   bot direction phase 1: Telegram channel (long polling, per-session serial queue, dedup + quotas, deterministic commands; external users forced read-only, see docs/bot.md)
@@ -519,6 +523,8 @@ export interface CliArgs {
   yes: boolean;
   workdir: string; trust: boolean;
   sandbox?: string | null; sandboxId?: string | null; sandboxTemplate?: string | null; sandboxTimeout: number | null;
+  /** G-P1-39：单次换命令后端（--backend <id>；不填走配置文件 active）。 */
+  backend?: string | null;
   doctor: boolean; setup: boolean; example: boolean; exampleFile?: string;
   /** 界面语言 --lang zh|en（main 入口已先取出并生效；这里只为 parseArgs 单独调用时不报未知选项）。 */
   lang?: string;
@@ -549,6 +555,7 @@ export function parseArgs(argv: string[]): CliArgs {
       "--contract",
       "--auto-compact-threshold", "--discover-poppy", "--inspect-poppy-identity",
       "--approve-plan", "--workdir", "--sandbox", "--sandbox-id", "--sandbox-template", "--sandbox-timeout",
+      "--backend",
       "--lang", "--channel", "--image", "--video", "--voice",
     ]);
   const subcommands = subcommandSet();
@@ -621,6 +628,7 @@ export function parseArgs(argv: string[]): CliArgs {
         case "--sandbox-id": args.sandboxId = value; break;
         case "--sandbox-template": args.sandboxTemplate = value; break;
         case "--sandbox-timeout": args.sandboxTimeout = parseInt(value, 10); break;
+        case "--backend": args.backend = value; break;
         case "--lang": args.lang = value; break;
         case "--channel": args.channel = value; break;
         case "--image": args.images.push(value); break;
@@ -827,6 +835,9 @@ async function buildAgent(args: CliArgs, opts?: { interactive: boolean; skillsDi
   // 解析：显式 bwrap 缺失、e2b 等直接抛错（main 入口已先拦一道，这里是纵深，
   // 覆盖 --compact 这类先调 buildAgent 的路径；auto 回落不报错）。
   resolveSandboxBackend(config, args.sandbox ?? null);
+  // G-P1-39：命令后端可换——生效后端按 --backend > 环境变量 > 配置文件解析；
+  // 未知 id 直接抛错，命令不跑（与沙箱 fail-closed 同款）。
+  const { id: commandBackend } = resolveActiveBackend(home, args.backend ?? null);
   // 推理档位 / 冗长度：未配置时 toRequestBody 返回空对象，provider payload 不变。
   const reasoningOpts = resolveReasoningOptions(config);
   (provider as { extraBody?: Record<string, unknown> }).extraBody = toRequestBody(reasoningOpts);
@@ -980,6 +991,8 @@ async function buildAgent(args: CliArgs, opts?: { interactive: boolean; skillsDi
         mode: sandboxSettings.mode as "read-only" | "workspace-write" | "danger-full-access",
         allowNet: sandboxSettings.allowNet,
       },
+      // G-P1-39：命令后端可换——生效后端 id 透传给 Agent（再进 ToolContext）。
+      commandBackend,
     });
   switchAgent.current = agent;
   return { agent, providerName: primaryCfg.name, config, home, agentId, tieredCtx, monthly: { ledger: monthlyLedger, flushed: monthlyFlushed }, onModelSwitch, switchRunId };
@@ -7172,6 +7185,10 @@ export async function main(argv: string[]): Promise<number> {
   if (args.subcommand === "cron") {
     const { handleCron } = await import("./cronCli.ts");
     return handleCron(args.subArgs ?? [], home);
+  }
+  if (args.subcommand === "backend") {
+    const { handleBackend } = await import("./commandBackendCli.ts");
+    return handleBackend(args.subArgs ?? [], home);
   }
   if (args.subcommand === "kb" || args.subcommand === "knowledge") return knowledgeMain(args.subArgs ?? []);
   if (args.subcommand === "plugin") return handlePlugin(args.subArgs ?? [], home);

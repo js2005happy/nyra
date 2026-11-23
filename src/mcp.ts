@@ -205,7 +205,8 @@ export function mcpServerRoBinds(config: MCPServerConfig, workdir: string): stri
  *   toolShell 同款（工作区可写、默认断网）。
  * - jobobject：Job Object 是一锤子脚本执行器（runWindowsSandboxed），装不下
  *   长驻 stdio 进程，显式指定时直接拒绝。
- * - e2b：未接线（见 docs/sandbox.md），显式指定时直接拒绝。
+ * - e2b：命令后端（控制面已接，见 src/commandBackends.ts），但 MCP 服务器是
+ *   长驻 stdio 进程，e2b 沙箱内跑命令须 SDK、未接线，显式指定时直接拒绝。
  */
 export function sandboxedMcpSpawnArgs(
   config: MCPServerConfig,
@@ -233,7 +234,7 @@ export function sandboxedMcpSpawnArgs(
     );
   }
   if (resolved.backend === "e2b") {
-    throw new MCPError(`MCP 服务器 ${config.name} 无法进 e2b 沙箱：e2b 后端未接线（见 docs/sandbox.md）；请改用 --sandbox local 或 bwrap`);
+    throw new MCPError(`MCP 服务器 ${config.name} 无法进 e2b 沙箱：e2b 沙箱内跑命令须 E2B SDK（未接线，见 docs/sandbox.md）；请改用 --sandbox local 或 bwrap`);
   }
   throw new MCPError(`MCP 服务器 ${config.name} 的沙箱后端 ${resolved.backend} 未知，拒绝启动`);
 }

@@ -22,14 +22,17 @@ import { cancelErrorFromSignal } from "./cancel.ts";
 export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 // 调研报告第 9 项：OS 级分级沙箱（学 Codex CLI）——后端选择。
 // auto：Linux 且有 bwrap 时用 bwrap，否则工具级；local：显式只要工具级；
-// bwrap：强制 bwrap，缺失即 fail-closed 报错；e2b：0.5.1 暂不支持。
+// bwrap：强制 bwrap，缺失即 fail-closed 报错；e2b：G-P1-39 起是命令后端
+// （云沙箱控制面 + 注册表，见 src/commandBackends.ts）——没配 E2B_API_KEY
+// 时解析失败，有 key 时解析为 e2b；沙箱内跑命令仍须 SDK，未接线，
+// 执行时 fail-closed（见 src/tools.ts 的后端分发）。
 // seatbelt：macOS sandbox-exec；jobobject：Windows Job Object（P0-6）。
 export type SandboxBackend = "auto" | "local" | "bwrap" | "seatbelt" | "jobobject" | "e2b";
 
 export const SANDBOX_MODES: readonly SandboxMode[] = ["read-only", "workspace-write", "danger-full-access"];
 export const SANDBOX_BACKENDS: readonly SandboxBackend[] = ["auto", "local", "bwrap", "seatbelt", "jobobject", "e2b"];
 
-export type SandboxLevel = "bwrap" | "seatbelt" | "jobobject" | "tool-level" | "none";
+export type SandboxLevel = "bwrap" | "seatbelt" | "jobobject" | "tool-level" | "none" | "e2b";
 
 export interface SandboxStatus {
   backend: string;
@@ -44,8 +47,8 @@ export interface SandboxStatus {
 }
 
 export interface ResolvedSandbox {
-  /** 生效的后端（auto 已解析为 bwrap 或 local）。 */
-  backend: "bwrap" | "seatbelt" | "jobobject" | "local";
+  /** 生效的后端（auto 已解析为 bwrap 或 local；e2b 是云沙箱命令后端）。 */
+  backend: "bwrap" | "seatbelt" | "jobobject" | "local" | "e2b";
   /** 用户原始选择（auto/local/bwrap/seatbelt/jobobject），用于提示文案。 */
   requested: SandboxBackend;
   mode: SandboxMode;
@@ -124,7 +127,9 @@ export function resolveSandboxAllowNet(config?: Record<string, unknown> | null):
 //   不同（不管文件，网络只靠工具级拦截），悄悄改变行为会误导用户。
 // local：显式只要工具级，即使用户机器上有 bwrap 也不用——这是退出 OS 沙箱的开关。
 // bwrap：强制要求 bwrap；找不到或非 Linux → 直接抛错（fail-closed），绝不静默降级。
-// e2b：保持不支持报错（文案写目标版本 0.5.2；VERSION 常量本身不动，总协调最后统一升版）。
+// e2b：G-P1-39 起是命令后端——没配 E2B_API_KEY 时解析失败（fail-closed，
+// 不静默回落本机）；有 key 时解析为 e2b，执行时走 src/tools.ts 的后端分发，
+// 沙箱内跑命令须 SDK、未接线，执行层再报一次清楚的错。
 // danger-full-access 与沙箱互斥：显式 bwrap + danger 直接抛错；auto + danger 解析为工具级。
 // probe：可选探测覆盖（仅测试用）：platform/bwrapAvailable/seatbeltAvailable/
 //   jobObjectAvailable；生产调用不传，走真实探测。
@@ -154,7 +159,10 @@ export function resolveSandboxBackend(
   const joAvailable = probe?.jobObjectAvailable ?? windowsSandboxAvailable();
 
   if (requested === "e2b") {
-    throw new Error("--sandbox e2b 在 0.5.2 暂不支持（Python 已移除，Node 版 E2B 后端尚未移植）；当前只支持 auto、local、bwrap");
+    if (!process.env.E2B_API_KEY) {
+      throw new Error("--sandbox e2b 未配置：请设置 E2B_API_KEY 环境变量（Key 只走环境变量，不写进配置文件）；配好后控制面可用，沙箱内跑命令仍须 E2B SDK（未接线），执行时会直接报错、不回落本机");
+    }
+    return { backend: "e2b", requested, mode, level: "e2b", allowNet, bwrapAvailable };
   }
   if (requested === "bwrap" && mode === "danger-full-access") {
     throw new Error("danger-full-access 与沙箱互斥：该模式要求无限制执行，不能进 bwrap；如需无限制请用 --sandbox local 并自行承担风险");
@@ -233,6 +241,9 @@ export function toolLevelFallbackNotice(status: ResolvedSandbox | SandboxStatus)
 
 /** 各后端一句话状态（纯函数，供测试直接覆盖 macOS/Windows 才可达的分支）。 */
 export function describeSandboxLevel(resolved: ResolvedSandbox): string {
+  if (resolved.level === "e2b") {
+    return `后端 ${resolved.requested} → e2b（云沙箱，E2B_API_KEY 已设），模式 ${resolved.mode}；控制面（list/create/kill）可用，沙箱内跑命令须 E2B SDK、未接线，执行时会直接报错、不回落本机`;
+  }
   if (resolved.level === "bwrap") {
     return `后端 ${resolved.requested} → bwrap（OS 级沙箱，bubblewrap 可用），模式 ${resolved.mode}，网络 ${resolved.allowNet ? "已放开" : "默认断开"}；出工作区写与联网会被挡住`;
   }
@@ -250,6 +261,7 @@ export function sandboxLevelText(level: SandboxLevel): string {
   if (level === "bwrap") return "OS 沙箱（bwrap）";
   if (level === "seatbelt") return "OS 沙箱（Seatbelt）";
   if (level === "jobobject") return "进程级沙箱（Job Object，文件靠工具级规则、网络靠工具级拦截）";
+  if (level === "e2b") return "云沙箱（E2B，控制面已接；沙箱内跑命令须 SDK，未接线）";
   if (level === "tool-level") return "工具级（非 OS 沙箱）";
   return "未生效";
 }

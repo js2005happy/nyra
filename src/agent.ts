@@ -289,6 +289,10 @@ export interface AgentOptions {
   // 调研报告第 9 项：OS 级分级沙箱（学 Codex CLI）——CLI 从 config.json /
   // 环境变量 / --sandbox 解析出的沙箱配置，透传给 ToolContext（toolShell 解析生效）。
   sandbox?: { backend?: string | null; mode?: import("./sandbox.ts").SandboxMode; allowNet?: boolean } | null;
+  /** G-P1-39：命令后端可换——CLI 从 --backend / 环境变量 / 配置文件解析出
+   * 的生效后端 id，透传给 ToolContext（toolShell 的后端分发用）；null/\"local\"
+   * = 走原有本机路径。 */
+  commandBackend?: string | null;
   /** P2-2：单次运行的成本上限（美元）；null = 不设上限。 */
   maxCostUsd?: number | null;
   /** P2-2：该模型的单价；null = 未配置，金额未知（不编造）。 */
@@ -881,6 +885,8 @@ export class Agent {
       onVoiceCost: (cost) => { this.voiceCalls += 1; this.voiceSpentUsd += cost; },
       // 调研报告第 9 项：OS 级分级沙箱（学 Codex CLI）——沙箱配置透传给工具层。
       sandbox: opts.sandbox ?? null,
+      // G-P1-39：命令后端可换——生效后端 id 透传给工具层（toolShell 后端分发用）。
+      commandBackend: opts.commandBackend ?? null,
     });
   }
 
@@ -2975,6 +2981,8 @@ export class Agent {
       multiModelFactory: this.ctx.multiModelFactory,
       // 调研报告第 9 项：OS 级分级沙箱（学 Codex CLI）——子 agent 继承父级的沙箱配置。
       sandbox: this.ctx.sandbox ?? null,
+      // G-P1-39：子 agent 继承父级的命令后端（后端是整机执行策略，不是单轮选择）。
+      commandBackend: this.ctx.commandBackend ?? null,
       // 缺口 29：月度上限子任务同样受限（没有豁免口子）。子任务的“本月已花”
       // = 父级账本口径 + 父级本次运行进行中的花费；父级花不出来（未计价）
       // 时子任务同样算不出，不假装封顶。
