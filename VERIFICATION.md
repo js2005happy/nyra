@@ -1,3 +1,10 @@
+## 2026-11-23 — HTTP POST non-2xx response classification (static-only)
+
+- Inspected development-branch README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP and core tools/agent; checked recent commits, open issues/PR #113 and prior commit status (no statuses returned). The requested angel repository resolves to js2005happy/nyra; current main has independent TypeScript/AG-UI changes, not touched here.
+- **Source fact:** Normal `open_url` response handling returned `HTTP <status>` without validating status, while the HTTPError exception path was already fixed. Added a non-2xx guard using response.status and a fixed failure message. This is a conservative fallback for alternate transports, not proof of remote failure or a successful side-effect receipt.
+- **External evidence reviewed 2026-11-23:** [Codex #40646](https://github.com/openai/codex/issues/40646) (opened 2026-08-25) describes unsupported completion claims; [Codex #59305](https://github.com/openai/codex/issues/59305) (opened 2026-11-04) requests a trusted terminal-tool contract. External reports are not Angel incident statistics.
+- Static source inspection only: no tests, compilation, CI dispatch, network POST, dependency installation, external account operation, main merge or release. Response.status accessibility across alternate transports and cross-platform behavior are not runtime verified.
+
 ## 2026-11-23 — HTTP POST error-body privacy (static-only)
 
 - Reviewed branch README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, tools/agent, recent commits, open Issues/PR #113 and prior commit status (no statuses returned).
