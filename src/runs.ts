@@ -371,6 +371,13 @@ circle_deleted: ["circle", "by"],
 circle_invited: ["circle", "peer", "by", "channel"],
 circle_revoked: ["circle", "peer", "by"],
 circle_binding_set: ["channel", "sender", "identity"],
+// 缺口 49 第一批：组织进证据链——建组织 / 删组织 / 开通成员 / 回收成员 / 改角色。
+// 只记组织 id、组织名、账号 id、角色与操作者，不记邮箱、不记绝对路径。
+org_created: ["org_id", "org_name", "by"],
+org_deleted: ["org_id", "by"],
+org_member_added: ["org_id", "account_id", "role", "by"],
+org_member_removed: ["org_id", "account_id", "by"],
+org_role_changed: ["org_id", "account_id", "role", "by"],
 // 缺口 35：对话式入职进证据链——入职完成 / 角色模板应用 / 就绪简报已发。
 // 只记 agent、角色与模板 id，不记三问答案原文、不记绝对路径。
 onboarding_completed: ["agent", "role", "template"],
