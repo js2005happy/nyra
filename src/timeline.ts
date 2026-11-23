@@ -842,6 +842,16 @@ export function buildTimeline(store: RunStore, runId: string): Timeline {
         push(at, "event", `知识库「${str(ev.base) ?? "?"}」检索命中 ${num(ev.hits) ?? 0} 条`, `问题「${q}」，最高分 ${num(ev.top_score) ?? 0}`, null, null);
         break;
       }
+      // G-P1-14：会话全文搜索进证据链（什么范围、问了什么、命中几条、分属几个会话）。
+      case "session_searched": {
+        const q = (str(ev.query) ?? "?").slice(0, 40);
+        push(at, "event", `会话搜索（${str(ev.scope) ?? "?"}）命中 ${num(ev.hits) ?? 0} 条、分属 ${num(ev.sessions) ?? 0} 个会话`, `问题「${q}」`, null, null);
+        break;
+      }
+      case "session_exported": {
+        push(at, "event", `会话 ${str(ev.session_id) ?? "?"} 已导出`, `${num(ev.messages) ?? 0} 条消息`, null, null);
+        break;
+      }
       case "redline_changed": {
         const connector = str(ev.connector) ?? "未知连接器";
         const action = str(ev.action) ?? "未知动作";

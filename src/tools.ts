@@ -61,6 +61,7 @@ import { DEFAULT_VISION_CONFIG, loadImageFile, type VisionConfig, type VisionIma
 import type { ContentLabel, TaskOrigin } from "./contentLabels.ts";
 import { exportOfficeDocument, parseOfficeDocument, resolveOfficeConfig, type OfficeDocument, type OfficeExportResult } from "./office.ts";
 import { KnowledgeBase, recordKnowledgeSearch, type KnowledgeSearchOptions, type Note } from "./knowledge.ts";
+import { searchSessions, formatSessionSearchResults, recordSessionSearch, type SessionSearchOutput } from "./sessionSearch.ts";
 import { ingestMedia, formatMediaTranscript, resolveMediaConfig, type MediaIngestResult } from "./mediaIngest.ts";
 import { type HttpEndpoint } from "./voice.ts";
 
@@ -455,6 +456,12 @@ export const TOOL_SCHEMAS: Record<string, unknown>[] = [
   schema("knowledge_search", "检索外部文档知识库：按查询词 BM25 检索指定知识库里收录的外部文档（文本、Markdown、PDF、网页），返回最相关的几条，每条附出处（文档名、章节、分数与 200 字摘录）；min_score 过滤低分、source 只查某来源、date_from/date_to 只查某段时间内的文档",
     { base: { type: "string", description: "知识库名（nyra kb list 可看）" }, query: { type: "string" }, top_k: { type: "integer", default: 5, description: "最多返回几条（默认 5）" }, min_score: { type: "number", description: "最低分，低于的不返回（默认 0）" }, source: { type: "string", description: "只查来源含该子串的文档（如某个文件名）" }, date_from: { type: "string", description: "只查该日期及之后的文档（YYYY-MM-DD）" }, date_to: { type: "string", description: "只查该日期及之前的文档（YYYY-MM-DD）" } },
     ["base", "query"]),
+  // G-P1-14：会话全文搜索做成模型工具（学 OpenCode 的 session.search）——
+  // 只读，不需审批；搜机主自己的旧会话（conversations.db），scope 默认
+  // project（只搜当前工作目录下记的会话），all 搜全部；返回按会话分组
+  // 的命中消息与上文下文，模型再决定要不要深读；结果进上下文前过脱敏。
+  schema("session_search", "搜用户自己的旧会话：全文检索过往对话（用户与 assistant 消息），按会话分组返回，每会话最多 3 条命中消息、每条附上文下文；不给 query 时列出最近会话。scope 默认 project（只搜当前工作目录下记的会话），all 搜全部；session_id 只搜某一会话；after/before 按时间过滤（YYYY-MM-DD 或 ISO 时间）",
+    { query: { type: "string", description: "关键词或短语，不给则列出最近会话" }, scope: { type: "string", enum: ["project", "all"], description: "project（默认）：只搜当前工作目录下记的会话；all：搜全部会话" }, session_id: { type: "string", description: "只搜该会话" }, after: { type: "string", description: "只搜该时间及之后的消息（YYYY-MM-DD 或 ISO 时间）" }, before: { type: "string", description: "只搜该时间及之前的消息（YYYY-MM-DD 或 ISO 时间）" }, limit: { type: "integer", default: 5, description: "最多返回几个会话（默认 5）" } }),
   // 缺口 2：删除长期记忆（memory_forget 与 memory_delete 同义，两个名字都留着：
   // 别家 MCP 叫 forget_session，用户口语也常说“忘记这条”）。与 write_file
   // 同级审批；删错 owner 的不删、进行中会话的记忆拒绝删除；删除本身记进证据链。
@@ -2407,6 +2414,47 @@ async function toolKnowledgeSearch(ctx: ToolContext, args: Record<string, unknow
   return body;
 }
 
+// ---- G-P1-14：会话全文搜索做成模型工具 ----
+
+async function toolSessionSearch(ctx: ToolContext, args: Record<string, unknown>): Promise<string> {
+  const query = typeof args.query === "string" ? args.query : "";
+  const scope = args.scope === "all" ? "all" : "project";
+  const sessionId = typeof args.session_id === "string" && args.session_id ? args.session_id : undefined;
+  const limit = typeof args.limit === "number" ? Math.floor(args.limit) : 5;
+  let after: number | undefined;
+  let before: number | undefined;
+  if (typeof args.after === "string" && args.after) {
+    const t = Date.parse(args.after);
+    if (!Number.isNaN(t)) after = t / 1000;
+  }
+  if (typeof args.before === "string" && args.before) {
+    const t = Date.parse(args.before);
+    if (!Number.isNaN(t)) before = t / 1000;
+  }
+  let output: SessionSearchOutput;
+  try {
+    output = await searchSessions(ctx.home, {
+      query,
+      scope,
+      projectDir: ctx.workdir,
+      sessionId,
+      after,
+      before,
+      limit,
+    });
+  } catch (err: unknown) {
+    return `错误：${err instanceof Error ? err.message : String(err)}`;
+  }
+  if (!output.results.length) return "没有找到相关会话。";
+  const body = formatSessionSearchResults(output, { forModel: true });
+  try {
+    const rec = await recordSessionSearch(ctx.home, null, { scope, query, hits: output.total_matches, sessions: output.total_sessions }, body);
+    if (rec.channel === "evidence") return body + "\n\n（检索记录已存入证据链）";
+    if (rec.channel === "events") return body + "\n\n（检索记录已记入本次运行）";
+  } catch { /* 证据写不上不破坏检索结果本身 */ }
+  return body;
+}
+
 async function toolMemoryForget(ctx: ToolContext, toolName: string, args: Record<string, unknown>): Promise<string> {
   const ids = Array.isArray(args.ids)
     ? (args.ids as unknown[]).map((v) => String(v)).filter(Boolean)
@@ -3220,6 +3268,7 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
       case "memory_append": return await toolMemoryAppend(ctx, String(args.text));
       case "memory_search": return await toolMemorySearch(ctx, String(args.query), args.limit === undefined ? 5 : Number(args.limit), typeof args.session_id === "string" ? args.session_id : null, typeof args.owner === "string" ? args.owner : null);
       case "knowledge_search": return await toolKnowledgeSearch(ctx, args);
+      case "session_search": return await toolSessionSearch(ctx, args);
       case "memory_forget": case "memory_delete": return await toolMemoryForget(ctx, name, args);
       case "gmail_search": return await toolGmailSearch(ctx, String(args.query), typeof args.limit === "number" ? args.limit : undefined, typeof args.page_token === "string" ? args.page_token : undefined);
       case "gmail_read": return await toolGmailRead(ctx, String(args.id));
@@ -3307,7 +3356,7 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
 /** 可安全直接重试的只读工具（无副作用）。截图类工具不在内：每次执行都会在本地多存一个截图文件。 */
 export const READONLY_TOOLS = new Set([
   "read_file", "list_dir", "grep_search", "git_status",
-  "web_fetch", "web_search", "read_skill", "memory_search", "knowledge_search",
+  "web_fetch", "web_search", "read_skill", "memory_search", "knowledge_search", "session_search",
   "poppy_discover", "poppy_identity_check", "poppy_permission_check",
   "lsp_diagnostics", "lsp_symbols",
   // 缺口 16：describe_image 只读（不写文件、不改状态）；每次执行都是一次计费
