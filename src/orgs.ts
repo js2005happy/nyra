@@ -93,6 +93,8 @@ export interface Org {
   isolation?: OrgIsolation;
   /** 扩展位（第二批：市场私有目录）：组织内私有策展目录是否开启。 */
   private_catalog?: boolean;
+  /** 第二批：组织绑定的工作区目录（绝对路径；跨租户读文件只认这个目录下的相对路径）。 */
+  workspace_dir?: string;
 }
 
 export interface OrgBook {
@@ -186,8 +188,8 @@ function validateOrgRole(role: string): OrgRole {
   return role;
 }
 
-/** 组织变更单独建一条只记 org_* 事件的运行（与信任圈同款做法）。 */
-function recordOrgEvent(home: string, type: string, fields: Record<string, unknown>): string | null {
+/** 组织变更单独建一条只记 org_* 事件的运行（与信任圈同款做法；第二批共享与隔离复用同一条路）。 */
+export function recordOrgEvent(home: string, type: string, fields: Record<string, unknown>): string | null {
   try {
     const store = new RunStore(join(resolveNyraHome(home), "runs"));
     const state = store.create(`组织：${type}`, "org", process.cwd(), "readonly", 1, "running");
@@ -226,6 +228,9 @@ export function createOrg(home: string, name: string, opts?: { description?: str
     created_at: now,
     created_by: by,
     members: by === ORG_OWNER_IDENTITY ? [] : [{ account_id: by, role: "admin", added_by: by, added_at: now }],
+    // 第二批：数据隔离恒开（硬边界）；设置与用量两面尚未实现，默认关。
+    isolation: { data: true, settings: false, usage: false },
+    private_catalog: false,
   };
   book.orgs.push(org);
   saveOrgBook(home, book);

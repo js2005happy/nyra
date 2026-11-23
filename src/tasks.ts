@@ -14,6 +14,7 @@ import { ApprovalRequired } from "./tools.ts";
 import { Agent } from "./agent.ts";
 import { resolveReviewerModel } from "./reviewer.ts";
 import { markTaskOrigin, readTaskOrigin } from "./taskOrigin.ts";
+import { markTaskOrg } from "./taskOrg.ts";
 import type { TaskOrigin } from "./contentLabels.ts";
 import { pythonJsonDump } from "./pyjson.ts";
 import { t } from "./i18n.ts";
@@ -98,6 +99,12 @@ export function addTask(
      * 读出来传给 Agent（peer 任务的写操作进提议门）。
      */
     origin?: TaskOrigin;
+    /**
+     * 缺口 49 第二批：任务的组织归属（org id）。传了即记进
+     * ~/.nyra/task-orgs.json（sidecar，与 taskOrigin.ts 同款做法），
+     * 读/列走隔离门；不传 = 全局任务。写失败直接抛错，不静默当全局任务跑。
+     */
+    orgId?: string;
   },
 ): RunState {
   const workdir = opts?.workdir ?? process.cwd();
@@ -122,6 +129,13 @@ export function addTask(
   }
   const store = opts?.store ?? taskStore(opts?.home);
   const state = store.create(task, newSessionIdForTask(), workdir, mode, maxTurns, "queued", verifyCmd, { unattended });
+  if (opts?.orgId) {
+    try {
+      markTaskOrg(opts?.home ?? null, state.run_id, opts.orgId);
+    } catch (err) {
+      throw new TaskError(`任务的组织归属记不下来（${err instanceof Error ? err.message : String(err)}），任务不进队列`);
+    }
+  }
   if (skipReason) store.update(state.run_id, { verify_result: { skip_reason: skipReason } });
   // 第 2 批 G-P1-10：来源记进任务来源账本（只记 run_id + 来源，不记任务文本）。
   // 记失败直接让派发报错——来源记不下来时这条任务不该悄悄按 local 跑。

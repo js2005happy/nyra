@@ -226,7 +226,7 @@ nyra connector <status|list|approve|revoke|auth|install|uninstall|usage|flows|fl
 nyra mcp server <status|enable|disable|allow-writes-on|allow-writes-off>   对外 MCP 服务开关：别的 agent 经网关 POST /mcp 调记忆与任务（默认关闭，详见 docs/mcp.md）
 nyra peer <status|enable|disable|list|auth|ask|handoff|card|code|add|request|accept|friends|block|circle|share|grant|proposal|branch|discover|token>   对端协作：问别的 Nyra 实例、交接运行上下文、名片加好友、带 scope 可吊销的 grant、对方写操作提议、外来分支合入、公开发现与 per-peer token、名片 JWS 签名（默认关闭，详见 docs/peer.md 与 docs/peer-discovery.md）
 nyra circle <create|list|show|invite|revoke|delete|bind|unbind|owner|check|bindings>   信任圈：谁能给 agent 发任务（默认全封闭，圈外消息网关直接丢弃，详见 docs/circles.md）
-nyra org <create|list|show|add|remove|role|delete|check>   组织与团队 workspace：组织/成员/角色 admin/member/viewer，机主是超级管理员（详见 docs/orgs.md）
+nyra org <create|list|show|add|remove|role|delete|check|share|shared|grant-write|learnings|workspace|file-read|cross-access|catalog|tasks|task-add|violations|isolation|memory>   组织与团队 workspace：组织/成员/角色 admin/member/viewer，机主是超级管理员；第二批：共享 Bot 默认只读、租户隔离、组织内私有目录（详见 docs/orgs.md）
 nyra session <create|list|show|join|join-request|join-approve|join-decline|join-list|leave|delegate|accept|complete|share|frame|record|end>   跨 agent 联合会话：多人多 agent 视频会（本地扇出模型），会内委派 + 共享任务产物（allowlist），画面默认不留存、录制须全体同意；好友进会要批、默认只读（详见 docs/sessions.md）
 nyra sfu <create|rooms|status|join|leave|turn|record|close|reclaim|video>   群组语音 SFU（本地实现，选型 mediasoup）：语音房 + 成员 + TURN 凭据 + 录制全体同意门；video 是群组视频（Producer/Consumer、按需看帧、带宽自适应、10 分钟模拟；真媒体面等 mediasoup 接线，详见 docs/sfu.md 与 docs/group-video.md）
 nyra meeting <create|list|join|reconnect|transcript|minutes|record|dispatch>   进外部会议：Meet/Zoom 受控浏览器进会、听字幕出纪要；进会、录制、发言都要机主批（详见 docs/meeting.md）
@@ -279,7 +279,7 @@ nyra plugin <list|search|install|uninstall|enable|disable|verify|audit|pin|unpin
 nyra hooks list                列出已安装的钩子（~/.nyra/hooks/<事件>.d/ 下的脚本，详见 docs/hooks.md）
 nyra status                    诊断清单：损坏的配置、不可用沙箱、被忽略的权限设置、永不匹配的 hook matcher（只读，详见 docs/status.md）
 nyra creator "<一句话需求>" [--yes]   创造模式：一句话搓出插件（先验证、经确认才安装）
-nyra memory <export|export-prompt|import|local|import-zip|search|forget|remember|entries|entry|update|rejections>  记忆交换与检索/删除；remember/entries/entry/update/rejections 走记忆证据门（写记忆须附用户原话依据，详见 docs/memory.md）
+nyra memory <export|export-prompt|import|local|import-zip|search|forget|remember|entries|entry|update|rejections>  记忆交换与检索/删除；remember/entries/entry/update/rejections 走记忆证据门（写记忆须附用户原话依据，详见 docs/memory.md）；remember/entries 支持 --org 组织记忆
 nyra soul <show|status|list|init|add|remove|enable|disable|edit|export|import>  Soul 身份层：每 agent 的身份与 Tenets（不变量进规则层、代码拦截；Charter 角色契约见 nyra soul charter <set|show|clear>，详见 docs/soul.md 与 docs/team.md）
 nyra style <learn|show|list|delete|export|import>  分应用文风学习（详见 docs/style.md）
 nyra doctor [--provider 名字]  中文自检：运行时、配置文件、配置目录、Key、网络、磁盘、写权限、密码箱权限
@@ -370,7 +370,7 @@ nyra connector <status|list|approve|revoke|auth|install|uninstall|usage|flows|fl
 nyra mcp server <status|enable|disable|allow-writes-on|allow-writes-off>   external MCP server switch: other agents call Nyra memory and tasks via gateway POST /mcp (off by default, see docs/mcp.md)
 nyra peer <status|enable|disable|list|auth|ask|handoff|card|code|add|request|accept|friends|block|circle|share|grant|proposal|branch|discover|token>   peer collaboration: ask another Nyra instance, hand off run context, agent card and friends, scoped revocable grants, peer write proposals, foreign branch merges, public discovery with per-peer tokens, agent card JWS signatures (off by default, see docs/peer.md and docs/peer-discovery.md)
 nyra circle <create|list|show|invite|revoke|delete|bind|unbind|owner|check|bindings>   trust circles: who may send tasks to the agent (closed by default, out-of-circle messages are dropped at the gateway, see docs/circles.md)
-nyra org <create|list|show|add|remove|role|delete|check>   orgs and team workspaces: orgs / members / roles admin/member/viewer, the owner is super-admin (see docs/orgs.md)
+nyra org <create|list|show|add|remove|role|delete|check|share|shared|grant-write|learnings|workspace|file-read|cross-access|catalog|tasks|task-add|violations|isolation|memory>   orgs and team workspaces: orgs / members / roles admin/member/viewer, the owner is super-admin; batch 2: shared Bots read-only by default, tenant isolation, org-private catalog (see docs/orgs.md)
 nyra session <create|list|show|join|join-request|join-approve|join-decline|join-list|leave|delegate|accept|complete|share|frame|record|end>   cross-agent joint sessions: multi-person multi-agent video meetings (local fanout model), in-session delegation + shared task products (allowlist), frames not retained by default, recording needs everyone's consent; friends join only after approval, read-only by default (see docs/sessions.md)
 nyra sfu <create|rooms|status|join|leave|turn|record|close|reclaim|video>   group voice SFU (local implementation, mediasoup selected): voice rooms + members + TURN credentials + all-consent recording gate; video is group video (Producer/Consumer, watch-on-demand, adaptive bandwidth, 10-minute simulation; real media plane waits for mediasoup wiring, see docs/sfu.md and docs/group-video.md)
 nyra meeting <create|list|join|reconnect|transcript|minutes|record|dispatch>   join external meetings: controlled-browser join for Meet/Zoom, listen to captions and build minutes; joining, recording and speaking all need the owner's approval (see docs/meeting.md)
@@ -426,7 +426,7 @@ nyra plugin <list|search|install|uninstall|enable|disable|verify|audit|pin|unpin
 nyra hooks list                list installed hooks (~/.nyra/hooks/<event>.d/, see docs/hooks.md)
 nyra status                    diagnose broken configs, unavailable sandbox, ignored permission rules, never-matching hook matchers (read-only, see docs/status.md)
 nyra creator "<one-line idea>" [--yes]   creator mode: build a plugin from one sentence (verified, installed only after you confirm)
-nyra memory <export|export-prompt|import|local|import-zip|search|forget|remember|entries|entry|update|rejections>  memory exchange, search and forget; remember/entries/entry/update/rejections go through the memory evidence gate (writes need verbatim user quotes, see docs/memory.md)
+nyra memory <export|export-prompt|import|local|import-zip|search|forget|remember|entries|entry|update|rejections>  memory exchange, search and forget; remember/entries/entry/update/rejections go through the memory evidence gate (writes need verbatim user quotes, see docs/memory.md); remember/entries support --org org memory
 nyra soul <show|status|list|init|add|remove|enable|disable|edit|export|import>  Soul identity layer: per-agent identity and Tenets (invariants compile into the rule layer and are enforced by code; role Charter via nyra soul charter <set|show|clear>, see docs/soul.md and docs/team.md)
 nyra style <learn|show|list|delete|export|import>  per-channel writing style profiles (see docs/style.md)
 nyra doctor [--provider name]  self-check: runtime, config, home dir, key, network, disk, write access, vault permissions

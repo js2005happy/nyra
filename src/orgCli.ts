@@ -19,6 +19,8 @@ import {
   resolveAccountRef,
   setMemberRole,
 } from "./orgs.ts";
+import { effectiveOrgIsolation } from "./orgSharing.ts";
+import { SHARING_USAGE, handleOrgSharing } from "./orgSharingCli.ts";
 
 const ORG_USAGE = "用法：\n"
   + " nyra org create <组织名> [--desc <描述>]        建组织（创建者当 admin；没登录时按机主建）\n"
@@ -31,7 +33,7 @@ const ORG_USAGE = "用法：\n"
   + " nyra org check <组织> <邮箱或账号id> [read|write|manage]   看一个账号在组织里是什么角色、能不能做这个动作\n"
   + "角色：admin 管成员与设置，member 可读写，viewer 只读；机主是超级管理员，任何组织都能管。\n"
   + "组织成员只认全局账号（缺口 41）：账号不存在或已停用时开通直接拒绝；停用账号的组织权限立即失效。\n"
-  + "共享 Bot 与租户隔离是第二批，本批只建组织层。详见 docs/orgs.md";
+  + "共享 Bot、租户隔离与组织内私有目录是第二批子命令（见下）。详见 docs/orgs.md";
 
 const ROLE_TEXT: Record<string, string> = { admin: "管理员", member: "成员", viewer: "只读" };
 
@@ -86,6 +88,8 @@ export async function handleOrg(argv: string[], home: string): Promise<number> {
       const directory = new AccountStore(home);
       process.stdout.write(`${org.name}（${org.id}）${org.description ? ` — ${org.description}` : ""}\n`);
       process.stdout.write(`建于：${org.created_at}（${org.created_by}）\n`);
+      const iso = effectiveOrgIsolation(org);
+      process.stdout.write(`隔离：数据${iso.data ? "开（硬边界）" : "关"}；设置${iso.settings ? "开" : "关"}；用量${iso.usage ? "开" : "关"}；工作区：${org.workspace_dir ?? "没绑"}；共享 Bot：${(org.shared_bots ?? []).length} 个；私有目录：${org.private_catalog ? "已开" : "没开"}\n`);
       if (!org.members.length) {
         process.stdout.write("成员：无（机主仍可管理；开通：nyra org add " + org.name + " <邮箱>）\n");
         return 0;
@@ -197,10 +201,13 @@ export async function handleOrg(argv: string[], home: string): Promise<number> {
       process.stdout.write(`${account.email}：${org.name} 的${ROLE_TEXT[role] ?? role}，${action} ${allowed ? "允许" : "拒绝"}\n`);
       return allowed ? 0 : 1;
     }
+    // 第二批：共享 Bot / 租户隔离 / 组织内私有目录（不是第二批的子命令时返回 null，再回用法说明）。
+    const sharing = await handleOrgSharing(argv, home);
+    if (sharing !== null) return sharing;
   } catch (e) {
     if (e instanceof OrgError) return err(e.message);
     return err(e instanceof Error ? e.message : String(e));
   }
-  process.stderr.write(ORG_USAGE + "\n");
+  process.stderr.write(ORG_USAGE + "\n" + SHARING_USAGE + "\n");
   return 2;
 }

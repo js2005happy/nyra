@@ -378,6 +378,22 @@ org_deleted: ["org_id", "by"],
 org_member_added: ["org_id", "account_id", "role", "by"],
 org_member_removed: ["org_id", "account_id", "by"],
 org_role_changed: ["org_id", "account_id", "role", "by"],
+// 缺口 49 第二批：共享 Bot / 租户隔离 / 组织内私有目录进证据链——
+// 共享与写授权、教学待审、隔离违反（越权访问被拦下）、工作区绑定、
+// 跨租户读授权、私有目录发布与安装。只记 id 与动作，不记内容原文与绝对路径。
+org_bot_shared: ["org_id", "bot_id", "bot_name", "by"],
+org_bot_unshared: ["org_id", "bot_id", "by"],
+org_bot_write_granted: ["org_id", "bot_id", "account_id", "actions", "by"],
+org_bot_write_revoked: ["org_id", "bot_id", "account_id", "by"],
+org_learning_submitted: ["org_id", "bot_id", "learning_id", "by"],
+org_learning_approved: ["org_id", "bot_id", "learning_id", "by"],
+org_learning_rejected: ["org_id", "bot_id", "learning_id", "by"],
+org_isolation_violation: ["org_id", "account_id", "what", "outcome"],
+org_workspace_set: ["org_id", "by"],
+org_cross_access_granted: ["org_id", "granted_to", "path", "by"],
+org_cross_access_revoked: ["org_id", "grant_id", "by"],
+org_catalog_published: ["org_id", "template_name", "version", "by"],
+org_catalog_installed: ["org_id", "template_name", "by"],
 // 缺口 35：对话式入职进证据链——入职完成 / 角色模板应用 / 就绪简报已发。
 // 只记 agent、角色与模板 id，不记三问答案原文、不记绝对路径。
 onboarding_completed: ["agent", "role", "template"],

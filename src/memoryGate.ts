@@ -43,7 +43,7 @@ export const MEMORY_ENTRY_CONTENT_MAX_CHARS = 2000;
 export const MEMORY_ENTRY_SOURCEREF_MAX_CHARS = 200;
 export const MEMORY_ENTRY_SOURCEREFS_MAX = 20;
 
-export type MemoryGateScope = "user" | "project";
+export type MemoryGateScope = "user" | "project" | "org";
 export type MemoryGateStatus = "confirmed" | "proposed" | "deleted";
 export type MemoryGateSecretKind = "sk-key" | "private-key" | "bearer-token";
 
@@ -54,6 +54,8 @@ export interface MemoryGateEntry {
   scope: MemoryGateScope;
   /** scope=project 时必填（项目 id 或工作目录名）；user 时为 null。 */
   projectId: string | null;
+  /** 缺口 49 第二批：scope=org 时必填（组织 id）；其余 scope 为 null。 */
+  orgId: string | null;
   subject: string;
   content: string;
   sourceRefs: string[];
@@ -169,6 +171,8 @@ export function verifyEvidenceQuotesFormat(
 export interface MemoryGateEntryInput {
   scope?: MemoryGateScope;
   projectId?: string | null;
+  /** scope=org 时必填（组织 id）。 */
+  orgId?: string | null;
   subject: string;
   content: string;
   sourceRefs?: string[];
@@ -179,6 +183,7 @@ export interface MemoryGateEntryInput {
 interface NormalizedEntryInput {
   scope: MemoryGateScope;
   projectId: string | null;
+  orgId: string | null;
   subject: string;
   content: string;
   sourceRefs: string[];
@@ -191,12 +196,16 @@ function normalizeEntryInput(
   opts: { checkVerbatim: boolean; userText?: string | null },
 ): NormalizedEntryInput {
   const scope = input.scope ?? "user";
-  if (scope !== "user" && scope !== "project") {
-    throw new MemoryGateError("invalid-scope", `scope 只认 user / project，当前是 ${JSON.stringify(scope)}`);
+  if (scope !== "user" && scope !== "project" && scope !== "org") {
+    throw new MemoryGateError("invalid-scope", `scope 只认 user / project / org，当前是 ${JSON.stringify(scope)}`);
   }
   const projectId = scope === "project" ? (typeof input.projectId === "string" ? input.projectId.trim() : "") : null;
   if (scope === "project" && !projectId) {
     throw new MemoryGateError("invalid-project", "scope=project 时须给 projectId");
+  }
+  const orgId = scope === "org" ? (typeof input.orgId === "string" ? input.orgId.trim() : "") : null;
+  if (scope === "org" && !orgId) {
+    throw new MemoryGateError("invalid-org", "scope=org 时须给 orgId");
   }
   const subject = typeof input.subject === "string" ? input.subject.trim() : "";
   if (!subject) throw new MemoryGateError("empty-subject", "记忆条目须给 subject（主题）");
@@ -241,7 +250,7 @@ function normalizeEntryInput(
     const kind = detectSecretKind(text);
     if (kind) throw new MemoryGateError(`secret:${kind}`, `${where} 里含疑似密钥（${secretKindText(kind)}），不能写入记忆`);
   }
-  return { scope, projectId, subject, content, sourceRefs, status, evidenceQuotes };
+  return { scope, projectId, orgId, subject, content, sourceRefs, status, evidenceQuotes };
 }
 
 export function evidenceReasonText(reason: string): string {
@@ -274,7 +283,9 @@ function isValidRevision(raw: unknown): raw is MemoryGateRevision {
   if (!raw || typeof raw !== "object") return false;
   const r = raw as Record<string, unknown>;
   if (typeof r.id !== "string" || !/^memg_[0-9a-f]{12}$/.test(r.id)) return false;
-  if (r.scope !== "user" && r.scope !== "project") return false;
+  if (r.scope !== "user" && r.scope !== "project" && r.scope !== "org") return false;
+  // 老账本行没有 orgId（undefined 当 null）；有的话须是字符串。
+  if (r.orgId !== undefined && r.orgId !== null && typeof r.orgId !== "string") return false;
   if (typeof r.subject !== "string" || typeof r.content !== "string") return false;
   if (!Array.isArray(r.sourceRefs) || !Array.isArray(r.evidenceQuotes)) return false;
   if (r.status !== "confirmed" && r.status !== "proposed" && r.status !== "deleted") return false;
@@ -342,6 +353,7 @@ export function rememberMemoryEntry(
     id: `memg_${randomBytes(6).toString("hex")}`,
     scope: n.scope,
     projectId: n.projectId,
+    orgId: n.orgId,
     subject: scrubForStore(n.subject, home),
     content: scrubForStore(n.content, home),
     sourceRefs: n.sourceRefs.map((r) => scrubForStore(r, home)),
@@ -424,6 +436,7 @@ export function updateMemoryEntry(
     id: cur.id,
     scope: cur.scope,
     projectId: cur.projectId,
+    orgId: cur.orgId ?? null,
     subject: scrubForStore(nextSubject, home),
     content: scrubForStore(nextContent, home),
     sourceRefs: nextRefs.map((r) => scrubForStore(r, home)),
@@ -445,6 +458,7 @@ function toEntry(rev: MemoryGateRevision): MemoryGateEntry {
     id: rev.id,
     scope: rev.scope,
     projectId: rev.projectId,
+    orgId: rev.orgId ?? null,
     subject: rev.subject,
     content: rev.content,
     sourceRefs: rev.sourceRefs,
@@ -459,7 +473,7 @@ function toEntry(rev: MemoryGateRevision): MemoryGateEntry {
 /** 列出当前有效的条目（默认不含已删除的；最新 revision 为准）。 */
 export function listMemoryGateEntries(
   home?: string,
-  opts: { scope?: MemoryGateScope; status?: MemoryGateStatus; includeDeleted?: boolean; limit?: number } = {},
+  opts: { scope?: MemoryGateScope; orgId?: string; status?: MemoryGateStatus; includeDeleted?: boolean; limit?: number } = {},
 ): MemoryGateEntry[] {
   const latest = new Map<string, MemoryGateRevision>();
   for (const rev of readRevisions(home)) {
@@ -469,6 +483,7 @@ export function listMemoryGateEntries(
   let out = [...latest.values()].map(toEntry);
   if (!opts.includeDeleted) out = out.filter((e) => e.status !== "deleted");
   if (opts.scope) out = out.filter((e) => e.scope === opts.scope);
+  if (opts.orgId !== undefined) out = out.filter((e) => e.orgId === opts.orgId);
   if (opts.status) out = out.filter((e) => e.status === opts.status);
   out.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
   if (opts.limit !== undefined) out = out.slice(0, Math.max(0, Math.floor(opts.limit)));
