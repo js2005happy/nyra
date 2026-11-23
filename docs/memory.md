@@ -95,6 +95,18 @@ Nyra 的三层存储正好对得上，写清分工、不要混用：
 - CLI：`nyra memory forget <记忆 id...> [--session <会话 id>]
   [--yes]`——缺省先列出要删的条目再问一次，`--yes` 跳过确认。
 
+## 记忆证据门（Kooyu 记忆证据门，2026-11-23）
+
+防记忆污染的硬机制：写记忆必须附用户原话出处，代码逐条校验，否则拒绝。
+
+- **证据逐字**：模型工具 `memory_append` 须附 `evidenceQuotes`（1–8 条，每条 2–500 字），每条必须是当前用户消息的逐字原话（代码里逐条 `userText.includes(quote)` 校验）。转述、编造、拼凑的都拒绝；缺依据直接拒绝。当前用户原文由 Agent 每轮填进 ToolContext（`currentUserText`；resume 时取本会话最近一条用户消息）。
+- **只认主对话 + 当前用户回合**：无人值守巡查（automation）与子 agent（委派深度 ≥1）不能写全局记忆——想记的东西交回主对话。门在审批之前：注定写不进去的调用不打扰用户弹审批卡。
+- **秘密拦截**：sk-…、私钥、Bearer token 一律拒绝写入记忆；拒绝记录里只记命中的种类名，不记匹配到的原文。
+- **拒绝留痕**：每次拒绝都记进 `~/.nyra/memory-gate-rejections.jsonl`（append-only 0600），`nyra memory rejections` 可查，不静默跳过。
+- **结构化条目**：新模块 `src/memoryGate.ts`，条目结构 `{ id, scope: user/project, projectId, subject, content, sourceRefs, status: confirmed/proposed/deleted, revision, updatedAt }`（Kooyu 的 memory_entries 表在 Nyra 的对位；id 前缀 `memg_`，与 sidecar 索引的 `mem_` 区分）。账本 `~/.nyra/memory-entries.jsonl`（append-only 0600，同 id+revision 不重复追加，坏行跳过）；改一条记忆 revision+1，上一版正文记进修订行，`nyra memory entry <id>` 能看到全部修订历史；deleted 是终态，删了的不能再改。
+- **CLI**（用户本人直接写）：`nyra memory remember <正文> --quote <用户原话> [--quote ...] [--subject <主题>] [--scope user|project] [--project <id>] [--status proposed|confirmed] [--ref <出处> ...]`、`entries`、`entry <id>`、`update <id> --content <新正文> --quote <用户原话>`、`rejections`。CLI 没有当前用户回合可对照，引用只验条数与长度（用户本人直接提供，不算模型推断）；含密钥同样拒绝并留痕。
+- **不在门里的入口（诚实边界）**：Soul Tenet 只有用户直接跑 `nyra soul add` 才能写（没有模型工具能写 Tenet），不在门里；AGENTS.md / RULES.md 等 standing 文档走 `write_file`（审批门），`~/.nyra` 不在工作目录内、模型本来就写不到，工作目录下的 AGENTS.md 是项目文档不是长期记忆；MCP 的 `add_memory` 是已认证外部 agent 的显式写入、过独立审查（`reviewWrite`），同样不在门里；MEMORY.md 双向同步（结构化条目 ↔ MEMORY.md）可后做。
+
 ## 诚实边界
 
 - 记忆 id 是 sidecar 索引分配的：索引丢失重建后 id 会变，删除时
