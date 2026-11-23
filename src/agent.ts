@@ -35,6 +35,7 @@ import {
 } from "./compact.ts";
 import { EvidenceStore } from "./evidence.ts";
 import { UsageTracker } from "./usage.ts";
+import { TelemetryTracer, type TelemetrySpan } from "./telemetry.ts";
 import type { WindowSource } from "./modelCatalog.ts";
 import { estimateCost, checkMonthlyCap, estimateRunCost, type CostEstimate, type Pricing } from "./cost.ts";
 import { nextMonthlyResetDate } from "./usageLedger.ts";
@@ -522,6 +523,9 @@ export class Agent {
   autoCompactEnabled: boolean;
   autoCompactThreshold: number;
   autoCompactCount = 0;
+  /** G-P1-15：本次运行的可观测性追踪器（懒建；配置关了就是 null，不记 span）。 */
+  private telemetryInstance: TelemetryTracer | null = null;
+  private telemetryRootSpan: TelemetrySpan | null = null;
   turn = 0;
   /**
    * 最近一次运行是否因取消停下（可靠性打磨第 1 项第一批）：cancelledText
@@ -1576,13 +1580,34 @@ export class Agent {
    */
   private async runLoop(task: string, resume: boolean, signal?: AbortSignal | null): Promise<string> {
     this.beginRun(signal ?? null);
+    // G-P1-15：根 span（agent.run），finally 里结束并落盘 metrics。
+    const tracer = this.telemetry();
+    const root = tracer?.startRunSpan({
+      session_id: this.sessionId,
+      model: typeof this.provider.model === "string" ? this.provider.model : "unknown",
+      resume,
+    }) ?? null;
+    this.telemetryRootSpan = root;
+    let spanStatus: { code: "ok" | "error"; message?: string } = { code: "ok" };
+    let cancelled = false;
     try {
       return await this.runLoopInner(task, resume);
     } catch (err: unknown) {
-      if (isCancelError(err)) return this.cancelledText(err as CancelError);
+      if (isCancelError(err)) {
+        cancelled = true;
+        return this.cancelledText(err as CancelError);
+      }
+      spanStatus = { code: "error", message: (err instanceof Error ? err.message : String(err)).slice(0, 256) };
       throw err;
     } finally {
       this.endRun();
+      try {
+        if (tracer && root) {
+          tracer.endSpan(root, cancelled ? { code: "ok" } : spanStatus, cancelled ? { cancelled: true } : {});
+          tracer.flushMetrics();
+        }
+      } catch { /* span 收尾失败绝不破坏主流程 */ }
+      this.telemetryRootSpan = null;
     }
   }
 
@@ -1620,6 +1645,21 @@ export class Agent {
     this.runCancel = null;
     this.runSignal = null;
     if (this.ctx) this.ctx.cancelSignal = undefined;
+  }
+
+  /**
+   * G-P1-15：可观测性追踪器（与 budgetLedger 同款懒建；配置关了返回 null，
+   * 调用方一律用 ?.，不记 span 也不影响主流程）。
+   */
+  private telemetry(): TelemetryTracer | null {
+    if (this.telemetryInstance) return this.telemetryInstance.enabled ? this.telemetryInstance : null;
+    try {
+      const tracer = new TelemetryTracer(this.home);
+      this.telemetryInstance = tracer;
+      return tracer.enabled ? tracer : null;
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -1993,18 +2033,38 @@ export class Agent {
       const spanModel = typeof (actModel as { model?: unknown }).model === "string"
         ? (actModel as { model: string }).model
         : (typeof this.provider.model === "string" ? this.provider.model : null);
+      // G-P1-15：模型调用子 span（model.chat），挂在根 span 下面。
+      const llmTracer = this.telemetry();
+      const llmSpan = llmTracer?.startSpan("model.chat", { model: spanModel ?? "unknown" }) ?? null;
       const emitLlmSpan = (ok: boolean): void => {
         try {
           const after = this.usage.snapshot();
           const delta = (a: number | null, b: number | null): number | null =>
             a === null ? null : a - (b ?? 0);
+          const durationMs = Date.now() - spanStart;
+          const pt = delta(after.prompt_tokens, spanUsageBefore.prompt_tokens);
+          const ct = delta(after.completion_tokens, spanUsageBefore.completion_tokens);
+          const tt = delta(after.total_tokens, spanUsageBefore.total_tokens);
+          if (llmTracer && llmSpan) {
+            llmTracer.endSpan(llmSpan, ok ? { code: "ok" } : { code: "error", message: "model call failed" }, {
+              duration_ms: durationMs,
+              prompt_tokens: pt ?? 0,
+              completion_tokens: ct ?? 0,
+              total_tokens: tt ?? 0,
+            });
+            llmTracer.metrics.inc("nyra_model_calls_total", { model: spanModel ?? "unknown", ok: String(ok) });
+            if (tt !== null) llmTracer.metrics.inc("nyra_tokens_total", { model: spanModel ?? "unknown", kind: "total" }, tt);
+            if (pt !== null) llmTracer.metrics.inc("nyra_tokens_total", { model: spanModel ?? "unknown", kind: "prompt" }, pt);
+            if (ct !== null) llmTracer.metrics.inc("nyra_tokens_total", { model: spanModel ?? "unknown", kind: "completion" }, ct);
+          }
           this.emit("llm_span", {
             model: spanModel,
-            duration_ms: Date.now() - spanStart,
-            prompt_tokens: delta(after.prompt_tokens, spanUsageBefore.prompt_tokens),
-            completion_tokens: delta(after.completion_tokens, spanUsageBefore.completion_tokens),
-            total_tokens: delta(after.total_tokens, spanUsageBefore.total_tokens),
+            duration_ms: durationMs,
+            prompt_tokens: pt,
+            completion_tokens: ct,
+            total_tokens: tt,
             ok,
+            ...(llmSpan ? { trace_id: llmSpan.traceId, span_id: llmSpan.spanId } : {}),
           });
         } catch { /* span 记账失败绝不破坏主循环 */ }
       };
@@ -2100,6 +2160,10 @@ export class Agent {
           name: fnName,
           arguments: args !== null && typeof args === "object" ? args : argsRaw,
         });
+        // G-P1-15：工具调用子 span（tool.<名字>），挂在根 span 下面。
+        const toolTracer = this.telemetry();
+        const toolSpanStart = Date.now();
+        const toolSpan = toolTracer?.startSpan(`tool.${fnName || "unknown"}`, { tool: fnName || "unknown" }) ?? null;
         // 缺口 10：独立审查上下文——原始任务 + 最近消息，每次工具调用前刷新
         //（审查门在 executeTool 里，审查模型实例懒建一次后缓存）。
         this.ctx.reviewerRunner = this.reviewerRunner();
@@ -2148,6 +2212,24 @@ export class Agent {
         } else {
           // OpenMausBot C 项：工具失败重试须幂等（只读直接重试、写操作先查状态）。
           result = await executeToolIdempotent(fnName, args, this.ctx);
+        }
+        // G-P1-15：工具 span 收尾（执行分支走完即结束；被拒/跳过的调用也记一笔，
+        // ok 按 tool_result 同款口径：结果不以“错误：”开头即成功）。
+        const toolOk = !result.startsWith("错误：");
+        const toolDurationMs = Date.now() - toolSpanStart;
+        if (toolTracer && toolSpan) {
+          toolTracer.endSpan(toolSpan, toolOk ? { code: "ok" } : { code: "error", message: "tool call failed" }, {
+            duration_ms: toolDurationMs,
+          });
+          toolTracer.metrics.inc("nyra_tool_calls_total", { tool: fnName || "unknown", ok: String(toolOk) });
+          toolTracer.metrics.observe("nyra_tool_duration_ms", { tool: fnName || "unknown" }, toolDurationMs);
+          this.emit("tool_span", {
+            tool: fnName,
+            duration_ms: toolDurationMs,
+            ok: toolOk,
+            trace_id: toolSpan.traceId,
+            span_id: toolSpan.spanId,
+          });
         }
         // OpenMausBot B 项：调用后记一笔（被拒的、续跑跳过的不重复记）；成功同答案
         // 3 次提醒、10 次停轮，提醒纸条附在工具结果后给模型看。

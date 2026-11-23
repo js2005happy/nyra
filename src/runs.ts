@@ -641,7 +641,10 @@ media_ingested: ["host", "title_hash", "duration_seconds", "bytes", "source", "t
 delegate_start: ["task_id", "model", "max_turns", "depth", "layer_remaining"],
 delegate_end: ["task_id", "ok", "turns", "spent_usd", "verification"],
 delegate_rejected: ["task_id", "reason", "depth"],
-llm_span: ["model", "duration_ms", "prompt_tokens", "completion_tokens", "total_tokens", "ok"],
+llm_span: ["model", "duration_ms", "prompt_tokens", "completion_tokens", "total_tokens", "ok", "trace_id", "span_id"],
+// G-P1-15：工具调用 span（与 llm_span 同款：耗时 + 成功与否 + trace correlation，
+// 不记参数与结果原文；timeline 仍用 tool_start/tool_result 配对渲染，不另起一步）。
+tool_span: ["tool", "duration_ms", "ok", "trace_id", "span_id"],
 final: [],
 max_turns: [],
 error: ["error_type"],
@@ -1131,7 +1134,9 @@ throw new Error("运行事件字段无效");
 // P1-4：args_hash 是单向指纹（只用于比对，不可还原参数原文），不参与脱敏——
 // 脱敏会把它毁成 "[已隐藏]"，续跑时再也认不出已完成的调用。
 // digest 同款：脚本摘要是 64 位 hex 指纹，同样不参与脱敏。
-event[key] = typeof value === "string" && key !== "args_hash" && key !== "digest" ? redact(value) : value;
+// G-P1-15：trace_id（32 hex）/ span_id（16 hex）同款——32 字连续词串会被
+// redact 的长词规则掩掉，不豁免就进不了事件链。
+event[key] = typeof value === "string" && key !== "args_hash" && key !== "digest" && key !== "trace_id" && key !== "span_id" ? redact(value) : value;
 }
 }
 const path = this.filePath(runId, "events.jsonl");
@@ -1341,7 +1346,7 @@ if (kind === "voice_input" || kind === "voice_speak") {
     this.voiceSpent = (this.voiceSpent ?? 0) + data.cost_usd;
   }
 }
-if (["tool_start", "tool_result", "final", "max_turns", "snapshot", "restore", "model_switch", "parallel_delegate", "hook_blocked", "reviewer_verdict", "patrol_write_blocked", "delegate_start", "delegate_end", "llm_span", "vision_input", "voice_input", "voice_speak", "office_exported", "media_ingested", "redline_changed", "redline_blocked", "soul_tenet_added", "soul_tenet_removed", "soul_tenet_changed", "soul_invariant_blocked", "run_cancelled"].includes(kind)) {
+if (["tool_start", "tool_result", "final", "max_turns", "snapshot", "restore", "model_switch", "parallel_delegate", "hook_blocked", "reviewer_verdict", "patrol_write_blocked", "delegate_start", "delegate_end", "llm_span", "tool_span", "vision_input", "voice_input", "voice_speak", "office_exported", "media_ingested", "redline_changed", "redline_blocked", "soul_tenet_added", "soul_tenet_removed", "soul_tenet_changed", "soul_invariant_blocked", "run_cancelled"].includes(kind)) {
 const fields = {...data};
 if (kind === "tool_start" && typeof data.id === "string" && data.arguments !== null && typeof data.arguments === "object" && !Array.isArray(data.arguments)) {
 const key = idempotencyKey(String(data.name ?? ""), data.arguments as Record<string, unknown>);

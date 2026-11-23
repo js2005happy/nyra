@@ -22,6 +22,7 @@ import { buildTimeline, formatTimelineText, formatReplayText, exportTimelineMark
 import { resolvePricing, resolveMonthlyLimit } from "./cost.ts";
 import { handleCost } from "./costCli.ts";
 import { handleStats, formatMonthLine } from "./statsCli.ts";
+import { handleTelemetry } from "./telemetryCli.ts";
 import { formatModelSwitchNotice, modelSwitchSummaryLine, recordModelSwitch, switchTimeShort } from "./modelSwitch.ts";
 import { handleModels } from "./modelsCli.ts";
 import { handleMemoryGate } from "./memoryGateCli.ts";
@@ -243,6 +244,7 @@ nyra video <call|signal|ice>   视频通话 + 按需视觉采样：信令 + TURN
 nyra export --format docx|xlsx|pptx --from <内容 JSON> --out <路径>   成品导出：结构化内容写成可编辑的真办公文件（详见 docs/office.md）
 nyra media <status|enable|disable|ingest <链接> [--out <路径>]|setup|scope ...>   媒体抓取：公开视频先取字幕、没有再本地转写（默认关，须先 nyra media enable；详见 docs/media-ingest.md）
 nyra stats [--heatmap] [--json]  本月用量与每日用量热力图（--json 给机器）
+nyra telemetry [status|spans|metrics|export|enable|disable|otlp]   可观测性：trace（span 落盘 + OTLP 导出）+ metrics（计数器与直方图）+ 运行事件 trace 关联（详见 docs/telemetry.md）
 nyra cost --show [--json]      定价、单次上限与月度上限（本月已花）
 nyra --plan "任务"             只读分析，生成工作目录中的 plan.md，不执行
 nyra --execute-plan --approve-plan <SHA256>   执行经校验值批准的 plan.md
@@ -387,6 +389,7 @@ nyra video <call|signal|ice>   video call + on-demand frame sampling: signaling 
 nyra export --format docx|xlsx|pptx --from <content JSON> --out <path>   export a finished office file from structured content (see docs/office.md)
 nyra media <status|enable|disable|ingest <url> [--out <path>]|setup|scope ...>   media ingest: public videos, subtitles first, local transcription fallback (off by default, run nyra media enable first; see docs/media-ingest.md)
 nyra stats [--heatmap]         this month's usage and the daily usage heatmap (see docs/cost.md)
+nyra telemetry [status|spans|metrics|export|enable|disable|otlp]   observability: traces (spans on disk + OTLP export) + metrics (counters and histograms) + run-event trace correlation (see docs/telemetry.md)
 nyra cost --show               pricing, per-run cap and monthly cap (spent this month)
 nyra verdict [task]            one conclusion: is this run worth it (redlines + savings + recall + history)
 nyra verdict --run <id>         score one run; --recent N: trend over the last N runs; --json: machine-readable
@@ -7032,6 +7035,7 @@ export async function main(argv: string[]): Promise<number> {
     return handleCost(sub, cfgCost, (cfgCost.model as string) ?? null, { recalledCount, home });
   }
   if (args.subcommand === "stats") return handleStats(args.subArgs ?? [], home);
+  if (args.subcommand === "telemetry") return handleTelemetry(args.subArgs ?? [], home);
   if (args.subcommand === "models") return handleModels(args.subArgs ?? [], home);
   if (args.subcommand === "schedule") return handleSchedule(args.subArgs ?? [], resolve(args.workdir));
   if (args.subcommand === "events") return handleEvents(args.subArgs ?? [], resolve(args.workdir));
