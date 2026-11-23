@@ -1126,8 +1126,17 @@ def _tool_http_post(
             if not 200 <= response.status < 300:
                 return f"错误：HTTP {response.status}"
             charset = response.headers.get_content_charset() or "utf-8"
-            text = response.read().decode(charset, errors="replace")
-            return f"HTTP {response.status}\n{_truncate(text)}"
+            # Bound network input before decoding. A 4-byte UTF-8 character
+            # can require four bytes per displayed character; other encodings
+            # are still bounded by this byte limit. Never claim a full length.
+            byte_limit = MAX_OUTPUT_CHARS * 4
+            payload = response.read(byte_limit + 1)
+            clipped = len(payload) > byte_limit
+            text = payload[:byte_limit].decode(charset, errors="replace")
+            result = _truncate(text)
+            if clipped:
+                result += "\n……（响应正文超过读取上限，剩余内容未读取）"
+            return f"HTTP {response.status}\n{result}"
     except urllib.error.HTTPError as exc:
         # Untrusted response bodies can echo tokens or submitted data.
         # Preserve trusted status only; never retry an uncertain POST.
