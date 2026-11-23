@@ -15,7 +15,7 @@
 // 普通用户配不起来，所以保留明文并写清范围，不假装它安全。
 // 注意：PairingHost 的 CODE_TTL_SECONDS=600 是另一条旧路径，网页端走
 // DeviceRegistry 的 300 秒，以此为准。
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createSocket, type Socket } from "node:dgram";
@@ -36,8 +36,13 @@ export class PairingError extends Error {
   constructor(message: string) { super(message); this.name = "PairingError"; }
 }
 
+/**
+ * 6 位配对码：用加密安全随机数（crypto.randomInt，均匀分布在 100000–999999）。
+ * 原来用 Math.random()——它不是 CSPRNG，内部状态可从连续输出推出来，
+ * 同一局域网里的人理论上能预测下一个配对码；错 5 次作废挡得住瞎猜，挡不住算出来。
+ */
 export function generateCode(): string {
-  return String(Math.floor(100000 + Math.random() * 900000));
+  return String(randomInt(100000, 1000000));
 }
 
 export function hashDeviceToken(token: string): string {
