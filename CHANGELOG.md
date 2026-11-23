@@ -1,3 +1,7 @@
+## Unreleased — 2026-11-24 local shell structured outcome (static only)
+
+- Local shell tool reports now derive success/failure from subprocess return codes rather than model-visible stdout/stderr text. Timeout remains unknown, not successful. Remote execution, approvals, output and no-retry semantics remain unchanged. Static source review only; tests and CI not run.
+
 ## Unreleased — 2026-11-24 delegated exception privacy (static only)
 
 - `Agent.delegate` no longer forwards child `AgentError` or unexpected exception messages/types to the parent model. Both branches return fixed legacy failure-prefixed text and mark execution status unknown; no automatic retry, permission or dependency changes. Static source review only; tests and CI not run.
