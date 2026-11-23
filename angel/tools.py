@@ -1184,7 +1184,8 @@ def execute_tool(name: str, arguments: dict, ctx: ToolContext) -> str:
     }
     tool = dispatch.get(name)
     if tool is None:
-        return f"错误：未知工具 {name}"
+        # Untrusted tool names may contain private arguments or credentials.
+        return "错误：未知工具"
     try:
         return tool(ctx, **arguments)
     except ToolError:
