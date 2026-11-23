@@ -911,6 +911,11 @@ def _fetch_search_page(url: str) -> str:
         },
     )
     with open_url(request, 30) as response:
+        # A non-2xx search response is not trustworthy search-result evidence.
+        # Some adapters return error statuses instead of raising HTTPError.
+        status = getattr(response, "status", None)
+        if not isinstance(status, int) or not 200 <= status < 300:
+            raise ToolError("搜索源返回非成功 HTTP 状态")
         charset = response.headers.get_content_charset() or "utf-8"
         # Search HTML is untrusted and may be arbitrarily large. Reject a
         # partial page rather than parsing incomplete results as evidence.
