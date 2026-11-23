@@ -1,3 +1,10 @@
+## 2026-11-23 — HTTP POST error-body privacy (static-only)
+
+- Reviewed branch README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, tools/agent, recent commits, open Issues/PR #113 and prior commit status (no statuses returned).
+- Source fact: HTTPError forwarded untrusted response body into model-visible text; changed to status-only error. This does not prove remote POST side effects did not occur.
+- External reports reviewed 2026-11-23: Codex #31015 (opened 2026-07-03) and #34233 (opened 2026-07-19), https://github.com/openai/codex/issues/31015 and https://github.com/openai/codex/issues/34233. External individual reports, not Angel incident-frequency evidence.
+- No tests, builds, CI dispatch, HTTP calls, dependency installs, main merge or production release. Cross-platform behavior unverified.
+
 ## 2026-11-23 — HTTP POST HTTPError failure status (static-only)
 
 - Reviewed README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, `angel/tools.py`, `angel/agent.py`, `angel/tool_report_status.py`, recent commits, open Issues/PR #113 and preceding commit CI metadata (no statuses or associated PR-triggered runs returned).
