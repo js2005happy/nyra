@@ -149,7 +149,7 @@
 | `nyra screen <watch\|activity\|status\|takeover\|handover> <电脑 id>` | 缺口 50：只读看屏（实时画面 + 活动列表，帧指纹不记帧内容）与接管（take the wheel，须确认；接管期间 Bot 暂停、交还后从挂起点继续，全程记审计）；画面里密码/验证码/卡号自动打码（详见 `docs/bot-screen.md`） |
 | `nyra computer <status\|grant\|grants\|blocklist\|activity\|display\|require>` | G-P1-35：真机电脑操作守卫——禁碰窗口名单、可撤销授权、虚拟桌面 Xvfb、每一次动作留痕；禁碰名单与限流默认开，授权与虚拟桌面检查默认关、机主按需收紧（详见 `docs/computer-guard.md`） |
 | `nyra voice <status\|speak <文字>\|enable-tts\|disable-tts\|transcribe <音频>\|realtime <list\|use\|status>>` | 语音指挥：看配置与可用性、读一段文字、开关自动回读；只转写不跑任务；实时语音服务商切换（默认 local，详见 `docs/realtime-voice.md`；详见 `docs/voice.md`） |
-| `nyra voice call <start\|answer\|decline\|end\|status\|list\|segment\|confirm\|connect>` | 实时语音通话：建通话、喂音频段落转写、可选回读（本地 whisper 优先，云端默认关；`--transport webrtc` 走真 WebRTC 1:1 语音，`connect` 主动拨通；转写文字先审后发见 `docs/voice.md`） |
+| `nyra voice call <start\|answer\|decline\|end\|status\|list\|segment\|confirm\|connect\|note\|notes\|hooks>` | 实时语音通话：建通话、喂音频段落转写、可选回读（本地 whisper 优先，云端默认关；`--transport webrtc` 走真 WebRTC 1:1 语音，`connect` 主动拨通；转写文字先审后发见 `docs/voice.md`） |
 | `nyra video <call\|signal\|ice>` | 视频通话 + 按需视觉采样：信令 + TURN + ICE 直连传输，帧按需看（本地优先，云端默认关；详见 `docs/video-call.md`） |
 | `nyra export --format docx\|xlsx\|pptx --from <内容 JSON> --out <路径>` | 成品导出：结构化内容写成可编辑的真办公文件，附事实核查（详见 `docs/office.md`） |
 | `nyra media <status\|enable\|disable\|ingest <链接> [--out <路径>]\|setup\|scope …>` | 媒体抓取：公开视频 → 字幕/转写 → 文本（默认关；yt-dlp 二进制须 `nyra media setup` 按官方 release 下载并验签安装；详见 `docs/media-ingest.md`） |

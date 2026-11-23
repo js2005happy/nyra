@@ -92,6 +92,9 @@ nyra voice call segment <通话 id> 录音.wav --speak-reply "好的，写完了
 nyra voice call confirm <通话 id> <段落 id>  # 确认被扣下的段落（只确认含义，不执行）
 nyra voice call end <通话 id>                # 挂断，打印三本账总结
 nyra voice call status [通话 id]             # 看一通 / 列最近通话
+nyra voice call note <通话 id> <文字>        # 通话中记一条要点（1–500 字）
+nyra voice call notes <通话 id>              # 列出这通电话的笔记
+nyra voice call hooks [list|enable <名>|disable <名>|on|off]  # 通话钩子开关
 ```
 
 - **传输层**：默认仍是本机回环（不拨真实电话、不走 TURN/SFU；传输
@@ -128,6 +131,35 @@ nyra voice call status [通话 id]             # 看一通 / 列最近通话
   `voice_call_transport_failed`），有运行上下文（`--run <运行 id>`）时镜像进
   运行事件，`src/timeline.ts` 加渲染；只记元数据与指纹，不记原文与路径。
   语音输入审阅另记 `voice_input_reviewed`（结论 + 字数 + 指纹，不记原文）。
+
+## 通话钩子与通话笔记（G-P1-36 第二批）
+
+第 1 批 G-P1-36 已把“实时语音模型插件层”做成 provider 接口
+（`src/realtimeVoice.ts`，换服务商只换 `voice.realtime_provider`，见
+`docs/realtime-voice.md`）。本批补的是另一半：通话进行时插件能插进来。
+
+- **钩子**（`src/voiceHooks.ts`）：通话生命周期事件发生时调已注册的钩子——
+  开始 / 接听 / 拒绝 / 挂断 / 转写 / 静音跳过 / 扣下 / 确认 / 回读，共 9 种。
+  钩子只读元数据（通话 id、段落 id、VAD 结论、字数、引擎、花费、文本指纹），
+  永远拿不到转写原文与音频；钩子必须是同步的（`onEvent` 返回 void），想做
+  异步活自己排队，通话不等它。钩子注册表是进程内的
+  （`registerVoiceHook` / `unregisterVoiceHook` / `listVoiceHooks`），
+  开关配置才落盘（`~/.nyra/voice-hooks.json`，0600 原子写，损坏先备份再回
+  默认）：总开关默认开，按名开关默认开，`nyra voice call hooks list` 看、
+  `hooks enable|disable <名>` 改单个、`hooks on|off` 改总开关。
+  fail-closed：钩子抛错只记审计（`voice-call-audit.jsonl` 的 `hook_failed`）
+  与事件 `voice_call_hook_failed`（通话 id、钩子名、事件种、报错前 200 字），
+  通话继续，坏钩子不拦好钩子。
+- **笔记**（通话中只读工具的落点）：`nyra voice call note <通话 id> <文字>`
+  记一条要点（1–500 字，机主手写），`notes <通话 id>` 列出来。笔记存在通话
+  记录上、进审计（`noted`，只记字数不记正文）与事件 `voice_call_noted`
+  （通话 id、笔记 id、字数）；不记转写原文，不替你执行任何动作，通话结束后
+  也能补记。
+- **没做的**：真 STT/TTS 接入不在本批（另算）；说话人切换没有单独的钩子——
+  1:1 通话没有说话人标识，段落转写事件就是“对方说了一段”；静音/恢复没有
+  单独的开关与钩子，静音段走 VAD 跳过事件（`segment_skipped_silence`）；
+  钩子是进程内注册的，没有从磁盘动态加载插件代码的入口（插件市场只装技能包，
+  见 `docs/plugins.md`）。
 
 ## 边界：语音不碰支付与对外发送
 
