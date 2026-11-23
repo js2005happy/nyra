@@ -747,6 +747,47 @@ def _tool_list_dir(ctx: ToolContext, path: str = ".") -> str:
     return execute_local_list_dir_report(ctx, path)[0]
 
 
+def execute_local_shell_report(
+    ctx: ToolContext, command: str, cwd: str | None = None,
+    timeout: int = 60,
+) -> tuple[str, "StructuredToolReport"]:
+    """Local shell outcome from subprocess exit metadata, not stdout text.
+
+    Existing approval and deny rules apply. This is not proof of external
+    side effects; remote backends retain their legacy execution path.
+    """
+    from .tool_report_status import StructuredToolReport
+
+    if ctx.backend is not None:
+        raise ToolError("structured local shell requires a local backend")
+    denied = _check_shell_denied(command)
+    if denied:
+        return f"错误：{denied}", StructuredToolReport("reported_error")
+    resolved_cwd = _workspace_shell_cwd(ctx, cwd)
+    _check_approval(
+        ctx, "shell", f"执行命令：{command}（cwd: {resolved_cwd}；timeout: {timeout}s）",
+        command=command, cwd=str(resolved_cwd), timeout=timeout,
+    )
+    try:
+        result = subprocess.run(
+            command, shell=True, cwd=resolved_cwd, capture_output=True,
+            text=True, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return f"错误：命令超时（{timeout} 秒）", StructuredToolReport("unknown")
+    combined = result.stdout
+    if result.stderr:
+        if combined and not combined.endswith("\\n"):
+            combined += "\\n"
+        combined += "标准错误：\\n" + result.stderr
+    if result.returncode != 0:
+        return (
+            f"错误：命令退出码 {result.returncode}\\n" + (_truncate(combined) or "（无输出）"),
+            StructuredToolReport("reported_error"),
+        )
+    return _truncate(combined) or "（无输出）", StructuredToolReport("reported_ok")
+
+
 def _tool_shell(
     ctx: ToolContext,
     command: str,
@@ -764,29 +805,7 @@ def _tool_shell(
     if ctx.backend is not None:
         return _truncate(
             ctx.backend.run_command(command, cwd=str(resolved_cwd), timeout=timeout)
-        ) or "（无输出）"
-    try:
-        result = subprocess.run(
-            command,
-            shell=True,
-            cwd=resolved_cwd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-    except subprocess.TimeoutExpired:
-        return f"错误：命令超时（{timeout} 秒）"
-    combined = result.stdout
-    if result.stderr:
-        if combined and not combined.endswith("\n"):
-            combined += "\n"
-        combined += "标准错误：\n" + result.stderr
-    # The process exit status is trusted local metadata; output text is not.
-    # Preserve stdout/stderr for diagnosis, but never report a nonzero exit as
-    # an empty successful command. This is not an external side-effect receipt.
-    if result.returncode != 0:
-        return f"错误：命令退出码 {result.returncode}\n" + (_truncate(combined) or "（无输出）")
-    return _truncate(combined) or "（无输出）"
+        ) or "（无输出）"    return execute_local_shell_report(ctx, command, cwd, timeout)[0]
 
 
 def _tool_web_fetch(ctx: ToolContext, url: str) -> str:
