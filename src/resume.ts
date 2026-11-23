@@ -675,7 +675,7 @@ export function cancelSubagentStop(home: string, runId: string, opts?: { by?: st
 }
 
 const USAGE =
-  "用法：nyra subagent <list|show|register|heartbeat|sweep|resume|suspend|stop|confirm-stopped|cancel-stop|steer> [选项]\n" +
+  "用法：nyra subagent <list|show|register|heartbeat|sweep|resume|suspend|stop|confirm-stopped|cancel-stop|steer|preset> [选项]\n" +
   "  list [--status running|resume_pending|suspended|completed|failed|stopped] [--agent <名字>] [--json]\n" +
   "  show <运行 id> [--json]\n" +
   "  register <运行 id> [--agent <名字>] [--workdir <目录>] [--mode readonly|auto] [--auto-resume] [--unattended] [--parent <父运行 id>]\n" +
@@ -686,7 +686,8 @@ const USAGE =
   "  stop <运行 id> --yes [--reason \"<原因>\"] [--by <名字>]   请求停止（沿 parentRunId 递归停子树；在途调用收到取消信号后 abort，停没停下以 confirm-stopped 为准）\n" +
   "  confirm-stopped <运行 id> [--step \"<停在哪一步>\"] [--by <名字>]   确认已停下（只对已停的事实断言，没停不要调）\n" +
   "  cancel-stop <运行 id> [--by <名字>]   取消停止请求（任务板任务若已进 review，等人用 kanban decide 定）\n" +
-  "  steer <运行 id> \"<引导文本>\" --yes [--by <名字>]   排队引导（只确认“已排队”，子 agent 在下一个检查点消费；在跑的工具调用不会被打断）\n";
+  "  steer <运行 id> \"<引导文本>\" --yes [--by <名字>]   排队引导（只确认“已排队”，子 agent 在下一个检查点消费；在跑的工具调用不会被打断）\n" +
+  "  preset <list|show|add|remove|default>   具名预设：list/show/add/remove/default（详见 nyra subagent preset，不给参数时显示用法）\n";
 
 export async function handleSubagent(argv: string[], home: string): Promise<number> {
   const action = argv[0];
@@ -826,6 +827,12 @@ export async function handleSubagent(argv: string[], home: string): Promise<numb
       const steer = queueSteer(resolvedHome, runId, text, { by: get("--by") });
       process.stdout.write(`引导已排队：${steer.id}（子 agent 在下一个检查点消费；在跑的工具调用不会被打断；排队不等于已送达）。\n`);
       return 0;
+    }
+    // G-P2-3：具名预设管理（list/show/add/remove/default），实现在
+    // subagentPresetCli.ts（动态导入，避免 resume.ts 变大）。
+    if (action === "preset") {
+      const { handleSubagentPreset } = await import("./subagentPresetCli.ts");
+      return handleSubagentPreset(argv.slice(1), resolvedHome);
     }
     process.stderr.write(`错误：未知子命令 subagent ${action}\n${USAGE}`);
     return 2;

@@ -45,6 +45,8 @@ maxTurns?: number;
 isolation?: "none" | "worktree";
 tools?: string[];
 model?: string;
+/** G-P2-3：这条线程的子 agent 具名预设，与 delegate 的 preset 同义。 */
+preset?: string;
 /** H-4：结构化输出契约（JSON Schema），与 delegate 的 output_schema 同义。 */
 outputSchema?: Record<string, unknown>;
 /** GROK-1：团队模式下这条线程分派给哪个成员（Soul agent 名）；只认团队成员。 */

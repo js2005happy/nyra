@@ -70,6 +70,10 @@ import {
   runBackendCommand,
   type CommandBackendDeps,
 } from "./commandBackends.ts";
+// G-P2-3：子 agent 具名预设——review 预设的只读 shell 判定在 checkApproval 里
+// 当硬约束用（与 readonly/unattended 同级）。subagentPresets.ts 是叶模块，
+// 只引 node 内置，这里静态导入不会形成循环导入。
+import { isReadOnlyShellCommand, type SubagentPreset } from "./subagentPresets.ts";
 import { discoverPoppy, inspectPoppyIdentity, PermissionLedger } from "./poppy.ts";
 import { assertPublicUrl } from "./net.ts";
 import { isToolErrorResult } from "./repeatGuard.ts";
@@ -153,6 +157,19 @@ export interface DelegateOptions {
   isolation?: "none" | "worktree";
   /** 工具白名单；给了就只保留这些工具（其余对子 Agent 禁用）。 */
   tools?: string[];
+  /**
+   * G-P2-3：子 agent 具名预设名（general-purpose / review / 自定义）。
+   * 不给时按项目默认 → 用户默认 → general-purpose 解析；解析失败（未知
+   * 预设）时委派直接拒绝。预设的 tools 与显式 tools 同时给时取交集
+   * （显式 tools 只能再收窄，不能放宽预设）。
+   */
+  preset?: string;
+  /**
+   * G-P2-3：本次委派会话层预设定（session 层，优先级最高）。只由调用方
+   * 本次显式传；presetDef.name 须与 preset 同名才生效（不同名时忽略，
+   * 以免一张定义被错挂到另一个预设名上）。
+   */
+  presetDef?: SubagentPreset;
   /** 子任务使用的模型（用便宜模型跑搜索类子任务）。 */
   model?: string;
   /** 缺口 3a：并行线程身份（第 index+1 个，共 total 个）——agent.ts 据此把收敛规则写进子任务系统提示。 */
@@ -213,6 +230,14 @@ export interface ToolContext {
   workdir: string;
   mode: string;
   interactive: boolean;
+  /**
+   * G-P2-3：子 agent 具名预设——review 预设的只读 shell。子任务的 ToolContext
+   * 由 delegateDetailed 按预设设（preset.shellReadOnly）。为 true 时 shell
+   * 只接受只读命令，写命令在 checkApproval 里直接拒绝（与 readonly 同级
+   * 硬约束）；想放开写命令须在预设定义里显式把 shellReadOnly 设 false，
+   * 不能靠单次调用绕过。只由 delegateDetailed 注入，根 agent 不设。
+   */
+  shellReadOnly?: boolean;
   /**
    * 缺口 8：无人值守巡查——为 true 时，写操作在 checkApproval 里直接拒绝
    *（连权限规则 allow 都打不开），与 readonly 同级硬约束；读工具不受影响。
@@ -553,13 +578,14 @@ export const TOOL_SCHEMAS: Record<string, unknown>[] = [
   schema("read_skill", "按名读取一个技能的全文（描述、适用时机与完整步骤）。只读，不改文件、不需审批；不存在的技能名会返回可用技能列表",
     { name: { type: "string", description: "技能名，如 debugging" } },
     ["name"]),
-  schema("delegate", "把子任务交给子 agent 执行并返回摘要；每层最多 8 个子 agent（每层独立记账），最多嵌套 2 层（config.delegate_max_depth 可配 1–5），单个子任务最多 12 轮。子 agent 默认不能再委派（flat）：委派时传 orchestrator: true 才允许它再派子 agent（嵌套编排 opt-in）；循环委派（派回已在委派链里的人）直接拒绝。isolation=worktree 时子 agent 在独立 git worktree 里干活，主工作区不受影响；output_schema 给了时子 agent 的最终回答里必须包含符合该 JSON Schema 的 JSON，父级校验、失败给一次有界纠正轮。GROK-1：团队模式下 agent 填成员名（只认团队成员），分派给该成员的 Soul 跑；团队模式不填 agent 会被拒绝。第 1 批 G-P0-4：团队模式下要让成员写某个文件，分派时把文件列进 write_files（写者名额就移交过去了），不给时成员第一次写该文件会被单写者门拦下。第 2 批 G-P1-8：foreign=true 时强制 worktree 隔离（isolation 哪怕传了 none 也改成 worktree），且 worktree 建在具名分支 nyra/foreign/<task> 上，跑完改动留在分支上等机主合入，不自动进主工作区",
+  schema("delegate", "把子任务交给子 agent 执行并返回摘要；每层最多 8 个子 agent（每层独立记账），最多嵌套 2 层（config.delegate_max_depth 可配 1–5），单个子任务最多 12 轮。子 agent 默认不能再委派（flat）：委派时传 orchestrator: true 才允许它再派子 agent（嵌套编排 opt-in）；循环委派（派回已在委派链里的人）直接拒绝。isolation=worktree 时子 agent 在独立 git worktree 里干活，主工作区不受影响；output_schema 给了时子 agent 的最终回答里必须包含符合该 JSON Schema 的 JSON，父级校验、失败给一次有界纠正轮。G-P2-3：preset 填具名子 agent 预设（general-purpose 默认不限、review 只读：写文件与写命令不可用、shell 只接受只读命令；不给时按项目默认 → 用户默认 → general-purpose 解析）。GROK-1：团队模式下 agent 填成员名（只认团队成员），分派给该成员的 Soul 跑；团队模式不填 agent 会被拒绝。第 1 批 G-P0-4：团队模式下要让成员写某个文件，分派时把文件列进 write_files（写者名额就移交过去了），不给时成员第一次写该文件会被单写者门拦下。第 2 批 G-P1-8：foreign=true 时强制 worktree 隔离（isolation 哪怕传了 none 也改成 worktree），且 worktree 建在具名分支 nyra/foreign/<task> 上，跑完改动留在分支上等机主合入，不自动进主工作区",
     {
       task: { type: "string", minLength: 1 },
       max_turns: { type: "integer", default: 6, minimum: 1, maximum: 12 },
       isolation: { type: "string", enum: ["none", "worktree"], default: "none" },
       tools: { type: "array", items: { type: "string" } },
       model: { type: "string" },
+      preset: { type: "string", description: "G-P2-3：子 agent 具名预设（general-purpose / review / 自定义；不给时按项目默认 → 用户默认 → general-purpose 解析；review 是只读预设，写文件与写命令不可用）" },
       output_schema: { type: "object", description: "结构化输出契约（JSON Schema 对象）" },
       agent: { type: "string", description: "团队模式下分派给哪个成员（Soul agent 名）；只认团队成员" },
       orchestrator: { type: "boolean", default: false, description: "H-7：授予这个子 agent 的 orchestrator 角色，允许它再委派（嵌套编排 opt-in）；默认 false，子 agent 是 flat 的" },
@@ -579,6 +605,7 @@ export const TOOL_SCHEMAS: Record<string, unknown>[] = [
             isolation: { type: "string", enum: ["none", "worktree"] },
             tools: { type: "array", items: { type: "string" } },
             model: { type: "string" },
+            preset: { type: "string", description: "G-P2-3：这条线程的子 agent 具名预设，与 delegate 的 preset 同义" },
             output_schema: { type: "object", description: "结构化输出契约（JSON Schema 对象），与 delegate 同义" },
             agent: { type: "string", description: "团队模式下这条线程分派给哪个成员（Soul agent 名），与 delegate 的 agent 同义" },
             orchestrator: { type: "boolean", default: false, description: "H-7：授予这条线程的子 agent 的 orchestrator 角色，允许它再委派，与 delegate 的 orchestrator 同义" },
@@ -979,6 +1006,13 @@ export async function checkApproval(
   }
   if (ctx.mode === "readonly") {
     throw new ToolError(`只读模式下不允许执行 ${toolName}，请用 --mode auto 或 --mode full`);
+  }
+  // G-P2-3：预设的只读 shell——review 预设的子 agent 跑 shell 时，写命令
+  // 在这里直接拒绝（与 readonly 同级硬约束，权限规则 allow 打不开它）。
+  // 判定是启发式（isReadOnlyShellCommand），认不出的命令按写处理；想放开
+  // 写命令须在预设定义里显式把 shellReadOnly 设 false。
+  if (ctx.shellReadOnly === true && toolName === "shell" && opts?.command !== undefined && !isReadOnlyShellCommand(opts.command)) {
+    throw new ToolError(`只读 shell：子 agent 预设拒绝写命令（${opts.command.slice(0, 80)}），写命令须在预设里显式放开 shellReadOnly`);
   }
 
   // 缺口 51：业务动作硬红线——永远禁做档在权限规则之前拦：红线是硬边界，
@@ -3081,6 +3115,8 @@ async function toolDelegateParallel(
       if (tools.length) spec.tools = tools;
     }
     if (typeof raw.model === "string" && raw.model.trim()) spec.model = raw.model.trim();
+    // G-P2-3：并行线程的具名预设（与 delegate 的 preset 同义）。
+    if (typeof raw.preset === "string" && raw.preset.trim()) spec.preset = raw.preset.trim();
     if (raw.output_schema && typeof raw.output_schema === "object" && !Array.isArray(raw.output_schema)) {
       spec.outputSchema = raw.output_schema as Record<string, unknown>;
     }
@@ -3691,6 +3727,8 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
           isolation: args.isolation === "worktree" ? "worktree" : "none",
           ...(Array.isArray(args.tools) ? { tools: (args.tools as unknown[]).map((t) => String(t)).filter(Boolean) } : {}),
           ...(typeof args.model === "string" && args.model.trim() ? { model: args.model.trim() } : {}),
+          // G-P2-3：子 agent 具名预设（名由 delegateDetailed 按 session > project > user > builtin 解析）。
+          ...(typeof args.preset === "string" && args.preset.trim() ? { preset: args.preset.trim() } : {}),
           ...(args.output_schema && typeof args.output_schema === "object" && !Array.isArray(args.output_schema)
             ? { outputSchema: args.output_schema as Record<string, unknown> } : {}),
           // GROK-1：团队分派的成员名（非团队模式忽略；团队模式下门在 delegateDetailed 里校验）。

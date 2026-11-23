@@ -47,6 +47,15 @@ import { buildDashboardSnapshot } from "./dashboard.ts";
 import { runHooks, type RunHooksContext } from "./hooks.ts";
 import type { ReviewerLike } from "./reviewer.ts";
 import { loadConfig } from "./config.ts";
+// G-P2-3：子 agent 具名预设 + 工具限制——subagentPresets.ts 是叶模块，
+// 只引 node 内置，这里静态导入不会形成循环导入。
+import {
+  BUILTIN_PRESETS,
+  loadPresetLayers,
+  resolvePresetName,
+  resolveSubagentPreset,
+  type SubagentPreset,
+} from "./subagentPresets.ts";
 import { buildSoulSection, loadSoul } from "./soul.ts";
 import { getTeam, requireCharter, verifyCharterCompliance, formatCharterCheckLine, ORCHESTRATOR_TOOLS } from "./team.ts";
 import { normalizeGateFile, transferWriteLease, releaseAllWriterLeases } from "./writeGate.ts";
@@ -290,9 +299,15 @@ export interface AgentOptions {
   // 环境变量 / --sandbox 解析出的沙箱配置，透传给 ToolContext（toolShell 解析生效）。
   sandbox?: { backend?: string | null; mode?: import("./sandbox.ts").SandboxMode; allowNet?: boolean } | null;
   /** G-P1-39：命令后端可换——CLI 从 --backend / 环境变量 / 配置文件解析出
-   * 的生效后端 id，透传给 ToolContext（toolShell 的后端分发用）；null/\"local\"
+   * 的生效后端 id，透传给 ToolContext（toolShell 的后端分发用）；null/"local"
    * = 走原有本机路径。 */
   commandBackend?: string | null;
+  /**
+   * G-P2-3：子 agent 具名预设的只读 shell——review 预设的子 Agent 建出来
+   * 时由 delegateDetailed 设（preset.shellReadOnly），透传给 ToolContext
+   *（toolShell 的写命令在 checkApproval 里直接拒绝）。根 agent 不设。
+   */
+  shellReadOnly?: boolean;
   /** P2-2：单次运行的成本上限（美元）；null = 不设上限。 */
   maxCostUsd?: number | null;
   /** P2-2：该模型的单价；null = 未配置，金额未知（不编造）。 */
@@ -603,6 +618,8 @@ export class Agent {
   private repoMapCache: RepoMapCache | undefined = undefined;
   /** 缺口 24：子 agent 独立推理档位；null = 沿用主 provider。 */
   private delegateReasoningEffort: string | null;
+  /** G-P2-3：本 Agent 的只读 shell（review 预设的子 Agent 才设；根 agent 不设）。 */
+  private shellReadOnly: boolean;
   /**
    * 缺口 10：独立审查层用的模型名（仅模型名）与注入的运行实例。
    * reviewerRunnerInstance 为 undefined = 还没建过（懒建一次后缓存；
@@ -748,6 +765,8 @@ export class Agent {
     };
     this.delegateReasoningEffort = typeof opts.delegateReasoningEffort === "string" && opts.delegateReasoningEffort.trim()
       ? opts.delegateReasoningEffort.trim() : null;
+    // G-P2-3：只读 shell 只由 delegateDetailed 按预设设（review 预设的子 Agent）。
+    this.shellReadOnly = opts.shellReadOnly === true;
     this.reviewerModelName = opts.reviewerModel ?? null;
     this.reviewerRunnerOpt = opts.reviewerRunner ?? null;
     this.verifierModelName = opts.verifierModel ?? null;
@@ -887,6 +906,8 @@ export class Agent {
       sandbox: opts.sandbox ?? null,
       // G-P1-39：命令后端可换——生效后端 id 透传给工具层（toolShell 后端分发用）。
       commandBackend: opts.commandBackend ?? null,
+      // G-P2-3：只读 shell 透传给工具层（review 预设的子 Agent 才设）。
+      shellReadOnly: this.shellReadOnly,
     });
   }
 
@@ -2762,17 +2783,66 @@ export class Agent {
 
     const notes: string[] = [];
 
+    // G-P2-3：子 agent 具名预设——名按 session（本次委派参数）> project
+    // （<workdir>/.nyra/subagent-presets.json 的 defaultPreset）> user
+    // （~/.nyra/subagent-presets.json 的 defaultPreset）> builtin 解析；
+    // 定义来源优先级 session（opts.presetDef）> project > user > builtin。
+    // 解析失败（未知预设 / 默认预设指到不存在的名字）时直接拒绝这次委派
+    //（fail-closed：用户明明要了限制，静默跑 unrestricted 等于违反意图）。
+    // 预设文件读坏只记备注、不破坏委派（加载层损坏时按空处理，见
+    // loadPresetFile；defaultPreset 仍按解析失败处理）。
+    const allToolNames = TOOL_SCHEMAS
+      .map((s) => (s as { function?: { name?: string } }).function?.name)
+      .filter((n): n is string => Boolean(n));
+    const presetLayers = (() => {
+      try {
+        return loadPresetLayers(this.home, this.workdir, allToolNames);
+      } catch {
+        return { user: { presets: {}, defaultPreset: null, errors: [] }, project: { presets: {}, defaultPreset: null, errors: [] } };
+      }
+    })();
+    for (const e of [...presetLayers.user.errors, ...presetLayers.project.errors]) notes.push(`预设文件提示：${e}`);
+    const presetName = resolvePresetName(opts.preset, presetLayers);
+    // 预设名来自哪一层（审计备注用；定义来源另记在 presetSource 里）。
+    const presetNameSource = typeof opts.preset === "string" && opts.preset.trim()
+      ? "本次委派" : presetLayers.project.defaultPreset ? "项目默认" : presetLayers.user.defaultPreset ? "用户默认" : "内置默认";
+    const sessionDefs: Record<string, SubagentPreset> = {};
+    if (opts.presetDef && typeof opts.presetDef.name === "string") {
+      if (opts.presetDef.name === presetName) sessionDefs[opts.presetDef.name] = opts.presetDef;
+      else notes.push(`忽略本次会话层预设定：它的名字是 ${opts.presetDef.name}，与本次预设 ${presetName} 不同名`);
+    }
+    const presetResolved = resolveSubagentPreset(presetName, {
+      session: sessionDefs, project: presetLayers.project.presets, user: presetLayers.user.presets,
+    });
+    if (!presetResolved.ok) return delegateFailed(`错误：${presetResolved.error}`);
+    const preset = presetResolved.preset;
+    const presetSource = presetResolved.source;
+    const presetIsRestrictive = presetName !== "general-purpose" || presetSource !== "builtin";
+    if (presetIsRestrictive) {
+      notes.push(`子 agent 预设：${presetName}（定义来源 ${presetSource}，名来自${presetNameSource}${preset.description ? `：${preset.description}` : ""}）`);
+    }
+    // 预设的 maxTurns 是上限（只往下夹，不往上放）。
+    if (typeof preset.maxTurns === "number" && maxTurns > preset.maxTurns) {
+      notes.push(`预设 ${presetName} 把最大轮数夹到 ${preset.maxTurns} 轮（原请求 ${maxTurns} 轮）`);
+      maxTurns = preset.maxTurns;
+    }
+
     // S4-1：工具白名单。子 Agent 默认继承父级工具集；给了 tools 就只保留名单内的，
     // 其余全部禁用——这样"只读调研"这类子任务拿不到 shell / 写文件能力。
     // 第 1 批 G-P0-5：参谋长的编排者限制不继承——那是参谋长这个角色的，
     // 成员要拿回完整工具集（显式传的 disabledTools 照常继承，只去掉
     // orchestratorDisabled 那部分）。
+    // G-P2-3：预设的 tools 与显式 tools 同时给时取交集——显式 tools 只能
+    // 再收窄，不能放宽预设。
     let disabledTools = [...this.disabledTools].filter((n) => !this.orchestratorDisabled.has(n));
-    if (opts.tools?.length) {
-      const allowed = new Set(opts.tools.map((t) => t.trim()).filter(Boolean));
-      const allNames = TOOL_SCHEMAS
-        .map((s) => (s as { function?: { name?: string } }).function?.name)
-        .filter((n): n is string => Boolean(n));
+    const presetTools = preset.tools?.length ? [...preset.tools] : undefined;
+    const explicitTools = opts.tools?.length ? opts.tools.map((t) => t.trim()).filter(Boolean) : undefined;
+    const effectiveTools = presetTools && explicitTools
+      ? presetTools.filter((t) => explicitTools.includes(t))
+      : (presetTools ?? explicitTools);
+    if (effectiveTools?.length) {
+      const allowed = new Set(effectiveTools);
+      const allNames = allToolNames;
       const unknown = [...allowed].filter((t) => !allNames.includes(t));
       if (unknown.length) notes.push(`忽略未知工具名：${unknown.join(", ")}`);
       for (const name of allNames) if (!allowed.has(name)) disabledTools.push(name);
@@ -2783,8 +2853,11 @@ export class Agent {
     // 并把"为什么没生效"写进结果，不静默假装切换成功。
     let provider = this.provider;
     // 子任务默认走便宜模型（config.delegate_model）；调用方显式给了 model 则以显式为准。
-    let effectiveModel = opts.model ?? this.auxModels.delegate;
-    if (!opts.model && this.auxModels.delegate) {
+    // G-P2-3：预设的 model 在显式 model 与 delegate_model 之间（显式优先于预设）。
+    let effectiveModel = opts.model ?? preset.model ?? this.auxModels.delegate;
+    if (!opts.model && preset.model) {
+      notes.push(`子任务模型：${preset.model}（来自预设 ${presetName}）`);
+    } else if (!opts.model && this.auxModels.delegate) {
       notes.push(`子任务默认模型：${this.auxModels.delegate}（来自 delegate_model）`);
     }
     if (effectiveModel) {
@@ -2916,6 +2989,12 @@ export class Agent {
     if (isForeign) {
       childSystemInstructions += `\n（你是外来 agent 派来的子任务：你在隔离分支 ${foreignBranch} 上干活，改动留在分支上，跑完由机主决定合不合入；不要尝试合并分支、不要碰主工作区以外的目录。）`;
     }
+    // G-P2-3：预设写进子任务的系统提示——子级要知道自己被限住了（否则它会
+    // 反复尝试被禁的写操作，白白烧轮数）；只记预设名与限制摘要，不记任务原文。
+    if (presetIsRestrictive) {
+      const toolSummary = preset.tools?.length ? `可用工具只有 ${preset.tools.join("、")}` : "工具集沿用父级";
+      childSystemInstructions += `\n（本次委派使用子 agent 预设 ${presetName}：${toolSummary}；${preset.shellReadOnly === true ? "shell 只接受只读命令，写命令会被直接拒绝；" : ""}不要尝试超出预设的操作，被拒的操作不会因为多试几次就放行。）`;
+    }
     const child = new Agent(provider, {
       workdir: childWorkdir,
       mode: this.mode,
@@ -2983,6 +3062,8 @@ export class Agent {
       sandbox: this.ctx.sandbox ?? null,
       // G-P1-39：子 agent 继承父级的命令后端（后端是整机执行策略，不是单轮选择）。
       commandBackend: this.ctx.commandBackend ?? null,
+      // G-P2-3：review 预设的子 agent 拿只读 shell（写命令在 checkApproval 里直接拒绝）。
+      shellReadOnly: preset.shellReadOnly === true,
       // 缺口 29：月度上限子任务同样受限（没有豁免口子）。子任务的“本月已花”
       // = 父级账本口径 + 父级本次运行进行中的花费；父级花不出来（未计价）
       // 时子任务同样算不出，不假装封顶。
@@ -3109,6 +3190,20 @@ export class Agent {
       try {
         // H-7：启动事件记下子级的层级与本层预算剩余（每层独立记账的可见落点）。
         this.emit("delegate_start", { task_id: taskId, model: child.provider.model ?? null, max_turns: maxTurns, depth: this.delegateDepth + 1, layer_remaining: this.delegateBudget.remaining(this.delegateDepth) });
+        // G-P2-3：预设进事件链（只记预设名、定义来源与生效后的工具限制
+        // 摘要，不记任务原文）；默认 general-purpose（builtin、无额外限制）
+        // 不记，没什么可审计的。tools 是生效后的工具表（预设 tools 与显式
+        // tools 取交集后的结果；不限时为空字符串）。
+        if (presetIsRestrictive) {
+          try {
+            this.emit("delegate_preset_applied", {
+              task_id: taskId,
+              preset: presetName,
+              source: presetSource,
+              tools: (effectiveTools ?? preset.tools ?? []).join(","),
+            });
+          } catch { /* 观察器故障绝不破坏主流程 */ }
+        }
       } catch { /* 观察器故障绝不破坏主流程 */ }
       const vcfg = this.verifierCfg();
       const reworkOn = vcfg.enabled && vcfg.rework;
@@ -3464,6 +3559,8 @@ export class Agent {
           isolation: spec.isolation,
           ...(Array.isArray(spec.tools) ? { tools: spec.tools } : {}),
           ...(typeof spec.model === "string" && spec.model.trim() ? { model: spec.model.trim() } : {}),
+          // G-P2-3：并行线程的具名预设（与 delegate 的 preset 同义）。
+          ...(typeof spec.preset === "string" && spec.preset.trim() ? { preset: spec.preset.trim() } : {}),
           ...(spec.outputSchema ? { outputSchema: spec.outputSchema } : {}),
           // GROK-1：并行线程的成员分派（没给 agent 时团队模式下照样被门拒绝）。
           ...(typeof spec.agent === "string" && spec.agent.trim() ? { agent: spec.agent.trim() } : {}),

@@ -689,6 +689,8 @@ media_ingested: ["host", "title_hash", "duration_seconds", "bytes", "source", "t
 // （深度上限 / flat / 循环 / 本层预算）的拒绝记录——哪个任务、为什么、
 // 哪一层。只记元数据，不记任务文本。
 delegate_start: ["task_id", "model", "max_turns", "depth", "layer_remaining"],
+// G-P2-3：委派时用的具名预设（只记预设名、定义来源与生效后的工具限制摘要，不记任务原文）。
+delegate_preset_applied: ["task_id", "preset", "source", "tools"],
 delegate_end: ["task_id", "ok", "turns", "spent_usd", "verification"],
 delegate_rejected: ["task_id", "reason", "depth"],
 llm_span: ["model", "duration_ms", "prompt_tokens", "completion_tokens", "total_tokens", "ok", "trace_id", "span_id"],

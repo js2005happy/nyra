@@ -195,7 +195,7 @@ nyra golden <add|list|show|remove|run|rescore>   Golden 测试集（G-2）：固
 nyra "任务" --contract <契约 id>   本次运行挂上已激活的交付契约，收尾逐项打分进运行报告
 nyra kanban <create|list|show|start|fail|review|decide|verify|done|reset|remove|tick|sweep>   持久任务板：任务是账本里的一行，崩溃不丢、熔断进 blocked、完成须附验证证据（详见 docs/kanban.md）
 nyra goal <create|list|show|add-item|start-item|verify-item|complete|pause|resume|cancel|instruct|link|split>   长目标对象：目标陈述 + 动态进度清单 + 逐项验证，全部通过才标完成；中途加指令不丢目标，可暂停/恢复/取消（详见 docs/goal-object.md）
-nyra subagent <list|show|register|heartbeat|sweep|resume|suspend|stop|confirm-stopped|cancel-stop|steer>   崩溃自续：子 agent 持久行 + 心跳检查点 + 启动扫荡 + 先验状态再续跑 + 单点停止 + 单点引导（详见 docs/kanban.md、docs/roster.md 与 docs/steer-schema.md）
+nyra subagent <list|show|register|heartbeat|sweep|resume|suspend|stop|confirm-stopped|cancel-stop|steer|preset>   崩溃自续：子 agent 持久行 + 心跳检查点 + 启动扫荡 + 先验状态再续跑 + 单点停止 + 单点引导；preset 管具名预设（详见 docs/kanban.md、docs/roster.md、docs/steer-schema.md 与 docs/subagent-presets.md）
 nyra roster <list|show>   实时花名册：每个子 agent 一行——状态 + 已耗时 + 当前动作（只读快照，不花 token；token/费用默认不显示，详见 docs/roster.md）
 nyra side-effects <list|show|record|mark|recover>   先存后做的副作用队列：执行前先落库，重启按年龄恢复、带 recovery note（详见 docs/kanban.md）
 nyra heartbeat <add|list|remove|enable|disable|run|wake|check-script|seen-clear|commitments>   静默巡查：无事安静、有发现先记证据再写收件箱；重复异常指纹去重只通知一次；本地脚本预检（零 Token）与唤醒主控默认关；推断承诺须用户确认一次、过期自动失效（详见 docs/heartbeat.md）
@@ -212,6 +212,7 @@ nyra checkpoint <list|show|history|update|replay|store>   步级检查点 + 时�
 nyra interrupt <list|show|respond|edit|resume>   结构化人机回环（G-P1-41）：工作流在配了 interrupt_before/after 的步骤前后停住，人回 accept/ignore/respond/edit 再原地续跑；只认 fixed 形态顶层步骤（详见 docs/interrupts.md）
 nyra intervention <list|add|remove|enable|disable|on|off|log|test>   运行时消息拦截（G-P2-1）：群聊 / A2A / AG-UI 入口对方 agent 发来的消息先过拦截器，可记日志、改写、丢弃；默认只记日志，drop / rewrite 须机主显式 enable，机主消息永远不拦截（详见 docs/interventions.md）
 nyra admission <log|show|who-approved|policy-history|export>   企业级准入账本（G-P2-2）：好友批准、进圈/离圈、策略变更、token 发放/吊销都记进同一本只追加账本，只记元数据与指纹，不记 token 原文（详见 docs/admission.md）
+nyra delegate "<任务>" [--preset <预设名>] [--max-turns <1-12>] [--model <模型>] [--agent <成员>] [--json]   一次性委派：派一个子 agent 跑任务并打印摘要；--preset 指定具名预设（review 是只读预设），不给时按项目默认 → 用户默认 → general-purpose 解析（详见 docs/subagent-presets.md）
 nyra template <list|show|builtin|import|trial|activate|run|dry-run|remove|publish|install>   业务流程模板库（缺口 46）：流程 DSL + 连接器 + 验收标准 + 试跑数据，激活前须真实数据试跑 + 人工确认，随机器人市场分发（详见 docs/templates.md）
 nyra script check <文件> [--language python|javascript|lua|php]   判定一个脚本纯不纯（白名单静态分析）：纯返回 0，不纯返回 1
 nyra script preauth <list|grant|revoke> --workflow <名字>   脚本摘要预授权：激活时自动钉纯脚本摘要，内容一改授权失效；只在例行里有效（详见 docs/script-purity.md）
@@ -353,7 +354,7 @@ nyra golden <add|list|show|remove|run|rescore>   Golden test set (G-2): fixed in
 nyra "<task>" --contract <contract id>   attach an activated delivery contract to this run; item scores go into the run report
 nyra kanban <create|list|show|start|fail|review|decide|verify|done|reset|remove|tick|sweep>   durable task board: tasks are ledger rows, crash-safe, circuit-breaker to blocked, completion needs verification evidence (see docs/kanban.md)
 nyra goal <create|list|show|add-item|start-item|verify-item|complete|pause|resume|cancel|instruct|link|split>   long goal object: goal statement + live checklist + per-item verification, all must pass before completion; mid-course instructions don't lose the goal, pause/resume/cancel supported (see docs/goal-object.md)
-nyra subagent <list|show|register|heartbeat|sweep|resume|suspend|stop|confirm-stopped|cancel-stop|steer>   crash resume: persistent sub-agent rows + heartbeat checkpoints + boot sweep + verify-before-resume + per-child stop + per-child steer (see docs/kanban.md, docs/roster.md and docs/steer-schema.md)
+nyra subagent <list|show|register|heartbeat|sweep|resume|suspend|stop|confirm-stopped|cancel-stop|steer|preset>   crash resume: persistent sub-agent rows + heartbeat checkpoints + boot sweep + verify-before-resume + per-child stop + per-child steer; preset manages named presets (see docs/kanban.md, docs/roster.md, docs/steer-schema.md and docs/subagent-presets.md)
 nyra roster <list|show>   live roster: one line per sub-agent — status + elapsed + current action (read-only snapshot, no tokens spent; token/cost hidden by default, see docs/roster.md)
 nyra side-effects <list|show|record|mark|recover>   store-before-do side-effect queue: recorded before execution, recovered oldest-first with a recovery note (see docs/kanban.md)
 nyra heartbeat <add|list|remove|enable|disable|run|wake|check-script|seen-clear|commitments>   silent patrol: quiet when nothing is wrong, findings go to evidence first then inbox; repeat anomalies are fingerprinted and notified once; local script pre-checks (zero-token) and supervisor wake are off by default; inferred commitments need one user confirmation and auto-expire (see docs/heartbeat.md)
@@ -370,6 +371,7 @@ nyra checkpoint <list|show|history|update|replay|store>   step checkpoints + tim
 nyra interrupt <list|show|respond|edit|resume>   structured human-in-the-loop (G-P1-41): a workflow pauses before/after steps that carry interrupt_before/after; a human answers accept/ignore/respond/edit and resumes in place; only fixed-mode top-level steps (see docs/interrupts.md)
 nyra intervention <list|add|remove|enable|disable|on|off|log|test>   runtime message interception (G-P2-1): messages from other agents entering via group chat / A2A / AG-UI pass an interceptor first; log, rewrite or drop; log-only by default, drop / rewrite need the owner to enable them explicitly, owner messages are never intercepted (see docs/interventions.md)
 nyra admission <log|show|who-approved|policy-history|export>   enterprise admission ledger (G-P2-2): friend approvals, circle join/leave, policy changes and token issue/revoke all go into one append-only ledger; metadata and fingerprints only, no token plaintext (see docs/admission.md)
+nyra delegate "<task>" [--preset <preset>] [--max-turns <1-12>] [--model <model>] [--agent <member>] [--json]   one-off delegation: run a sub-agent on a task and print the summary; --preset picks a named preset (review is read-only), otherwise resolved as project default, then user default, then general-purpose (see docs/subagent-presets.md)
 nyra template <list|show|builtin|import|trial|activate|run|dry-run|remove|publish|install>   business process template library (gap 46): workflow DSL + connectors + acceptance criteria + trial data, distributed through the robot market; activation needs a real-data trial run + human confirmation (see docs/templates.md)
 nyra script check <file> [--language python|javascript|lua|php]   judge whether a script is pure (allowlist static analysis): exit 0 if pure, 1 if not
 nyra script preauth <list|grant|revoke> --workflow <name>   script digest pre-authorization: pure script digests are pinned at activation, a changed script voids the grant; routine-only (see docs/script-purity.md)
@@ -5968,6 +5970,66 @@ function makeInteractiveVoiceReview(): (text: string) => Promise<VoiceReviewResu
 export { attachVoiceInput };
 
 // ---- 一次性任务 ----
+/**
+ * G-P2-3：`nyra delegate "<任务>" [--preset <预设名>] [--max-turns N]
+ * [--model <模型>] [--agent <成员>] [--json]`——一次性委派：建一个父级
+ * Agent（只当委派人，不自己跑任务），调 delegateDetailed 派一个子 agent
+ * 跑任务并打印摘要。--preset 不给时按项目默认 → 用户默认 →
+ * general-purpose 解析（delegateDetailed 里做）；解析失败时子任务不启动，
+ * 直接报错退出码 1。调模型花真钱，和其他一次性运行同款。
+ */
+async function handleDelegateCommand(args: CliArgs, home: string): Promise<number> {
+  const subArgs = args.subArgs ?? [];
+  const get = (flag: string): string | undefined => {
+    const i = subArgs.indexOf(flag);
+    return i >= 0 ? subArgs[i + 1] : undefined;
+  };
+  const positional = subArgs.filter((a) => !a.startsWith("--"));
+  const task = get("--task") ?? positional[0] ?? "";
+  if (!task.trim()) {
+    process.stderr.write("错误：用法：nyra delegate \"<任务>\" [--preset <预设名>] [--max-turns <1-12>] [--model <模型>] [--agent <成员>] [--json]\n");
+    return 2;
+  }
+  const maxTurnsRaw = get("--max-turns");
+  let maxTurns = 6;
+  if (maxTurnsRaw !== undefined) {
+    const n = Number(maxTurnsRaw);
+    if (!Number.isInteger(n) || n < 1 || n > 12) {
+      process.stderr.write("错误：--max-turns 须是 1–12 的整数\n");
+      return 2;
+    }
+    maxTurns = n;
+  }
+  const preset = get("--preset");
+  const model = get("--model");
+  const agentName = get("--agent");
+  const asJson = subArgs.includes("--json");
+  try {
+    const built = await buildAgent({ ...args, workdir: args.workdir, task: "" }, { interactive: true });
+    const { agent } = built;
+    const result = await agent.delegateDetailed(task.trim(), maxTurns, {
+      ...(preset ? { preset } : {}),
+      ...(model ? { model } : {}),
+      ...(agentName ? { agent: agentName } : {}),
+    });
+    if (asJson) {
+      process.stdout.write(JSON.stringify({
+        ok: result.ok, text: result.text, spent_usd: result.spentUsd ?? null, model: result.model,
+      }, null, 2) + "\n");
+    } else {
+      process.stdout.write(result.text + "\n");
+      if (!result.ok) {
+        process.stderr.write(`子任务失败（模型：${result.model ?? "未知"}，已花：${result.spentUsd === null ? "未知" : `$${result.spentUsd.toFixed(4)}`}）。\n`);
+        return 1;
+      }
+    }
+    return result.ok ? 0 : 1;
+  } catch (err: unknown) {
+    process.stderr.write(`错误：${err instanceof Error ? err.message : String(err)}\n`);
+    return 1;
+  }
+}
+
 /** GROK-1：`nyra team ...`——团队模式的 CLI 入口。create/list/show/add/remove/
  * handover 是纯本地操作（不建 agent、不烧 token）；只有 dispatch 跑模型：
  * 建一个参谋长 Agent（Soul = 参谋长、teamId = 团队、teamRole = chief，工作
@@ -7214,6 +7276,8 @@ export async function main(argv: string[]): Promise<number> {
     const { handleAdmission } = await import("./admissionCli.ts");
     return handleAdmission(args.subArgs ?? [], home);
   }
+  // G-P2-3：一次性委派（nyra delegate "<任务>" --preset review）。
+  if (args.subcommand === "delegate") return handleDelegateCommand(args, home);
   if (args.subcommand === "kb" || args.subcommand === "knowledge") return knowledgeMain(args.subArgs ?? []);
   if (args.subcommand === "plugin") return handlePlugin(args.subArgs ?? [], home);
   if (args.subcommand === "creator") return handleCreator(args.subArgs ?? [], home, resolve(args.workdir));
