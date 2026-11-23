@@ -165,7 +165,7 @@ nyra "任务" --image <图片路径> [--image ...] [--video <视频路径或链�
 nyra --voice <音频路径> ["任务"]   语音指挥：先转文字再当任务跑（wav/mp3/m4a/ogg/flac；本地 whisper 优先、云端兜底，详见 docs/voice.md）
 nyra "任务" --speak   任务跑完后把结果读出来（默认关；只读结果前 500 字）
 nyra voice <status|speak <文字>|enable-tts|disable-tts>   语音：看配置与可用性、读一段文字、开关自动回读（详见 docs/voice.md）
-nyra voice call <start|answer|decline|end|status|list|segment|confirm>   实时语音通话：建通话、喂音频段落转写、可选回读（本地 whisper 优先，云端默认关；详见 docs/voice.md）
+nyra voice call <start|answer|decline|end|status|list|segment|confirm|note|notes|hooks>   实时语音通话：建通话、喂音频段落转写、可选回读（本地 whisper 优先，云端默认关；详见 docs/voice.md）
 nyra video <call|signal|ice>   视频通话 + 按需视觉采样：信令 + TURN + ICE 直连传输，帧按需看（本地优先，云端默认关；详见 docs/video-call.md）
 --max-cost <美元> --monthly-max-cost <美元>   单次 / 月度支出上限（超限即停；月度默认不设上限）
 nyra                                                        进入交互模式（REPL）
@@ -244,7 +244,7 @@ nyra agui <register|list|show|link|connect|disconnect|send|exec|accept-write|rev
 nyra screen <watch|activity|status|takeover|handover> <电脑 id>   缺口 50：只读看屏（实时画面 + 活动列表，帧指纹不记帧内容）与接管（take the wheel，须确认；接管期间 Bot 暂停、交还后从挂起点继续，全程记审计）；画面里密码/验证码/卡号自动打码（详见 docs/bot-screen.md）
 nyra computer <status|grant|grants|blocklist|activity|display|require>   G-P1-35：真机电脑操作守卫——禁碰窗口名单、可撤销授权、虚拟桌面 Xvfb、每一次动作留痕（详见 docs/computer-guard.md）
 nyra voice <status|speak <文字>|enable-tts|disable-tts>   语音指挥：看配置与可用性、读一段文字、开关自动回读（详见 docs/voice.md）
-nyra voice call <start|answer|decline|end|status|list|segment|confirm>   实时语音通话：建通话、喂音频段落转写、可选回读（本地 whisper 优先，云端默认关；详见 docs/voice.md）
+nyra voice call <start|answer|decline|end|status|list|segment|confirm|note|notes|hooks>   实时语音通话：建通话、喂音频段落转写、可选回读（本地 whisper 优先，云端默认关；详见 docs/voice.md）
 nyra video <call|signal|ice>   视频通话 + 按需视觉采样：信令 + TURN + ICE 直连传输，帧按需看（本地优先，云端默认关；详见 docs/video-call.md）
 nyra export --format docx|xlsx|pptx --from <内容 JSON> --out <路径>   成品导出：结构化内容写成可编辑的真办公文件（详见 docs/office.md）
 nyra media <status|enable|disable|ingest <链接> [--out <路径>]|setup|scope ...>   媒体抓取：公开视频先取字幕、没有再本地转写（默认关，须先 nyra media enable；详见 docs/media-ingest.md）
@@ -314,7 +314,7 @@ nyra "task" --image <image path> [--image ...] [--video <video path or URL>]   r
 nyra --voice <audio path> ["task"]   voice command: transcribe first, then run it as the task (wav/mp3/m4a/ogg/flac; local whisper.cpp first, cloud STT fallback, see docs/voice.md)
 nyra "task" --speak   read the result aloud after the run (off by default; only the first 500 chars)
 nyra voice <status|speak <text>|enable-tts|disable-tts>   voice: show config and availability, speak a text, toggle auto readback (see docs/voice.md)
-nyra voice call <start|answer|decline|end|status|list|segment|confirm>   live voice call: start a call, feed audio segments to transcribe, optional readback (local whisper.cpp first, cloud off by default; see docs/voice.md)
+nyra voice call <start|answer|decline|end|status|list|segment|confirm|note|notes|hooks>   live voice call: start a call, feed audio segments to transcribe, optional readback (local whisper.cpp first, cloud off by default; see docs/voice.md)
 nyra video <call|signal|ice>   video call + on-demand frame sampling: signaling + TURN + ICE direct transport, frames seen on demand (local first, cloud off by default; see docs/video-call.md)
 --max-cost <USD> --monthly-max-cost <USD>   per-run / monthly spend caps (hard stop when exceeded; monthly cap unset by default)
 nyra                                                        interactive mode (REPL)
@@ -394,7 +394,7 @@ nyra agui <register|list|show|link|connect|disconnect|send|exec|accept-write|rev
 nyra screen <watch|activity|status|takeover|handover> <computer id>   gap 50: read-only screen watch (live frame + activity list, frame fingerprint without frame content) and takeover (take the wheel, needs confirmation; the Bot pauses during takeover and resumes from where it stopped, fully audited); passwords / verification codes / card numbers are masked automatically (see docs/bot-screen.md)
 nyra computer <status|grant|grants|blocklist|activity|display|require>   G-P1-35: guard for real-computer operation — blocked-window list, revocable grants, Xvfb virtual display, every action audited (see docs/computer-guard.md)
 nyra voice <status|speak <text>|enable-tts|disable-tts>   voice commands: show config and availability, speak a text, toggle auto readback (see docs/voice.md)
-nyra voice call <start|answer|decline|end|status|list|segment|confirm>   live voice call: start a call, feed audio segments to transcribe, optional readback (local whisper.cpp first, cloud off by default; see docs/voice.md)
+nyra voice call <start|answer|decline|end|status|list|segment|confirm|note|notes|hooks>   live voice call: start a call, feed audio segments to transcribe, optional readback (local whisper.cpp first, cloud off by default; see docs/voice.md)
 nyra video <call|signal|ice>   video call + on-demand frame sampling: signaling + TURN + ICE direct transport, frames seen on demand (local first, cloud off by default; see docs/video-call.md)
 nyra export --format docx|xlsx|pptx --from <content JSON> --out <path>   export a finished office file from structured content (see docs/office.md)
 nyra media <status|enable|disable|ingest <url> [--out <path>]|setup|scope ...>   media ingest: public videos, subtitles first, local transcription fallback (off by default, run nyra media enable first; see docs/media-ingest.md)

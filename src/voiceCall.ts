@@ -34,6 +34,12 @@ import {
 } from "./voice.ts";
 import type { UsageSnapshot } from "./usage.ts";
 import { localRealtimeVoiceProvider, resolveRealtimeVoiceProvider } from "./realtimeVoice.ts";
+// G-P1-36 第二批：通话钩子层是叶模块（只引 node 内置），静态 import 不成环。
+import {
+  dispatchVoiceHook,
+  type VoiceHookEvent,
+  type VoiceHookFailure,
+} from "./voiceHooks.ts";
 // 第 1 批 G-P0-1：只 import 类型（编译时擦掉）——videoCall.ts 静态 import
 // 了本文件，值 import 会形成运行时循环；WebRtcTransport 的值在
 // startVoiceCall / runVoiceSession 里函数内动态 import。
@@ -297,6 +303,14 @@ export interface VoiceCallSegment {
   replyCostUsd: number | null;
 }
 
+/** 通话里的一条笔记（通话中记下的要点，只记文字本身，不记转写原文）。 */
+export interface VoiceCallNote {
+  id: string;
+  at: string;
+  /** 笔记正文（1–500 字，机主手写）。 */
+  text: string;
+}
+
 /** 一通电话（传输层本批是本机回环，见文件头诚实边界）。 */
 export interface VoiceCall {
   id: string;
@@ -307,6 +321,8 @@ export interface VoiceCall {
   startedAt: string;
   endedAt: string | null;
   segments: VoiceCallSegment[];
+  /** 通话笔记（没记过时不出现；只记机主手写的要点，不记转写原文）。 */
+  notes?: VoiceCallNote[];
   /** 通话累计 STT 秒数（有时长的段才计）。 */
   sttSeconds: number;
   /** 通话累计回读字数。 */
@@ -415,6 +431,26 @@ function mirrorEvent(home: string, runId: string | null, type: string, fields: R
   }
 }
 
+// ---- 通话钩子（G-P1-36 第二批）：生命周期事件发生时调已注册的钩子 ----
+//
+// 钩子只读元数据，不拿转写原文与音频；钩子抛错只记审计与事件，通话继续。
+// 分发是同步的（钩子回调必须是同步的，想做异步活自己排队，通话不等它）。
+function emitVoiceHook(home: string, runId: string | null, callId: string, event: Omit<VoiceHookEvent, "callId" | "at">): void {
+  try {
+    dispatchVoiceHook(home, { ...event, callId, at: nowIso() }, {
+      reportFailure: (failure: VoiceHookFailure) => {
+        appendVoiceCallAudit(home, {
+          op: "hook_failed", call_id: callId, hook: failure.hook,
+          kind: failure.kind, error: failure.error,
+        });
+        mirrorEvent(home, runId, "voice_call_hook_failed", {
+          call_id: callId, hook: failure.hook, kind: failure.kind, error: failure.error,
+        });
+      },
+    });
+  } catch { /* 分发本身绝不破坏通话 */ }
+}
+
 function getCall(store: VoiceCallStore, id: string): VoiceCall {
   const call = store.calls.find((c) => c.id === id);
   if (!call) throw new VoiceCallError(`找不到通话 ${id}`);
@@ -507,6 +543,8 @@ export async function startVoiceCall(home: string, opts: {
   }
   appendVoiceCallAudit(home, { op: "started", call_id: call.id, agent, peer, transport: kind });
   mirrorEvent(home, call.runId, "voice_call_started", { call_id: call.id, agent, peer, transport: kind });
+  // G-P1-36 第二批：钩子只读元数据（通话 id、agent、对方、传输层）。
+  emitVoiceHook(home, call.runId, call.id, { kind: "call_started", agent, peer, transport: kind });
   return call;
 }
 
@@ -519,6 +557,7 @@ export function answerVoiceCall(home: string, callId: string): VoiceCall {
   saveVoiceCallStore(home, store);
   appendVoiceCallAudit(home, { op: "answered", call_id: call.id });
   mirrorEvent(home, call.runId, "voice_call_answered", { call_id: call.id });
+  emitVoiceHook(home, call.runId, call.id, { kind: "call_answered" });
   return call;
 }
 
@@ -533,6 +572,7 @@ export function declineVoiceCall(home: string, callId: string): VoiceCall {
   stopVoiceCallTransport(call.id);
   appendVoiceCallAudit(home, { op: "declined", call_id: call.id });
   mirrorEvent(home, call.runId, "voice_call_declined", { call_id: call.id });
+  emitVoiceHook(home, call.runId, call.id, { kind: "call_declined" });
   return call;
 }
 
@@ -556,6 +596,11 @@ export function endVoiceCall(home: string, callId: string): VoiceCall {
   mirrorEvent(home, call.runId, "voice_call_ended", {
     call_id: call.id, duration_seconds: duration, segments: call.segments.length,
     stt_seconds: call.sttSeconds, tts_chars: call.ttsChars, cost_usd: call.costUsd,
+    held: call.segments.filter((s) => s.status === "held").length,
+  });
+  emitVoiceHook(home, call.runId, call.id, {
+    kind: "call_ended", durationSeconds: duration, segments: call.segments.length,
+    sttSeconds: call.sttSeconds, ttsChars: call.ttsChars, costUsd: call.costUsd,
     held: call.segments.filter((s) => s.status === "held").length,
   });
   return call;
@@ -677,6 +722,7 @@ export async function feedCallSegment(opts: {
         saveVoiceCallStore(opts.home, store);
         appendVoiceCallAudit(opts.home, { op: "transcribed", call_id: call.id, segment_id: segId, vad: "silence", seconds: input.durationSeconds, chars: 0, engine: null, cost_usd: 0 });
         mirrorEvent(opts.home, call.runId, "voice_call_transcribed", { call_id: call.id, segment_id: segId, vad: "silence", seconds: input.durationSeconds, chars: 0, engine: "", cost_usd: 0, text_hash: "" });
+        emitVoiceHook(opts.home, call.runId, call.id, { kind: "segment_skipped_silence", segmentId: segId, vad: "silence", seconds: input.durationSeconds });
         return { call, segment, transcript: null, skippedSilence: true, held: false, replyPath: null, replyTruncated: false };
       }
     }
@@ -740,9 +786,14 @@ export async function feedCallSegment(opts: {
     chars: text.length, engine, cost_usd: costUsd, text_hash: textHash,
     realtime_provider: providerName,
   });
+  emitVoiceHook(opts.home, call.runId, call.id, {
+    kind: "segment_transcribed", segmentId: segId, vad: base.vad, seconds,
+    chars: text.length, engine, costUsd, textHash, realtimeProvider: providerName,
+  });
   if (intent) {
     appendVoiceCallAudit(opts.home, { op: "blocked", call_id: call.id, segment_id: segId, reason: intent, text_hash: textHash });
     mirrorEvent(opts.home, call.runId, "voice_call_blocked", { call_id: call.id, segment_id: segId, reason: intent, text_hash: textHash });
+    emitVoiceHook(opts.home, call.runId, call.id, { kind: "segment_blocked", segmentId: segId, reason: intent, textHash });
     return { call, segment, transcript: text, skippedSilence: false, held: true, replyPath: null, replyTruncated: false };
   }
 
@@ -774,6 +825,7 @@ export async function feedCallSegment(opts: {
     saveVoiceCallStore(opts.home, store);
     appendVoiceCallAudit(opts.home, { op: "spoken", call_id: call.id, segment_id: segId, chars: out.chars, engine: out.engine, cost_usd: replyCost });
     mirrorEvent(opts.home, call.runId, "voice_call_spoken", { call_id: call.id, segment_id: segId, chars: out.chars, engine: out.engine, cost_usd: replyCost });
+    emitVoiceHook(opts.home, call.runId, call.id, { kind: "reply_spoken", segmentId: segId, chars: out.chars, engine: out.engine, costUsd: replyCost });
     playAudioFile(replyPath, opts.voiceCfg, run);
   }
   return { call, segment, transcript: text, skippedSilence: false, held: false, replyPath, replyTruncated };
@@ -796,7 +848,40 @@ export function confirmCallSegment(home: string, callId: string, segmentId: stri
   saveVoiceCallStore(home, store);
   appendVoiceCallAudit(home, { op: "confirmed", call_id: call.id, segment_id: segmentId, reason: seg.heldReason });
   mirrorEvent(home, call.runId, "voice_call_confirmed", { call_id: call.id, segment_id: segmentId, reason: seg.heldReason ?? "" });
+  emitVoiceHook(home, call.runId, call.id, { kind: "segment_confirmed", segmentId, reason: seg.heldReason ?? undefined });
   return seg;
+}
+
+// ---- 通话笔记（G-P1-36 第二批）：通话中记要点，只读工具的落点 ----
+//
+// 笔记是机主手写的要点（1–500 字），记在通话记录上、进审计与事件；
+// 不记转写原文、不替你执行任何动作。通话结束后也能补记。
+export const MAX_CALL_NOTE_CHARS = 500;
+
+function newNoteId(): string {
+  return `note-${randomBytes(4).toString("hex")}`;
+}
+
+export function addCallNote(home: string, callId: string, text: string): VoiceCallNote {
+  const trimmed = text.trim();
+  if (!trimmed) throw new VoiceCallError("笔记不能为空");
+  if (trimmed.length > MAX_CALL_NOTE_CHARS) {
+    throw new VoiceCallError(`笔记最多 ${MAX_CALL_NOTE_CHARS} 字，现在 ${trimmed.length} 字`);
+  }
+  const store = loadVoiceCallStore(home);
+  const call = getCall(store, callId);
+  const note: VoiceCallNote = { id: newNoteId(), at: nowIso(), text: trimmed };
+  call.notes = [...(call.notes ?? []), note];
+  saveVoiceCallStore(home, store);
+  appendVoiceCallAudit(home, { op: "noted", call_id: call.id, note_id: note.id, chars: trimmed.length });
+  mirrorEvent(home, call.runId, "voice_call_noted", { call_id: call.id, note_id: note.id, chars: trimmed.length });
+  return note;
+}
+
+/** 一通电话的笔记（时间正序；没记过返回空数组）。 */
+export function listCallNotes(home: string, callId: string): VoiceCallNote[] {
+  const call = getCall(loadVoiceCallStore(home), callId);
+  return [...(call.notes ?? [])];
 }
 
 // ---- 通话总结（三本账分开：传输 / 理解 / 干活） ----
@@ -968,7 +1053,7 @@ function resolveCallEndpoint(home: string, config: Record<string, unknown>): Htt
 
 function usageError(msg: string): number {
   process.stderr.write(`${msg}\n`);
-  process.stderr.write("用法：nyra voice call <start [--peer <名字>] [--agent <id>] [--yes] [--transport loopback|webrtc] [--signaling <ws 地址>] [--role caller|callee]|connect <通话 id> [--signaling <ws 地址>] [--role caller|callee]|answer <通话 id>|decline <通话 id>|end <通话 id>|status [通话 id]|list|segment <通话 id> <音频路径> [--speak-reply \"<文字>\"]|confirm <通话 id> <段落 id>>\n");
+  process.stderr.write("用法：nyra voice call <start [--peer <名字>] [--agent <id>] [--yes] [--transport loopback|webrtc] [--signaling <ws 地址>] [--role caller|callee]|connect <通话 id> [--signaling <ws 地址>] [--role caller|callee]|answer <通话 id>|decline <通话 id>|end <通话 id>|status [通话 id]|list|segment <通话 id> <音频路径> [--speak-reply \"<文字>\"]|confirm <通话 id> <段落 id>|note <通话 id> <文字>|notes <通话 id>|hooks [list|enable <钩子名>|disable <钩子名>|on|off]>\n");
   return 2;
 }
 
@@ -1087,6 +1172,61 @@ export async function handleVoiceCall(argv: string[], home: string, input?: Voic
       const seg = confirmCallSegment(home, id, segId);
       process.stdout.write(`段落 ${segId} 已确认（${seg.heldReason === "payment" ? "支付类" : "对外发送类"}意图，含义已确认）。确认不执行动作：要执行请把这段话的文字当普通任务跑。\n`);
       return 0;
+    }
+    if (cmd === "note") {
+      const id = rest[0];
+      const text = rest.slice(1).join(" ");
+      if (!id || !text.trim()) return usageError("用法：nyra voice call note <通话 id> <文字>（1–500 字）");
+      const note = addCallNote(home, id, text);
+      process.stdout.write(`已记到通话 ${id}：${note.id}（${note.text.length} 字）\n`);
+      return 0;
+    }
+    if (cmd === "notes") {
+      const id = rest[0];
+      if (!id) return usageError("用法：nyra voice call notes <通话 id>");
+      const notes = listCallNotes(home, id);
+      if (notes.length === 0) {
+        process.stdout.write(`通话 ${id} 还没有笔记。\n`);
+        return 0;
+      }
+      for (const n of notes) process.stdout.write(`${n.at} ${n.id}：${n.text}\n`);
+      return 0;
+    }
+    if (cmd === "hooks") {
+      // G-P1-36 第二批：钩子开关只认已注册的钩子名之外的名字也行——
+      // 开关配置按名记，没注册的钩子名先记下来，注册后即按开关跑。
+      const sub = rest[0] ?? "list";
+      if (sub === "list") {
+        const { listVoiceHooks, readVoiceHookConfig } = await import("./voiceHooks.ts");
+        const cfg = readVoiceHookConfig(home);
+        const registered = listVoiceHooks();
+        process.stdout.write(`通话钩子总开关：${cfg.enabled ? "开" : "关"}\n`);
+        if (registered.length === 0) {
+          process.stdout.write("当前进程没有注册任何钩子（钩子由插件代码在进程内注册，见 docs/voice.md）。\n");
+        } else {
+          for (const h of registered) {
+            process.stdout.write(`${h.name}：${cfg.hooks[h.name] === false ? "关" : "开"}（${h.description}）\n`);
+          }
+        }
+        const extra = Object.keys(cfg.hooks).filter((n) => !registered.some((h) => h.name === n));
+        for (const n of extra) process.stdout.write(`${n}：${cfg.hooks[n] ? "开" : "关"}（未注册，只记开关）\n`);
+        return 0;
+      }
+      if (sub === "on" || sub === "off") {
+        const { setVoiceHooksMasterEnabled } = await import("./voiceHooks.ts");
+        setVoiceHooksMasterEnabled(home, sub === "on");
+        process.stdout.write(`通话钩子总开关已${sub === "on" ? "打开" : "关闭"}。\n`);
+        return 0;
+      }
+      if (sub === "enable" || sub === "disable") {
+        const name = rest[1];
+        if (!name) return usageError("用法：nyra voice call hooks <enable|disable> <钩子名>");
+        const { setVoiceHookEnabled } = await import("./voiceHooks.ts");
+        setVoiceHookEnabled(home, name, sub === "enable");
+        process.stdout.write(`钩子 ${name} 已${sub === "enable" ? "启用" : "停用"}。\n`);
+        return 0;
+      }
+      return usageError("用法：nyra voice call hooks [list|enable <钩子名>|disable <钩子名>|on|off]");
     }
     return usageError(`未知子命令：${cmd}`);
   } catch (err: unknown) {
