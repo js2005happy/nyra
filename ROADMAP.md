@@ -1,3 +1,10 @@
+## 2026-11-24 — Read-only web charset fallback (static only)
+
+- **Source fact:** web_fetch and search backend decode bounded bytes using server-controlled charset. Invalid codec labels previously discarded received content. This is a source-level risk, not a confirmed incident.
+- **Implemented:** Shared standard-library decoder falls back to UTF-8 replacement for unsupported/malformed charset labels; byte caps, parsing, evidence and search fallback unchanged.
+- **External feedback reviewed from existing repository research 2026-11-24:** [Codex #37121](https://github.com/openai/codex/issues/37121) (recorded 2026-08-05) reports lost recoverable state after truncation; [Codex #34233](https://github.com/openai/codex/issues/34233) (recorded 2026-07-19) reports sensitive tool output. Neither proves this charset defect or its prevalence. **Inference:** robust decoding may preserve bounded evidence; privacy remains a separate concern.
+- **Ranked candidates (value / difficulty / safety risk / dependency):** Completed charset fallback high/low/low/bounded reads; P1 tool output privacy audit high/medium/medium/tool inventory; P1 remote Shell structured outcome high/high/high/backend protocol; P1 pre-model privacy high/high/high/redaction policy; P1 side-effect receipts high/high/high/trusted readback; P2 recoverable large outputs medium-high/high/medium/storage policy. Ranking is engineering judgment.
+
 ## 2026-11-24 — P1 HTTP POST response charset classification (static only)
 
 - **Source fact:** `execute_http_post_report` uses the untrusted HTTP Content-Type charset to decode an already-received 2xx response. An unsupported codec label previously escaped to the broad exception handler and returned `unknown`, obscuring the observed transport status. This is a source-level risk, not a confirmed incident.
