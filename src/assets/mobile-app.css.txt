@@ -159,7 +159,8 @@ svg.i.f{fill:currentColor;stroke:none}
 .toast{position:fixed;left:50%;top:calc(64px + var(--sat));transform:translateX(-50%);background:var(--btn);color:var(--btnfg);padding:10px 16px;border-radius:14px;font-size:14px;z-index:40;max-width:86vw;text-align:center;box-shadow:0 6px 20px var(--shadow)}
 /* 入场动画（方块头转眼球：浮现 → 左看右看 → 转一圈 → 眨眼 → 字标）；结束后整层淡出露出应用 */
 #splash{position:fixed;inset:0;z-index:100;background:#1a1a1a;display:flex;align-items:center;justify-content:center;transition:opacity .45s ease}
-#splash svg{width:100%;height:100%;display:block}
+/* 开机动画按屏宽定尺寸：方块头（视框里 168 宽）= min(14vw, 64px)，svg 取 520×800 的条，整体居中 → 方块头中心在屏高 50%。 */
+#splash svg{--sp-head:min(14vw,64px);width:calc(var(--sp-head) * 520 / 168);height:auto;aspect-ratio:520/800;flex:none;display:block}
 #splash.out{opacity:0;pointer-events:none}
 #splash.reduce svg{animation:sp-fade .5s ease-out both}
 @keyframes sp-fade{from{opacity:0}to{opacity:1}}

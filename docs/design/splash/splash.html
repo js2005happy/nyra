@@ -4,6 +4,8 @@ html,body{margin:0;height:100%;background:#1a1a1a;overflow:hidden}
 #nyra-splash{position:fixed;inset:0;display:grid;place-items:center;background:#1a1a1a;transition:opacity .45s ease}
 #nyra-splash svg{width:100%;height:100%;display:block}
 #nyra-splash.done{opacity:0}
+/* 竖屏（手机）与运行时一致：取中间 520×800 的条，方块头宽 min(14vw, 64px)，方块头中心在屏高 50%。 */
+@media (orientation:portrait){#nyra-splash svg{width:calc(min(14vw,64px) * 520 / 168);height:auto;aspect-ratio:520/800}}
 </style></head><body>
 <!-- 开机动画预览：方块头转眼球。时间线在 splash.js（frame(t) 纯函数），运行时版本在 src/assets/mobile-splash.js.txt。
      ?t=1.2 停在某一帧；?loop=1 循环播放；系统“减少动态效果”时只淡入终帧。 -->
@@ -12,7 +14,8 @@ html,body{margin:0;height:100%;background:#1a1a1a;overflow:hidden}
 <script>
 (function(){
   const el=document.getElementById('nyra-splash'), S=window.NyraSplash, q=new URLSearchParams(location.search);
-  const put=t=>{el.innerHTML=S.frame(t).replace(/width="\d+" height="\d+"/,'width="100%" height="100%" preserveAspectRatio="xMidYMid meet"');};
+  const portrait=matchMedia('(orientation: portrait)').matches;
+  const put=t=>{el.innerHTML=portrait?S.frame(t).replace(/viewBox="[^"]*" width="\d+" height="\d+"/,'viewBox="380 0 520 800" preserveAspectRatio="xMidYMid meet"'):S.frame(t).replace(/width="\d+" height="\d+"/,'width="100%" height="100%" preserveAspectRatio="xMidYMid meet"');};
   if(q.has('t')){put(+q.get('t'));return;}
   if(matchMedia('(prefers-reduced-motion: reduce)').matches){put(S.END);return;}
   let start=null;
