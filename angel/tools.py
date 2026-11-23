@@ -995,7 +995,7 @@ def _tool_grep_search(
         )
         out = ctx.backend.run_command(command, cwd=_resolve_backend_path(ctx, "."), timeout=30)
         if "No such file or directory" in out:
-            return f"错误：路径不存在：{path}"
+            return "错误：路径不存在"
         lines = [line for line in out.splitlines() if line.strip()]
         if not lines:
             return "未找到匹配内容"
@@ -1006,7 +1006,7 @@ def _tool_grep_search(
         return result
     root = _resolve_path(ctx, path)
     if not root.exists():
-        return f"错误：路径不存在：{path}"
+        return "错误：路径不存在"
     if regex:
         flags = 0 if case_sensitive else re.IGNORECASE
         try:
