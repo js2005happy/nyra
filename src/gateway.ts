@@ -196,6 +196,8 @@ export class Gateway {
   autoCompactEnabled: boolean;
   autoCompactThreshold: number;
   pairOrigin: string | null = null;
+  /** lastTurnOutcome 的落盘会话缓存（会话 id → 文件指纹 + 汇总），最多 200 条。 */
+  private outcomeCache = new Map<string, { mtimeMs: number; size: number; ino: number; outcome: TurnSummary | null }>();
   server: Server | null = null;
   runs: Map<string, SessionRun> = new Map();
   approvals: Map<string, { run: SessionRun; pending: PendingApproval }> = new Map();
@@ -526,12 +528,25 @@ export class Gateway {
     try {
       const run = this.runs.get(sessionId);
       let messages: Record<string, unknown>[] | null = run?.agent ? run.agent.messages : null;
-      if (!messages) {
-        const path = sessionPath(sessionId, this.home);
-        if (!existsSync(path) || statSync(path).size > 4 * 1024 * 1024) return null;
-        messages = loadSession(sessionId, this.home);
+      if (messages) return summarizeLastTurn(messages);
+      // 落盘会话：按 (mtime, 大小, inode) 缓存汇总结果——列表每次刷新都要最近 40 个会话的
+      // outcome，文件没变就不再整份读、整份 JSON 解析（4 MiB 上限不变）。
+      const path = sessionPath(sessionId, this.home);
+      if (!existsSync(path)) { this.outcomeCache.delete(sessionId); return null; }
+      const st = statSync(path);
+      if (st.size > 4 * 1024 * 1024) return null;
+      const hit = this.outcomeCache.get(sessionId);
+      if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size && hit.ino === st.ino) return hit.outcome;
+      const loaded = loadSession(sessionId, this.home);
+      const outcome = loaded ? summarizeLastTurn(loaded) : null;
+      this.outcomeCache.delete(sessionId);
+      this.outcomeCache.set(sessionId, { mtimeMs: st.mtimeMs, size: st.size, ino: st.ino, outcome });
+      while (this.outcomeCache.size > 200) {
+        const oldest = this.outcomeCache.keys().next().value;
+        if (oldest === undefined) break;
+        this.outcomeCache.delete(oldest);
       }
-      return messages ? summarizeLastTurn(messages) : null;
+      return outcome;
     } catch { return null; }
   }
 

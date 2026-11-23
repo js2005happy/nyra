@@ -553,40 +553,67 @@ export function findTenetById(home: string, tenetId: string): { agent: string; t
   return null;
 }
 
+/**
+ * listSessions 的逐文件缓存：键是会话目录，值是 文件名 → (mtime, 大小, inode, 元数据)。
+ * 手机 / 网页每次打开列表都会调 /api/sessions，原来每次把所有会话文件整份读进来数行数、
+ * 找第一条用户消息——会话多、文件大时是纯 I/O 开销。现在只 stat，文件没变（mtime + 大小 +
+ * inode 都相同；saveSession 是原子 rename，改写必换 inode）就直接用上次算好的元数据。
+ * 每次调用按当前目录内容重建该目录的表，删掉的会话不会留在缓存里；最多记 8 个目录。
+ */
+interface SessionMetaCacheEntry { mtimeMs: number; size: number; ino: number; meta: SessionMeta }
+const SESSION_META_CACHE = new Map<string, Map<string, SessionMetaCacheEntry>>();
+const SESSION_META_CACHE_DIRS = 8;
+
+/** 测试 / 基准用：清空 listSessions 的缓存。 */
+export function clearSessionListCache(): void { SESSION_META_CACHE.clear(); }
+
+function readSessionMeta(path: string, id: string, mtimeMs: number): SessionMeta {
+  const lines = readFileSync(path, "utf-8").split("\n");
+  let count = 0;
+  let preview = "";
+  let foundUser = false;
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    count += 1;
+    if (foundUser) continue;
+    try {
+      const msg = JSON.parse(line) as Record<string, unknown>;
+      if (msg && typeof msg === "object" && msg.role === "user") {
+        preview = typeof msg.content === "string" ? msg.content.slice(0, 60) : "";
+        foundUser = true;
+      }
+    } catch { /* ignore */ }
+  }
+  return { id, preview, count, mtime: new Date(mtimeMs).toISOString().slice(0, 19) };
+}
+
 export function listSessions(home?: string): SessionMeta[] {
   const dir = sessionsDir(home);
-  if (!existsSync(dir)) return [];
+  if (!existsSync(dir)) { SESSION_META_CACHE.delete(dir); return []; }
+  const prev = SESSION_META_CACHE.get(dir);
+  const next = new Map<string, SessionMetaCacheEntry>();
   const out: { mtimeMs: number; meta: SessionMeta }[] = [];
   for (const file of readdirSync(dir).filter((f) => f.endsWith(".jsonl"))) {
     const path = join(dir, file);
     try {
-      const mtimeMs = statSync(path).mtimeMs;
-      const lines = readFileSync(path, "utf-8").split("\n");
-      let count = 0;
-      let preview = "";
-      let foundUser = false;
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        count += 1;
-        if (foundUser) continue;
-        try {
-          const msg = JSON.parse(line) as Record<string, unknown>;
-          if (msg && typeof msg === "object" && msg.role === "user") {
-            preview = typeof msg.content === "string" ? msg.content.slice(0, 60) : "";
-            foundUser = true;
-          }
-        } catch { /* ignore */ }
+      const st = statSync(path);
+      const hit = prev?.get(file);
+      let entry: SessionMetaCacheEntry;
+      if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size && hit.ino === st.ino) {
+        entry = hit;
+      } else {
+        entry = { mtimeMs: st.mtimeMs, size: st.size, ino: st.ino, meta: readSessionMeta(path, file.replace(/\.jsonl$/, ""), st.mtimeMs) };
       }
-      out.push({
-        mtimeMs,
-        meta: {
-          id: file.replace(/\.jsonl$/, ""),
-          preview,
-          count,
-          mtime: new Date(mtimeMs).toISOString().slice(0, 19),
-        },
-      });
+      next.set(file, entry);
+      out.push({ mtimeMs: entry.mtimeMs, meta: { ...entry.meta } });
     } catch { /* ignore */ }
+  }
+  SESSION_META_CACHE.delete(dir);
+  SESSION_META_CACHE.set(dir, next);
+  while (SESSION_META_CACHE.size > SESSION_META_CACHE_DIRS) {
+    const oldest = SESSION_META_CACHE.keys().next().value;
+    if (oldest === undefined) break;
+    SESSION_META_CACHE.delete(oldest);
   }
   out.sort((a, b) => b.mtimeMs - a.mtimeMs);
   return out.map((e) => e.meta);
