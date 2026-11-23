@@ -57,7 +57,7 @@ Nyra 的模型面比别家广（14 个 provider + 本地 Ollama + Codex 登录�
 | 触发 | 判定 | 行为 |
 |---|---|---|
 | 用量触顶 | HTTP 402，或 429 但文案是配额类（"weekly limit"、"quota exceeded"、"用量已用完"、"余额不足"等） | **不重试同一家，直接换下一家**——重试同一家没有意义，只会烧钱 |
-| 请求过于频繁 | 429 且文案不是配额类 | 先重试同一家（至多 2 次，退避 1s/3s + 抖动，服务端 `Retry-After` 更长时以服务端为准），重试无果再换 |
+| 请求过于频繁 | 429 且文案不是配额类；状态码不是 429、但文案明说限流的也认（如 503 + `capacity exhausted`、500 + `overloaded`，见“429 接力”一节） | 先重试同一家（至多 2 次，退避 1s/3s + 抖动，服务端 `Retry-After` 更长时以服务端为准），重试无果再换 |
 | 服务端 / 超时 / 网络 | 5xx、超时、连接失败 | 同上：先重试同一家，再换 |
 
 **什么不换**：认证错（401/403）——换模型修不好认证；未知模型、无效
@@ -90,7 +90,55 @@ Nyra 的模型面比别家广（14 个 provider + 本地 Ollama + Codex 登录�
 （群聊才有）、从谁切到谁、触发原因、报错原文（已脱敏：home 目录换
 `[home]`、Key 样字符串与 ≥32 字连续词串换 `<redacted>`、超 500 字截断）。
 审计是 SIEM 导出第 7 个来源（`nyra governance audit export` 可指定
-`--sources model_switch` 只导它；导出前同样脱敏）。
+`--sources model_switch` 只导它；导出前同样脱敏）。限流/配额切换时，
+审计行多一个 `handoff_id`（接力摘要的 id，见下）。
+
+## 429 接力：限流识别 + 接力摘要 + 接力记录
+
+借 Kooyu 的 429 接力（只借想法不照抄）：限流把任务打断时，Nyra 不只
+换模型、发一条通知，还给下一个模型留一份“接着干”的摘要——最近任务、
+最近进展、已做修改（勿重复）。半自动到此为止：摘要只生成、只存证、
+只在通知里引用，**不自动开新会话续跑、不自动重试已失败的调用**。
+续跑是主控或用户手动做的事（`nyra models handoff <id>` 看摘要，拿着
+它去新会话里继续）。
+
+**限流识别**：对模型报错文本做正则识别（Kooyu 同款表，中英文都认）：
+`429`、`rate limit`、`too many requests`、`quota exceeded`、`usage limit`、
+`capacity exhausted`、`overloaded`、`credit balance`、`insufficient_quota`，
+中文“限流、配额、过于频繁、额度用尽/不足/耗尽”。命中即限流类；分档仍
+按老口径——配额类文案（`quota exceeded`、`配额不足`等）先判 quota
+（终结：不重试同一家、直接换），其余判 rate_limit（先重试同一家 2 次，
+再换）。新增：状态码不是 429、但文案明说限流的也认，例如 503 +
+`capacity exhausted`、500 + `overloaded` 会判 rate_limit 而不是笼统的
+server。认不出来的报错按原有逻辑走，不把所有报错都当限流。
+
+**接力摘要**：限流/配额触发切换时才配，非限流切换没有。内容（新模块
+`src/quotaHandoff.ts`，`buildQuotaHandoff`，纯函数）：
+
+- 最近任务：最后一条用户消息（≤500 字）；
+- 最近进展：最后一条模型回复（≤500 字）；
+- 已做修改：对话里模型调过的工具（工具名 + 路径，如
+  `write_file src/login.ts`，去重、最多 10 条；没有写操作时明说没有，
+  不编清单）；
+- 末尾固定一句：“请基于当前工作区现状继续完成未竟工作，勿重复已完成
+  修改；不要重发已失败的调用。”
+
+摘要里的文本与审计同款脱敏（home 目录换 `[home]`、Key 样字符串与
+≥32 字连续词串换 `<redacted>`、超长截断），token 原文不进记录。
+
+**接力记录**：每份摘要一条记录（id `qh_` + 12 位十六进制），存
+`~/.nyra/quota-handoffs.jsonl`（append-only 0600，写失败不拦运行；
+同 id 只存一次）。审计行里的 `handoff_id` 就是这条记录的 id，两边
+对得上。`nyra models fallback` 在有接力时多露一行本月接力次数与最近
+一次的 id。
+
+**通知里的引用**：切换通知还是立刻发（终端 stderr、网关事件流、群聊
+回复内附），限流切换时末尾多一句接力摘要的 id 与查看办法，例如
+“接力摘要已存证（qh_abc123，运行 `nyra models handoff qh_abc123`
+查看）”——只引用，不把全文塞进通知。
+
+**查看**：`nyra models handoff` 列最近 10 条（新的在前），
+`nyra models handoff <id>` 看一条的全文。只读，不续跑。
 
 **用量汇总里可见**：本月切过模型时，`nyra stats`、运行结束汇总、
 `nyra cost --show`（文本与 `--json` 的 `monthly.model_switches`）里多一行

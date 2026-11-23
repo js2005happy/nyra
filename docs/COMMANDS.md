@@ -42,7 +42,7 @@
 | `nyra config explain [能力]` | 这个能力由哪个键控制、现在生效吗 |
 | `nyra features` | 功能开关列表（CLI > config > 默认） |
 | `nyra tools` | 工具集体检：每轮 schema 成本与裁剪建议 |
-| `nyra models [list\|show\|refresh\|fallback]` | 模型上下文窗口查询与刷新；`fallback` 看备用链开关、顺序与本月切换统计 |
+| `nyra models [list\|show\|refresh\|fallback\|handoff]` | 模型上下文窗口查询与刷新；`fallback` 看备用链开关、顺序与本月切换统计；`handoff` 查限流接力摘要 |
 | `nyra reviewer <status\|enable\|disable\|set-model\|add-rule\|remove-rule\|list-rules\|check>` | 独立审查层：敏感工具调用先过独立审查 agent，审查失败即拦截（详见 `docs/reviewer.md`） |
 | `nyra judge <status\|enable\|disable\|set-model\|set-thresholds\|check\|verdicts>` | 意向验证 judge：敏感工具调用先打风险分（0-100 + 引用证据），高分拒绝、中段转人工；第 2 批 G-P1-12：启发式前置（critical 直接拒、high 转人工，零成本规则先扫一遍）+ verdict 落库，`verdicts` 查最近结论（详见 `docs/tool-judge.md`） |
 | `nyra verifier <status\|enable\|disable\|set-model\|rework-on\|rework-off\|add-rule\|remove-rule\|list-rules\|check>` | 验收者：并行产出合入前先验收，不通过打回重做，结论进证据链（详见 `docs/verifier.md`） |
