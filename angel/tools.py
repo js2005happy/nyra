@@ -877,7 +877,13 @@ def _fetch_search_page(url: str) -> str:
     )
     with open_url(request, 30) as response:
         charset = response.headers.get_content_charset() or "utf-8"
-        return response.read().decode(charset, errors="replace")
+        # Search HTML is untrusted and may be arbitrarily large. Reject a
+        # partial page rather than parsing incomplete results as evidence.
+        byte_limit = 128 * 1024
+        payload = response.read(byte_limit + 1)
+        if len(payload) > byte_limit:
+            raise ToolError("搜索页面超过读取上限")
+        return payload.decode(charset, errors="replace")
 
 
 def _tool_web_search(ctx: ToolContext, query: str, count: int = 8) -> str:
