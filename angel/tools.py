@@ -1172,7 +1172,13 @@ def execute_http_post_report(
             byte_limit = MAX_OUTPUT_CHARS * 4
             payload = response.read(byte_limit + 1)
             clipped = len(payload) > byte_limit
-            text = payload[:byte_limit].decode(charset, errors="replace")
+            # A remote server controls Content-Type charset. Unsupported codec
+            # labels must not turn an already-received 2xx into an unknown
+            # transport outcome (which could encourage a duplicate POST).
+            try:
+                text = payload[:byte_limit].decode(charset, errors="replace")
+            except (LookupError, TypeError, ValueError):
+                text = payload[:byte_limit].decode("utf-8", errors="replace")
             result = _truncate(text)
             if clipped:
                 result += "\n……（响应正文超过读取上限，剩余内容未读取）"
