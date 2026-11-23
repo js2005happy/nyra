@@ -236,8 +236,11 @@ test("简报窗口：窗口外的巡查不计入", () => {
     responsibility_id: "aabbccddeeff0011", responsibility_name: "旧巡查",
     run_id: run.run_id, findings: true, reported: true,
   });
-  // 窗口起点定在巡查之后（巡查是现在创建的，窗口从明天起算）→ 不计入。
-  const brief = collectMorningBrief(home, { since: "2026-11-23T00:00:00.000Z", now: new Date("2026-11-23T08:00:00.000Z") });
+  // 窗口起点定在巡查之后（巡查是现在创建的，窗口从巡查之后起算）→ 不计入。
+  // 注意：起点必须相对当前时间算，不能写死日期——写死 2026-11-23 的版本在
+  // 当天 00:00–08:00 UTC 跑时会把刚创建的巡查算进窗口，导致 CI 在该时段全红。
+  const after = new Date(Date.now() + 60_000);
+  const brief = collectMorningBrief(home, { since: after.toISOString(), now: new Date(Date.now() + 2 * 60_000) });
   expect(brief.quiet).toBe(true);
   expect(brief.patrolRuns).toBe(0);
 });
