@@ -56,7 +56,8 @@ export interface EvalResult {
 }
 export interface EvalReport {
   schemaVersion: 1;
-  suite: 'nyra-real-tasks-v1';
+  // 内置固定任务是 nyra-real-tasks-v1；外部基准集是 nyra-benchmark:<名>；仓内探针是 nyra-probe:<名>。
+  suite: string;
   id: string;
   createdAt: string;
   sourceRevision: string;
@@ -329,6 +330,11 @@ export async function runEvalSuite(options: {
   conditions?: EvalConditions;
   retries?: number;
   taskIds?: string[];
+  // 默认跑内置 20 题；传 tasks 可跑子集或外部基准集/探针的任务（须是
+  // 同一套 EvalTask 形状，catalogHash 按实际跑的任务算）。
+  tasks?: EvalTask[];
+  // 默认 nyra-real-tasks-v1；外部基准集是 nyra-benchmark:<名>，探针是 nyra-probe:<名>。
+  suite?: string;
   parentReport?: string;
   requiredConditionsHash?: string;
   onProgress?: (taskId: string, status: EvalStatus) => void;
@@ -341,10 +347,12 @@ export async function runEvalSuite(options: {
   const retries = options.retries ?? 1;
   if (!Number.isInteger(retries) || retries < 0 || retries > 2)
     throw new Error('失败重跑次数须为 0–2');
-  const ids = options.taskIds ?? EVAL_TASKS.map((t) => t.id);
+  const tasks = options.tasks ?? EVAL_TASKS;
+  const suite = options.suite ?? 'nyra-real-tasks-v1';
+  const ids = options.taskIds ?? tasks.map((t) => t.id);
   if (
     new Set(ids).size !== ids.length ||
-    ids.some((id) => !EVAL_TASKS.some((t) => t.id === id))
+    ids.some((id) => !tasks.some((t) => t.id === id))
   )
     throw new Error('评测任务 ID 无效');
   const environment = (await options.adapter.environment?.()) ?? {};
@@ -358,16 +366,22 @@ export async function runEvalSuite(options: {
   const suiteRoot = safeEvalPath(options.root, id);
   mkdirSync(suiteRoot, { recursive: true, mode: 0o700 });
   const store = new RunStore(join(suiteRoot, 'runs'));
-  const suiteRun = store.create('固定任务评测', id, suiteRoot, 'auto', 1);
+  const suiteRun = store.create(
+    suite === 'nyra-real-tasks-v1' ? '固定任务评测' : '基准集评测：' + suite,
+    id,
+    suiteRoot,
+    'auto',
+    1,
+  );
   const report: EvalReport = {
     schemaVersion: 1,
-    suite: 'nyra-real-tasks-v1',
+    suite,
     id,
     createdAt: new Date().toISOString(),
     sourceRevision: options.sourceRevision,
     sourceHash: options.sourceHash ?? options.sourceRevision,
     harnessHash: options.harnessHash,
-    catalogHash: evalHash(EVAL_TASKS),
+    catalogHash: evalHash(tasks),
     conditions,
     environment,
     conditionsHash,
@@ -383,7 +397,7 @@ export async function runEvalSuite(options: {
   };
   checkpoint();
   for (const taskId of ids) {
-    const task = EVAL_TASKS.find((t) => t.id === taskId)!;
+    const task = tasks.find((t) => t.id === taskId)!;
     const result: EvalResult = {
       taskId,
       category: task.category,
