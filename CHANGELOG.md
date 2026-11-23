@@ -1,3 +1,7 @@
+## Unreleased — 2026-11-23 local git diff failure (static only)
+
+- Local git_status now reports a fixed error when git diff --stat exits nonzero, rather than returning a partial status as if complete; suppresses untrusted stderr. Adds two regression definitions, not executed. Remote backend, permissions, retry policy and dependencies unchanged.
+
 ## Unreleased
 
 - 本地 shell 对非零退出码返回固定失败前缀和退出码，避免静默误判为空输出成功；仅静态审阅，未执行测试，远端后端不变。
