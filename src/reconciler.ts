@@ -280,9 +280,9 @@ export function reconcileOne(
     return { taskId: task.id, action: "ok", idleSeconds: 0, detail: `运行已结束（${runStatus}），已提醒过，等验证证据` };
   }
   // Pi Bot 的 reconciler 也跳过“执行体 waiting 或有待回答的问题”：运行在等
-  // 人工批准时不是卡住，别标、别重排，等批本身就是下一步。
-  if (runStatus === "awaiting_approval") {
-    return { taskId: task.id, action: "ok", idleSeconds: 0, detail: "运行在等人工批准，不算卡住" };
+  // 人工批准或人工回环时不是卡住，别标、别重排，等批本身就是下一步。
+  if (runStatus === "awaiting_approval" || runStatus === "awaiting_interrupt") {
+    return { taskId: task.id, action: "ok", idleSeconds: 0, detail: runStatus === "awaiting_interrupt" ? "运行在等人工回环，不算卡住" : "运行在等人工批准，不算卡住" };
   }
   const progressMs = lastProgressMs(task, {
     runProgressAt: providers.runProgressAt ?? defaultRunProgressAt(home),

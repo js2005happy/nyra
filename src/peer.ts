@@ -249,6 +249,7 @@ export function buildHandoffPackage(home: string, runId: string, fields: readonl
     if (pending && typeof pending.tool === "string") pkg.todos.push(`等审批：${pending.tool}`);
     if (pkg.status === "interrupted") pkg.todos.push("运行曾中断：请先确认中断前已成功的步骤，再续跑。");
     if (pkg.status === "awaiting_approval") pkg.todos.push("运行在等审批：续跑前请先处理挂起的审批。");
+    if (pkg.status === "awaiting_interrupt") pkg.todos.push("运行在等人工回环：续跑前请先处理挂起的中断单。");
   }
   if (fields.includes("evidence")) {
     const counts = new Map<string, number>();

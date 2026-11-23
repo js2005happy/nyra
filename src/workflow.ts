@@ -74,10 +74,25 @@ import {
   planReplay,
   resolveStepCheckpointStore,
   snapshotStepsState,
+  updateStepState,
   upsertCheckpoint,
   type ReplayPlan,
   type StepCheckpointStore,
 } from "./stepCheckpoints.ts";
+// interrupts 同款叶子模块（只引 node 内置）：结构化人机回环的中断单与
+// schema 校验；本模块绝不被它反向 import。
+import {
+  createInterrupt,
+  findInterrupt,
+  getInterrupt,
+  validateInterruptSpec,
+  validateEditValues,
+  type InterruptDecision,
+  type InterruptPoint,
+  type InterruptSchemaFieldType,
+  type InterruptSpec,
+  InterruptError,
+} from "./interrupts.ts";
 import { RunStore } from "./runs.ts";
 import { enqueueReviewItem, getReviewItem } from "./reviewQueue.ts";
 import { UsageLedger, monthKeyString } from "./usageLedger.ts";
@@ -121,7 +136,7 @@ export const STEP_ID_RE = /^[a-z][a-z0-9_-]{0,31}$/;
 
 export type WorkflowMode = "fixed" | "coordinator" | "dynamic";
 export type WorkflowStatus = "draft" | "trial_passed" | "active";
-export type WorkflowRunStatus = "running" | "awaiting_approval" | "completed" | "failed";
+export type WorkflowRunStatus = "running" | "awaiting_approval" | "awaiting_interrupt" | "completed" | "failed";
 export type NodeType = "tool" | "llm" | "delegate" | "knowledge" | "skill" | "approve" | "parallel";
 
 /** 协调者配置（只用于 coordinator / dynamic；fixed 写了直接拒绝）。 */
@@ -178,6 +193,11 @@ export interface WorkflowStep {
   summary?: string;
   on_reject?: "fail" | "skip";
   branches?: WorkflowStep[][];
+  // G-P1-41：步骤前后的结构化人机回环。须机主显式配，默认不停；只认
+  // fixed 形态的顶层步骤（并行分支内的步骤不认，审批节点已有审批流程
+  // 也不认；coordinator/dynamic 的步骤由协调者每轮现定，停不住）。
+  interrupt_before?: InterruptSpec;
+  interrupt_after?: InterruptSpec;
 }
 
 export interface WorkflowTrigger {
@@ -247,6 +267,8 @@ export interface WorkflowRun {
   error: string | null;
   pendingNodeId: string | null;
   pendingNodeIndex: number | null;
+  /** 挂起的中断单 id（G-P1-41）：运行在等人工回环时有值，否则为 null。 */
+  pendingInterruptId?: string | null;
   reviewItemId: string | null;
   dryRunPlanHash: string | null;
   /** 协调者运行态（fixed 形态为 null；挂起 resume 后从这里续跑）。 */
@@ -589,7 +611,7 @@ export function parseWorkflowText(text: string, sourceName: string): unknown {
 // DSL 校验（fail-closed：写错在 import/validate 时就拒绝，不等跑到一半才炸）
 // ---------------------------------------------------------------------------
 
-const NODE_COMMON_KEYS = new Set(["id", "type", "if", "for_each"]);
+const NODE_COMMON_KEYS = new Set(["id", "type", "if", "for_each", "interrupt_before", "interrupt_after"]);
 const NODE_KEYS: Record<NodeType, Set<string>> = {
   tool: new Set(["tool", "args"]),
   llm: new Set(["prompt", "system"]),
@@ -642,6 +664,25 @@ function validateStep(raw: unknown, where: string, depth: number, ids: Set<strin
   const allowed = new Set([...NODE_COMMON_KEYS, ...NODE_KEYS[type as NodeType]]);
   for (const k of Object.keys(raw)) {
     if (!allowed.has(k)) throw new WorkflowError(`工作流定义无效（步骤 ${id}）：${type} 节点不认字段 ${k}`);
+  }
+  // G-P1-41：interrupt_before / interrupt_after 只认 fixed 形态的顶层步骤；
+  // 并行分支内的步骤（depth > 0）与审批节点不认（审批节点已有审批流程）。
+  const hasInterrupt = raw.interrupt_before !== undefined || raw.interrupt_after !== undefined;
+  if (hasInterrupt && depth > 0) {
+    throw new WorkflowError(`工作流定义无效（步骤 ${id}）：并行分支内的步骤不支持 interrupt_before / interrupt_after（只认顶层步骤）`);
+  }
+  if (hasInterrupt && type === "approve") {
+    throw new WorkflowError(`工作流定义无效（步骤 ${id}）：审批节点已有审批流程，不用再配 interrupt_before / interrupt_after`);
+  }
+  for (const key of ["interrupt_before", "interrupt_after"] as const) {
+    if (raw[key] !== undefined) {
+      try {
+        validateInterruptSpec(raw[key], `步骤 ${id} 的 ${key}`);
+      } catch (err) {
+        if (err instanceof InterruptError) throw new WorkflowError(`工作流定义无效（步骤 ${id} 的 ${key}）：${err.message}`);
+        throw err;
+      }
+    }
   }
   if (raw.if !== undefined) needStr(raw.if, `步骤 ${id} 的 if`, 1, 500);
   if (raw.for_each !== undefined) {
@@ -806,6 +847,16 @@ export function validateWorkflowDefinition(value: unknown, knownTools?: Set<stri
   }
   const ids = new Set<string>();
   for (const s of def.steps) validateStep(s, "顶层", 0, ids, knownTools);
+  // G-P1-41：interrupt_before / interrupt_after 只用于 fixed 形态——
+  // coordinator / dynamic 的步骤由协调者每轮现定，停不住，配了直接拒绝。
+  if (mode !== "fixed") {
+    for (const s of def.steps) {
+      const step = s as unknown as WorkflowStep;
+      if (step.interrupt_before !== undefined || step.interrupt_after !== undefined) {
+        throw new WorkflowError(`工作流定义无效（步骤 ${step.id}）：interrupt_before / interrupt_after 只用于 fixed 形态，${mode} 形态的步骤由协调者每轮现定，停不住`);
+      }
+    }
+  }
   if (countSteps(def.steps) > MAX_STEPS) {
     throw new WorkflowError(`工作流定义无效：节点总数超过 ${MAX_STEPS} 个（含并行分支内节点）`);
   }
@@ -1197,6 +1248,23 @@ export class WorkflowPendingApproval extends Error {
   }
 }
 
+/** G-P1-41：跑到配了 interrupt_before / interrupt_after 的步骤，停住等人。
+ *  不是错误，是挂起：runFrom 抓到它后把运行标 awaiting_interrupt 再返回。 */
+export class WorkflowPendingInterrupt extends Error {
+  interruptId: string;
+  stepId: string;
+  point: InterruptPoint;
+  nodeIndex: number;
+  constructor(interruptId: string, stepId: string, point: InterruptPoint, nodeIndex: number) {
+    super(`步骤 ${stepId} 在 ${point === "before" ? "跑前" : "跑后"}停下来等人（中断单 ${interruptId}）`);
+    this.name = "WorkflowPendingInterrupt";
+    this.interruptId = interruptId;
+    this.stepId = stepId;
+    this.point = point;
+    this.nodeIndex = nodeIndex;
+  }
+}
+
 export interface WorkflowRunOptions {
   home: string;
   workdir: string;
@@ -1208,6 +1276,9 @@ export interface WorkflowRunOptions {
   trial?: boolean;
   /** 步级检查点 store（G-P1-40；测试传内存 store，不传默认按配置解析）。 */
   stepCheckpointStore?: StepCheckpointStore;
+  /** G-P1-41：interrupt resume 时带的步骤输入覆盖（只给 edit 决定用），
+   *  按步骤 id 索引；续跑前已按步骤类型校验过。 */
+  stepInputOverrides?: Map<string, Record<string, unknown>>;
 }
 
 function truncateOutput(text: string, max = MAX_OUTPUT_CHARS): string {
@@ -1260,6 +1331,8 @@ class WorkflowRunner {
   knownTools: Set<string> | null = null;
   /** 步级检查点 store（G-P1-40）：recordNode 每节点记一条；远端后端在运行里是 best-effort。 */
   stepCheckpointStore: StepCheckpointStore;
+  /** G-P1-41：interrupt resume 时带的步骤输入覆盖（只给 edit 决定用）。 */
+  stepInputOverrides: Map<string, Record<string, unknown>>;
 
   constructor(def: WorkflowDefinition, inputs: Record<string, unknown>, opts: WorkflowRunOptions, existingRun?: WorkflowRun) {
     this.def = def;
@@ -1274,6 +1347,7 @@ class WorkflowRunner {
     this.ledger = new UsageLedger(opts.home);
     this.config = loadConfig(opts.home);
     this.stepCheckpointStore = opts.stepCheckpointStore ?? resolveStepCheckpointStore(opts.home, { config: this.config });
+    this.stepInputOverrides = opts.stepInputOverrides ?? new Map();
     this.monthlyLimit = resolveMonthlyLimit(this.config);
     this.scope = { inputs: inputs as ScopeValue, steps: {}, loop: {} };
     if (existingRun) {
@@ -1310,6 +1384,7 @@ class WorkflowRunner {
         error: null,
         pendingNodeId: null,
         pendingNodeIndex: null,
+        pendingInterruptId: null,
         reviewItemId: null,
         dryRunPlanHash: null,
         coordinator: null,
@@ -1551,6 +1626,14 @@ class WorkflowRunner {
     try {
       if (step.type === "tool") {
         const args = renderValue(step.args ?? {}, this.scope) as Record<string, unknown>;
+        // G-P1-41：edit 决定带的输入覆盖（续跑前已按步骤类型校验过）。
+        const toolOverrides = this.stepInputOverrides.get(step.id);
+        if (toolOverrides) {
+          for (const [k, v] of Object.entries(toolOverrides)) {
+            if (!(k in args)) throw new WorkflowError(`步骤 ${step.id}：edit 覆盖的键 ${k} 不在 tool 参数里`);
+            args[k] = v;
+          }
+        }
         const { executeTool, newToolContext } = await import("./tools.ts");
         const ctx = newToolContext({
           workdir: this.workdir, home: this.home, mode: this.mode,
@@ -1581,9 +1664,11 @@ class WorkflowRunner {
       if (step.type === "llm") {
         this.checkMonthlyCapOrThrow();
         const provider = await this.getProvider();
-        const prompt = String(renderTemplate(step.prompt ?? "", this.scope));
+        // G-P1-41：edit 决定可改 prompt / system。
+        const llmOverrides = this.stepInputOverrides.get(step.id);
+        const prompt = llmOverrides?.prompt !== undefined ? String(llmOverrides.prompt) : String(renderTemplate(step.prompt ?? "", this.scope));
         const messages: ChatMessage[] = [];
-        if (step.system) messages.push({ role: "system", content: String(renderTemplate(step.system, this.scope)) });
+        if (step.system) messages.push({ role: "system", content: llmOverrides?.system !== undefined ? String(llmOverrides.system) : String(renderTemplate(step.system, this.scope)) });
         messages.push({ role: "user", content: prompt });
         const resp = await provider.chat(messages);
         const text = extractChatText(resp);
@@ -1605,21 +1690,25 @@ class WorkflowRunner {
         const provider = await this.getProvider();
         const { Agent } = await import("./agent.ts");
         let task: string;
+        // G-P1-41：edit 决定可改 task（skill 步骤改的是任务文本部分）。
+        const dlOverrides = this.stepInputOverrides.get(step.id);
+        const taskText = dlOverrides?.task !== undefined ? String(dlOverrides.task) : String(renderTemplate(step.task ?? "", this.scope));
+        const maxTurns = (dlOverrides?.max_turns as number | undefined) ?? step.max_turns ?? 6;
         if (step.type === "skill") {
           const { loadSkills, readSkillBody, canonicalSkillDirs } = await import("./skills.ts");
           const skills = loadSkills(canonicalSkillDirs(this.workdir, this.home));
           const skillBody = readSkillBody(skills, step.skill ?? "");
-          task = `${skillBody}\n\n任务：${String(renderTemplate(step.task ?? "", this.scope))}`;
+          task = `${skillBody}\n\n任务：${taskText}`;
         } else {
-          task = String(renderTemplate(step.task ?? "", this.scope));
+          task = taskText;
         }
         const agent = new Agent(provider, {
-          workdir: this.workdir, mode: this.mode, maxTurns: step.max_turns ?? 6,
+          workdir: this.workdir, mode: this.mode, maxTurns,
           sessionId: `wf-${this.run.id}`, messages: [], interactive: false,
           home: this.home, reviewerModel: undefined,
         });
         const before = agent.usage.snapshot();
-        const d = await agent.delegateDetailed(task, step.max_turns ?? 6);
+        const d = await agent.delegateDetailed(task, maxTurns);
         if (!d.ok) throw new WorkflowError(d.text.slice(0, 500));
         const text = d.text;
         const after = agent.usage.snapshot();
@@ -1632,19 +1721,22 @@ class WorkflowRunner {
         if (inTok > 0 || outTok > 0) {
           this.ledger.recordDelta(after, before, spent, null, (provider as { model?: string | null }).model ?? null, new Date(), "workflow");
         }
-        const result = finish({ id: step.id, type: step.type, status: "ok", output: truncateOutput(text), approved: null, spentUsd: spent, error: null }, step.type === "skill" ? `${step.skill}\n${String(renderTemplate(step.task ?? "", this.scope))}` : task);
+        const result = finish({ id: step.id, type: step.type, status: "ok", output: truncateOutput(text), approved: null, spentUsd: spent, error: null }, step.type === "skill" ? `${step.skill}\n${taskText}` : task);
         recordIf(result);
         return result;
       }
       if (step.type === "knowledge") {
         const { KnowledgeBase } = await import("./knowledge.ts");
         const kb = new KnowledgeBase(join(this.home, "knowledge"));
-        const baseName = step.base ?? "";
-        const query = String(renderTemplate(step.query ?? "", this.scope));
+        // G-P1-41：edit 决定可改 base / query / top_k。
+        const kbOverrides = this.stepInputOverrides.get(step.id);
+        const baseName = kbOverrides?.base !== undefined ? String(kbOverrides.base) : (step.base ?? "");
+        const query = kbOverrides?.query !== undefined ? String(kbOverrides.query) : String(renderTemplate(step.query ?? "", this.scope));
+        const topK = (kbOverrides?.top_k as number | undefined) ?? step.top_k ?? 5;
         if (!kb.exists(baseName)) {
           throw new WorkflowError(`知识库不存在：${baseName}（先 nyra kb create ${baseName}，再 nyra kb add ${baseName} --text ... 写入）`);
         }
-        const hits = kb.search(baseName, query, step.top_k ?? 5);
+        const hits = kb.search(baseName, query, topK);
         const output = hits.length
           ? hits.map(([score, note]) => `[${score.toFixed(2)}] ${note.title}\n${note.text.slice(0, 500)}`).join("\n\n")
           : "知识库里没找到相关内容。";
@@ -1715,8 +1807,25 @@ class WorkflowRunner {
       for (let i = startIndex; i < this.def.steps.length; i++) {
         const step = this.def.steps[i];
         try {
-          await this.executeStep(step, 0, 0);
+          // G-P1-41：配了 interrupt_before 的步骤，跑前先停住等人。
+          // if 为假会跳过的步骤不打扰人（executeStep 里同样会跳过）。
+          if (!this.willSkipByIf(step)) await this.checkInterruptPoint(step, "before", i);
+          const result = await this.executeStep(step, 0, 0);
+          // 跑后中断只对成功跑完的步骤生效：跳过/失败的步骤不打扰人
+          // （失败的整轮已失败，executeStep 会直接抛错到外层）。
+          if (result.status === "ok") await this.checkInterruptPoint(step, "after", i);
         } catch (err: unknown) {
+          if (err instanceof WorkflowPendingInterrupt) {
+            err.nodeIndex = i;
+            this.run.status = "awaiting_interrupt";
+            this.run.pendingNodeId = err.stepId;
+            this.run.pendingNodeIndex = i;
+            this.run.pendingInterruptId = err.interruptId;
+            this.run.reviewItemId = null;
+            this.saveRun();
+            this.emit("workflow_awaiting_interrupt", { node_id: err.stepId, interrupt_id: err.interruptId, point: err.point });
+            return this.run;
+          }
           if (err instanceof WorkflowPendingApproval) {
             err.nodeIndex = i;
             this.run.status = "awaiting_approval";
@@ -1746,6 +1855,83 @@ class WorkflowRunner {
       this.emit("workflow_failed", { error: message.slice(0, 200) });
       return this.run;
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // G-P1-41：结构化人机回环
+  // -------------------------------------------------------------------------
+
+  /** 这个步骤会不会被 if 跳过（会跳过就不打扰人）。if 求值出错时按“不跳过”
+   *  算，交给 executeStep 正常报错。 */
+  private willSkipByIf(step: WorkflowStep): boolean {
+    if (step.if === undefined) return false;
+    try {
+      return !evalCondition(step.if, this.scope);
+    } catch {
+      return false;
+    }
+  }
+
+  /** 步骤前/后的中断点：没配就不停；已回过的直接过；挂起的抛错挂起；
+   *  第一次到就建单、记事件、抛错挂起。 */
+  private checkInterruptPoint(step: WorkflowStep, point: InterruptPoint, index: number): void {
+    const spec = point === "before" ? step.interrupt_before : step.interrupt_after;
+    if (!spec) return;
+    const existing = findInterrupt(this.home, this.run.id, step.id, point);
+    if (existing) {
+      if (existing.status === "resolved") return;
+      throw new WorkflowPendingInterrupt(existing.id, step.id, point, index);
+    }
+    const context = point === "before" ? this.renderStepInputSummary(step) : this.lastNodeOutputSummary(step.id);
+    const it = createInterrupt(this.home, {
+      runId: this.run.id,
+      workflow: this.def.name,
+      stepId: step.id,
+      point,
+      prompt: spec.prompt ?? (point === "before"
+        ? `步骤 ${step.id}（${step.type}）马上要跑，先看一眼再继续？`
+        : `步骤 ${step.id}（${step.type}）跑完了，结果如上，继续还是改一下？`),
+      schema: spec.schema ?? { fields: [] },
+      contextSummary: context,
+    });
+    this.emit("workflow_interrupt_created", { interrupt_id: it.id, step_id: step.id, point });
+    throw new WorkflowPendingInterrupt(it.id, step.id, point, index);
+  }
+
+  /** 跑前中断单里的人看什么：步骤渲染后的输入摘要（≤500 字）。算不出
+   *  来就写一句，绝不因摘要失败拦住运行。 */
+  private renderStepInputSummary(step: WorkflowStep): string {
+    try {
+      if (step.type === "tool") return stableStringify(renderValue(step.args ?? {}, this.scope)).slice(0, 500);
+      if (step.type === "llm") return String(renderTemplate(step.prompt ?? "", this.scope)).slice(0, 500);
+      if (step.type === "delegate" || step.type === "skill") return String(renderTemplate(step.task ?? "", this.scope)).slice(0, 500);
+      if (step.type === "knowledge") return String(renderTemplate(step.query ?? "", this.scope)).slice(0, 500);
+      if (step.type === "approve") return String(renderTemplate(step.title ?? "", this.scope)).slice(0, 500);
+      return `parallel（${step.branches?.length ?? 0} 个分支）`;
+    } catch {
+      return "（输入摘要算不出来）";
+    }
+  }
+
+  private lastNodeOutputSummary(stepId: string): string {
+    const node = [...this.run.nodes].reverse().find((n) => n.id === stepId);
+    if (!node) return "（无输出）";
+    return (node.output ?? "（无输出）").slice(0, 500);
+  }
+
+  /** after 点 edit：把该步在 scope 里的输出与节点记录改成新值，并同步步级
+   *  检查点（有检查点时走 updateStepState；检查点写失败不拦续跑）。
+   *  公开方法：模块级的 resumeWorkflowFromInterrupt 要调它。 */
+  applyAfterPointEdit(stepId: string, output: string): void {
+    const scopeStep = (this.scope.steps as Record<string, unknown>)[stepId];
+    if (scopeStep && typeof scopeStep === "object") {
+      (scopeStep as Record<string, unknown>).output = output;
+    }
+    const node = [...this.run.nodes].reverse().find((n) => n.id === stepId);
+    if (node) node.output = truncateOutput(output);
+    try {
+      updateStepState(this.stepCheckpointStore, this.run.id, stepId, { [`steps.${stepId}.output`]: output });
+    } catch { /* 检查点同步失败不拦续跑 */ }
   }
 
   // -------------------------------------------------------------------------
@@ -2127,7 +2313,7 @@ export function dryRunWorkflowByName(home: string, name: string, inputOverrides:
     id: newWorkflowRunId(), workflow: name, status: "completed", inputs, definition: def,
     nodes: [], spentUsd: 0, startedAt: nowIso(), endedAt: nowIso(),
     dryRun: true, trial: false, error: null,
-    pendingNodeId: null, pendingNodeIndex: null, reviewItemId: null, dryRunPlanHash: plan.hash,
+    pendingNodeId: null, pendingNodeIndex: null, pendingInterruptId: null, reviewItemId: null, dryRunPlanHash: plan.hash,
     coordinator: null,
   };
   saveWorkflowRun(home, run);
@@ -2303,6 +2489,143 @@ export async function resumeWorkflow(home: string, runId: string, req: WorkflowR
   throw new WorkflowError(`审阅项 ${item.id} 还没批复（当前 ${item.status}），先 nyra review approve/reject 再 resume`);
 }
 
+// ---------------------------------------------------------------------------
+// G-P1-41：结构化人机回环——续跑
+// ---------------------------------------------------------------------------
+
+/** 这个步骤 edit 决定能改哪些输入键（键 → 类型）。approve / parallel /
+// for_each 步骤没有可改的输入，edit 直接拒绝；tool 的对象/列表参数不认
+// edit（CLI 的 --set 只能传标量）。 */
+export function editableInputTypes(step: WorkflowStep): Record<string, InterruptSchemaFieldType> | null {
+  if (step.for_each !== undefined) return null;
+  if (step.type === "tool") {
+    const args = step.args ?? {};
+    const out: Record<string, InterruptSchemaFieldType> = {};
+    for (const [k, v] of Object.entries(args)) {
+      if (typeof v === "string") out[k] = "string";
+      else if (typeof v === "number") out[k] = "number";
+      else if (typeof v === "boolean") out[k] = "boolean";
+    }
+    return Object.keys(out).length ? out : null;
+  }
+  if (step.type === "llm") {
+    const out: Record<string, InterruptSchemaFieldType> = { prompt: "string" };
+    if (step.system !== undefined) out.system = "string";
+    return out;
+  }
+  if (step.type === "delegate") {
+    const out: Record<string, InterruptSchemaFieldType> = { task: "string" };
+    if (step.max_turns !== undefined) out.max_turns = "number";
+    return out;
+  }
+  if (step.type === "skill") return { task: "string" };
+  if (step.type === "knowledge") {
+    const out: Record<string, InterruptSchemaFieldType> = { query: "string", base: "string" };
+    if (step.top_k !== undefined) out.top_k = "number";
+    return out;
+  }
+  return null;
+}
+
+/** 按步骤类型校验 edit 决定的人改值，返回校验过的覆盖记录。 */
+export function validateStepEditValues(step: WorkflowStep, values: Record<string, unknown>): Record<string, unknown> {
+  const allowed = editableInputTypes(step);
+  if (!allowed) {
+    const why = step.for_each !== undefined
+      ? "（循环步骤不支持 edit，改循环内单步请拆步骤）"
+      : step.type === "approve"
+        ? "（审批节点没有可改的输入）"
+        : step.type === "parallel"
+          ? "（并行步骤不支持 edit）"
+          : "（这个步骤没有标量输入可改）";
+    throw new WorkflowError(`步骤 ${step.id}（${step.type}）没有可改的输入参数，不能 edit${why}`);
+  }
+  try {
+    return validateEditValues(values, allowed);
+  } catch (err) {
+    if (err instanceof InterruptError) throw new WorkflowError(`edit 值校验失败（步骤 ${step.id}）：${err.message}`);
+    throw err;
+  }
+}
+
+/** G-P1-41：从挂起的中断单续跑。只认 awaiting_interrupt 的运行与已回的单。
+ *  决定按点位走：before 点 accept/respond 原样跑该步、ignore 记 skipped 后
+ *  继续、edit 带输入覆盖跑该步；after 点 accept/ignore/respond 继续下一步、
+ *  edit 改该步在 scope 里的输出再继续。审批节点与成本硬顶照常（续跑后跑到
+ *  审批节点仍挂起，--max-cost / 月度硬顶重新核）。 */
+export async function resumeWorkflowFromInterrupt(home: string, runId: string, req: WorkflowRunRequest): Promise<WorkflowRun> {
+  const run = getWorkflowRun(home, runId);
+  if (!run) throw new WorkflowError(`没有这个运行：${runId}`);
+  if (run.status !== "awaiting_interrupt") {
+    throw new WorkflowError(`运行 ${runId} 当前是 ${run.status}，不是等待人工回环，不能 interrupt resume（审批挂起用 nyra workflow resume）`);
+  }
+  if (!run.pendingInterruptId || run.pendingNodeIndex === null || !run.pendingNodeId) {
+    throw new WorkflowError(`运行 ${runId} 的挂起信息不完整`);
+  }
+  const it = getInterrupt(home, run.pendingInterruptId);
+  if (it.runId !== runId) throw new WorkflowError(`中断单 ${it.id} 与运行 ${runId} 对不上`);
+  if (it.status !== "resolved" || !it.decision) {
+    throw new WorkflowError(`中断单 ${it.id} 还没回（当前 ${it.status}），先 nyra interrupt respond/edit 再 resume，或 resume 时加 --decision accept|ignore`);
+  }
+  if (run.definition.mode !== "fixed") {
+    throw new WorkflowError("只有 fixed 形态支持结构化人机回环");
+  }
+  const idx = run.pendingNodeIndex;
+  const step = run.definition.steps[idx];
+  if (!step || step.id !== run.pendingNodeId) {
+    throw new WorkflowError(`运行 ${runId} 的挂起节点对不上定义快照`);
+  }
+  const decision: InterruptDecision = it.decision;
+  const overrides = new Map<string, Record<string, unknown>>();
+  if (it.point === "before" && decision === "edit") {
+    overrides.set(step.id, validateStepEditValues(step, it.editedValues ?? {}));
+  }
+  const runner = new WorkflowRunner(run.definition, run.inputs, {
+    home, workdir: req.workdir, mode: req.mode, interactive: req.interactive,
+    maxCostUsd: req.maxCostUsd,
+    providerFactory: req.providerFactory ?? defaultProviderFactory(home),
+    stepCheckpointStore: req.stepCheckpointStore,
+    stepInputOverrides: overrides,
+  }, run);
+  const clearPending = (): void => {
+    run.pendingNodeId = null;
+    run.pendingNodeIndex = null;
+    run.pendingInterruptId = null;
+  };
+  const resumed = (): void => {
+    runner.emit("workflow_interrupt_resumed", { interrupt_id: it.id, decision });
+  };
+  if (it.point === "before") {
+    if (decision === "ignore") {
+      const skipped: WorkflowNodeResult = {
+        id: step.id, type: step.type, status: "skipped",
+        startedAt: nowIso(), endedAt: nowIso(), ms: 0,
+        input: step.prompt ?? step.task ?? step.query ?? step.title ?? "",
+        output: `人工回环 ignore：跳过步骤 ${step.id}`, approved: null, spentUsd: null, error: null,
+      };
+      runner.recordNode(skipped);
+      clearPending();
+      resumed();
+      return runner.runFrom(idx + 1);
+    }
+    // accept / respond / edit：原样或带覆盖跑该步。
+    clearPending();
+    resumed();
+    return runner.runFrom(idx);
+  }
+  // after 点：accept / ignore / respond 继续下一步；edit 先改该步输出再继续。
+  if (decision === "edit") {
+    const output = (it.editedValues ?? {}).output;
+    if (typeof output !== "string") {
+      throw new WorkflowError("after 点的 edit 只能改 output（--set output=新值）");
+    }
+    runner.applyAfterPointEdit(step.id, output);
+  }
+  clearPending();
+  resumed();
+  return runner.runFrom(idx + 1);
+}
+
 /**
  * G-P1-40 时间旅行：从某一步的检查点重放后续步骤。
  *
@@ -2361,6 +2684,7 @@ export async function replayWorkflowFromCheckpoint(
     error: null,
     pendingNodeId: null,
     pendingNodeIndex: null,
+    pendingInterruptId: null,
     reviewItemId: null,
     dryRunPlanHash: null,
     coordinator: null,
@@ -2452,6 +2776,10 @@ function printRunSummary(run: WorkflowRun): void {
     }
     process.stdout.write(`审批节点 ${run.pendingNodeId ?? "?"} 已进审阅队列（审阅项 ${run.reviewItemId ?? "?"}）。\n先 nyra review approve ${run.reviewItemId ?? ""}（或 reject），再 nyra workflow resume ${run.id}\n`);
   }
+  if (run.status === "awaiting_interrupt") {
+    // G-P1-41：结构化人机回环挂起——先回中断单，再 resume。
+    process.stdout.write(`步骤 ${run.pendingNodeId ?? "?"} 在等人工回环（中断单 ${run.pendingInterruptId ?? "?"}）。\n先 nyra interrupt show ${run.pendingInterruptId ?? ""} 看一眼，再 nyra interrupt respond/edit ${run.pendingInterruptId ?? ""} --set 键=值，最后 nyra interrupt resume ${run.pendingInterruptId ?? ""}\n`);
+  }
   if (run.status === "failed" && run.error) {
     process.stdout.write(`失败原因：${run.error}\n`);
   }
@@ -2523,7 +2851,7 @@ export async function handleWorkflow(argv: string[], home: string): Promise<numb
       if (!name) { process.stderr.write("错误：run 后面须跟工作流名字\n"); return 2; }
       const run = await runWorkflowByName(resolvedHome, name, parseInputFlag(argv), req);
       printRunSummary(run);
-      return run.status === "completed" || run.status === "awaiting_approval" ? 0 : 1;
+      return run.status === "completed" || run.status === "awaiting_approval" || run.status === "awaiting_interrupt" ? 0 : 1;
     }
     if (action === "dry-run") {
       const name = argv[1];
@@ -2546,7 +2874,7 @@ export async function handleWorkflow(argv: string[], home: string): Promise<numb
       if (!runId) { process.stderr.write("错误：resume 后面须跟运行 id\n"); return 2; }
       const run = await resumeWorkflow(resolvedHome, runId, req);
       printRunSummary(run);
-      return run.status === "completed" || run.status === "awaiting_approval" ? 0 : 1;
+      return run.status === "completed" || run.status === "awaiting_approval" || run.status === "awaiting_interrupt" ? 0 : 1;
     }
     if (action === "trial") {
       const name = argv[1];

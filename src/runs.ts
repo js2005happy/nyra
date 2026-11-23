@@ -313,6 +313,12 @@ workflow_failed: ["workflow_run_id", "workflow", "error"],
 // 重放（从哪个运行的哪一步重放、重放了几步）。只记元数据，不记状态原文。
 step_checkpoint_updated: ["workflow_run_id", "step_id", "invalidated"],
 step_checkpoint_replayed: ["workflow_run_id", "from_run_id", "step_id", "steps_replayed"],
+// G-P1-41：结构化人机回环——中断单建好（哪个运行、哪个步骤、停在哪一点）、
+// 决定（哪个单、accept/ignore/respond/edit）、续跑（哪个单、什么决定）。只记
+// 元数据与 id，不记步骤输入/输出原文、不记人的回复内容。
+workflow_interrupt_created: ["workflow_run_id", "interrupt_id", "step_id", "point"],
+workflow_interrupt_resolved: ["workflow_run_id", "interrupt_id", "decision"],
+workflow_interrupt_resumed: ["workflow_run_id", "interrupt_id", "decision"],
 // 缺口 25 其余形态：协调者每轮的决定（第几轮、什么动作、哪个步骤、这次决定
 // 花了多少）、动态生成的新步骤（哪个步骤、什么类型）、协调者停下来问人
 // （第几轮、哪个审阅项）。只记元数据与 id，不记提示词原文、不记决定全文、

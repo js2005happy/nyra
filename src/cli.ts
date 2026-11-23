@@ -209,6 +209,7 @@ nyra eval <scenarios|scorecard|benchmarks|import|benchmark|remove|probes|probe|m
 nyra trust <register|list|show|evidence|promote|demote|review|check>   信任阶梯（GROK-6，缺口 43 治理深化）：新 agent / 新技能默认只读，攒够 N 次连续成功且零违规才升一级；每次记成功有概率被随机抽查，抽中须复核才计入；降级随时可做（详见 docs/trust-ladder.md）
 nyra workflow <import|list|show|run|dry-run|resume|trial|activate|remove|verify|triggers>   声明式可复用工作流（缺口 25）：YAML/JSON 定义 + 三种执行形态（固定图/协调者/动态）+ 审批节点 + dry-run，激活前须真实数据试跑 + 人工确认；触发器执行默认关，须显式开启（详见 docs/workflow.md）
 nyra checkpoint <list|show|history|update|replay|store>   步级检查点 + 时间旅行（G-P1-40）：每步存状态快照，回到某一步改值重放后续步骤；只有 fixed 形态能重放，花钱/审批的步骤须 --yes（详见 docs/step-checkpoints.md）
+nyra interrupt <list|show|respond|edit|resume>   结构化人机回环（G-P1-41）：工作流在配了 interrupt_before/after 的步骤前后停住，人回 accept/ignore/respond/edit 再原地续跑；只认 fixed 形态顶层步骤（详见 docs/interrupts.md）
 nyra template <list|show|builtin|import|trial|activate|run|dry-run|remove|publish|install>   业务流程模板库（缺口 46）：流程 DSL + 连接器 + 验收标准 + 试跑数据，激活前须真实数据试跑 + 人工确认，随机器人市场分发（详见 docs/templates.md）
 nyra script check <文件> [--language python|javascript|lua|php]   判定一个脚本纯不纯（白名单静态分析）：纯返回 0，不纯返回 1
 nyra script preauth <list|grant|revoke> --workflow <名字>   脚本摘要预授权：激活时自动钉纯脚本摘要，内容一改授权失效；只在例行里有效（详见 docs/script-purity.md）
@@ -364,6 +365,7 @@ nyra eval <scenarios|scorecard|benchmarks|import|benchmark|remove|probes|probe|m
 nyra trust <register|list|show|evidence|promote|demote|review|check>   trust ladder (GROK-6, gap 43 governance): new agents / skills start read-only, earn one level per N consecutive successes with zero violations; each recorded success may be randomly spot-checked and only counts after review; demotion any time (see docs/trust-ladder.md)
 nyra workflow <import|list|show|run|dry-run|resume|trial|activate|remove|verify|triggers>   declarative reusable workflows (gap 25): YAML/JSON definitions + three execution modes (fixed graph / coordinator / dynamic) + approval nodes + dry-run; activation needs a real-data trial run + human confirmation; trigger execution is off by default and needs an explicit opt-in (see docs/workflow.md)
 nyra checkpoint <list|show|history|update|replay|store>   step checkpoints + time travel (G-P1-40): per-step state snapshots, edit a step and replay the steps after it; only fixed mode supports replay, model/approval steps need --yes (see docs/step-checkpoints.md)
+nyra interrupt <list|show|respond|edit|resume>   structured human-in-the-loop (G-P1-41): a workflow pauses before/after steps that carry interrupt_before/after; a human answers accept/ignore/respond/edit and resumes in place; only fixed-mode top-level steps (see docs/interrupts.md)
 nyra template <list|show|builtin|import|trial|activate|run|dry-run|remove|publish|install>   business process template library (gap 46): workflow DSL + connectors + acceptance criteria + trial data, distributed through the robot market; activation needs a real-data trial run + human confirmation (see docs/templates.md)
 nyra script check <file> [--language python|javascript|lua|php]   judge whether a script is pure (allowlist static analysis): exit 0 if pure, 1 if not
 nyra script preauth <list|grant|revoke> --workflow <name>   script digest pre-authorization: pure script digests are pinned at activation, a changed script voids the grant; routine-only (see docs/script-purity.md)
@@ -7195,6 +7197,10 @@ export async function main(argv: string[]): Promise<number> {
   if (args.subcommand === "checkpoint") {
     const { handleCheckpoint } = await import("./stepCheckpointCli.ts");
     return handleCheckpoint(args.subArgs ?? [], home);
+  }
+  if (args.subcommand === "interrupt") {
+    const { handleInterrupt } = await import("./interruptCli.ts");
+    return handleInterrupt(args.subArgs ?? [], home);
   }
   if (args.subcommand === "kb" || args.subcommand === "knowledge") return knowledgeMain(args.subArgs ?? []);
   if (args.subcommand === "plugin") return handlePlugin(args.subArgs ?? [], home);
