@@ -91,7 +91,57 @@ Nyra 的模型面比别家广（14 个 provider + 本地 Ollama + Codex 登录�
 `[home]`、Key 样字符串与 ≥32 字连续词串换 `<redacted>`、超 500 字截断）。
 审计是 SIEM 导出第 7 个来源（`nyra governance audit export` 可指定
 `--sources model_switch` 只导它；导出前同样脱敏）。限流/配额切换时，
-审计行多一个 `handoff_id`（接力摘要的 id，见下）。
+审计行多一个 `handoff_id`（接力摘要的 id，见下）。切换把 from 标
+degraded 时，审计行多一个 `degraded_until`（恢复时间，见下）。
+
+## 降级预设 best / fast（G-P1-33）
+
+Botpress 的 `packages/cognitive` 有 best / fast 两档预设。Nyra 的
+`config.json` 加 `model_preset`（`"best"` | `"fast"`，不填 = 不用预设）：
+
+```json
+{
+  "fallback_enabled": true,
+  "fallback_providers": ["deepseek", "xai", "ollama"],
+  "model_preset": "fast"
+}
+```
+
+- 预设只排**兜底尾巴**的顺序，不换主模型：链首永远是用户配的主模型，
+  预设排的是“主模型挂了之后先试谁”。主模型本身想换档时，看
+  `nyra models preset` 的排序、手动改 `provider` / `model`。
+- 排序键只用内置模型表的硬数据（窗口、价格、视觉支持），不编质量分：
+  - **fast（便宜优先）**：输入价升序 → 输出价升序 → 窗口降序 → 模型名升序。
+    没核实价格的排最后——不编价格，也不假装它便宜。
+  - **best（能力优先）**：窗口降序 → 支持视觉优先 → 输入价升序 → 模型名升序。
+- 每机器人自己的备用链（显式 `fallback_providers`）优先于预设——
+  显式指定的顺序不动。预设不碰 `fallback_enabled` 总开关：开关关着时
+  链仍只有主模型，预设只在“兜底已开、链不止一家”时生效。
+- `nyra models preset` 只看不改（当前预设 + 排过序的链 + 该预设前 5 的模型）；
+  `nyra models preset best|fast` 写入配置；`nyra models preset off` 清掉。
+
+## 故障账本：标 degraded，计时恢复（G-P1-33）
+
+模型出故障时，Nyra 把它标 degraded，默认 **5 分钟**内不再选用，时间到
+自动恢复（Botpress 同款 5 分钟）：
+
+- 账本 `~/.nyra/model-health.json`（0600 原子写，损坏先备份再回空账本）：
+  provider 名、恢复时间 `until`、短原因、累计次数。恢复是时间驱动的
+  惰性恢复——读账本时拿 `until` 跟现在比，过期就当没标过，不用另起
+  定时器扫。
+- **什么时候标**：兜底链里某一家可恢复失败、真切换走之前，把刚失败那家
+  标 degraded，恢复时间挂在切换记录上。认证错（401/403）不可恢复、
+  根本走不到切换，也就不会标——标 degraded 的只会是“过会儿可能好的”
+  故障（用量触顶、限流、服务端错误、超时、网络错误）。
+- **过滤口径**：建链时按账本过滤兜底尾巴（链首主模型永远保留——用户
+  显式配的主模型即使刚出过故障，下一轮照样先试它，失败了再按链走）；
+  过滤后至少剩链首，永不返回空链。账本写失败不拦切换、不拦建链。
+- **用户看到什么**：切换通知里多一句“`{from}` 已标故障，`{until}` 前
+  不再选用”（`until` 是本地时间短格式）；审计行多 `degraded_until`；
+  `model_switch` 事件同样带 `degraded_until`。`nyra models fallback`
+  里有故障账本行；`nyra models health` 列出当前被标故障的模型（恢复
+  时间、原因、累计次数），`nyra models health clear <provider>` 提前恢复它。
+- **队列/定时任务**：照旧不切换（见下）——也就不会标 degraded。
 
 ## 429 接力：限流识别 + 接力摘要 + 接力记录
 
