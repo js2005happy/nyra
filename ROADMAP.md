@@ -1,3 +1,10 @@
+## P1 — delegated exception privacy (2026-11-24; static only)
+
+- **Source fact:** `Agent.delegate` previously returned raw `AgentError` text or unexpected exception class/message to the parent model. Child exceptions may contain secrets or private file paths; this is a source-level exposure path, not a confirmed incident.
+- **External feedback (reviewed from existing research 2026-11-24):** [Codex #34233](https://github.com/openai/codex/issues/34233) (recorded 2026-07-19) reports credential-bearing tool output; [Codex #31015](https://github.com/openai/codex/issues/31015) (recorded 2026-07-03) concerns late redaction. Dates are from prior project records, not independently reverified today; neither establishes Angel prevalence. **Engineering inference:** fixed error boundaries reduce unnecessary exposure to model and logs.
+- **Implemented:** replace both delegated exception echoes with fixed `错误：`-prefixed unknown-status results. No retries or extra privileges; standard library only. **Static only; no tests run.**
+- **Remaining ranked candidates (value / implementation difficulty / safety risk / dependencies; engineering judgment):** P1 structured HTTP/Shell reports (high / medium / medium / backward-compatible Agent contract); P1 audit remaining direct tool outputs (high / medium / medium / source inventory); P1 pre-model and pre-record privacy policy (high / high / high / explicit redaction/consent policy); P1 independent side-effect receipts (high / high / high / trusted readback); P2 recoverable large-output artifacts (medium-high / high / medium / storage permissions). Do not equate tool report success with verified side effects.
+
 ## P1 — web_fetch evidence URL echo privacy (2026-11-23, static only)
 
 - **Source fact:** `_tool_web_fetch` appended the complete URL to its model-visible evidence marker, although `ctx.evidence.save` already receives the URL. Query parameters and URL userinfo can contain secrets; removing the redundant echo reduces one disclosure surface, but neither sanitizes the fetched page nor removes URLs from persisted evidence.
