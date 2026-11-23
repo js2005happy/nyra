@@ -1,11 +1,11 @@
 // tests/node/test-term-mark.test.ts — 欢迎屏上用半块字符拼的 Nyra 标志（src/termMark.ts）：
-// 预计算的覆盖率常量与 brandMark 几何一致、字符画两种画法的快照、圆盘是圆的、各回退路径；
+// 预计算的覆盖率常量与 brandMark 几何（方块头）一致、字符画两种画法的快照、方块是方的且左右对称、各回退路径；
 // 所有终端都是字符画，不发任何内联图片序列。
 import { test, expect } from "bun:test";
-import { rasterizeMark, MARK_PAPER, MARK_STROKE } from "../../src/brandMark.ts";
+import { rasterizeMark, MARK_BODY, MARK_PRESETS } from "../../src/brandMark.ts";
 import {
   renderTermMark, termMarkStyle, isLightTerminal, TERM_MARK_COVERAGE, TERM_MARK_PX, TERM_MARK_COLS, TERM_MARK_ROWS,
-  TERM_MARK_PAPER,
+  TERM_MARK_BODY,
 } from "../../src/termMark.ts";
 import * as termMark from "../../src/termMark.ts";
 import { renderHeader, stripAnsi, MARK_MIN_COLS } from "../../src/banner.ts";
@@ -15,7 +15,7 @@ const INFO = { version: "0.5.5", model: "deepseek / deepseek-flash", mode: "auto
 
 test("TermMark.test_coverage_constant_matches_brand_geometry", () => {
   // 改了 brandMark 的几何，这里会失败并打印新常量：把它贴回 src/termMark.ts。
-  const a = rasterizeMark(TERM_MARK_PX, { disc: "#FFFFFF", bg: null, discFraction: 1, stroke: MARK_STROKE });
+  const a = rasterizeMark(TERM_MARK_PX, MARK_PRESETS.cut());
   const rows: string[] = [];
   for (let y = 0; y < TERM_MARK_PX; y++) {
     let s = "";
@@ -24,7 +24,7 @@ test("TermMark.test_coverage_constant_matches_brand_geometry", () => {
   }
   if (JSON.stringify(rows) !== JSON.stringify([...TERM_MARK_COVERAGE])) console.log(rows.map((r) => `  "${r}",`).join("\n"));
   expect([...TERM_MARK_COVERAGE]).toEqual(rows);
-  expect(TERM_MARK_PAPER).toBe(MARK_PAPER);
+  expect(TERM_MARK_BODY).toBe(MARK_BODY);
   // 18 列 × 9 行。
   expect(TERM_MARK_COLS).toBe(18);
   expect(TERM_MARK_ROWS).toBe(9);
@@ -33,15 +33,15 @@ test("TermMark.test_coverage_constant_matches_brand_geometry", () => {
 test("TermMark.test_mono_snapshot", () => {
   const lines = renderTermMark({ level: 0 });
   expect(lines).toEqual([
-    "    ▄▄██████▄▄    ",
-    "  ▄████████████▄  ",
-    " █████ ▀█████████ ",
-    "██████   ▀▀███████",
-    "██████      ▀█████",
-    "██████        ▀███",
-    " ██████      ████ ",
-    "  ▀████ ▄█▄  ▄█▀  ",
-    "    ▀▀██████▀▀    ",
+    " ▄██████████████▄ ",
+    "██████████████████",
+    "██████████████████",
+    "█████▀▀████▀▀█████",
+    "█████  ████  █████",
+    "█████  ████  █████",
+    "██████████████████",
+    "██████████████████",
+    " ▀██████████████▀ ",
   ]);
   for (const l of lines) expect(l).not.toContain("\x1b[");
 });
@@ -49,43 +49,46 @@ test("TermMark.test_mono_snapshot", () => {
 test("TermMark.test_color_snapshot", () => {
   const lines = renderTermMark({ level: 3 });
   expect(lines.map(stripAnsi)).toEqual([
-    "    ▄▄▀████▀▄▄    ",
-    "  ▄████████████▄  ",
-    " ▀███▀▀▀████████▀ ",
-    "▀████▀   ▀▀██████▀",
-    "██████      ▀█████",
-    "▀█████        ▀██▀",
-    " ▀█████     ▀███▀ ",
-    "  ▀███▀▄▀█▄  ▀█▀  ",
-    "    ▀▀▀████▀▀▀    ",
+    " ▄▀████████████▀▄ ",
+    "▀████████████████▀",
+    "██████████████████",
+    "█████▀▀████▀▀█████",
+    "█████  ████  █████",
+    "████▀  ▀██▀  ▀████",
+    "██████████████████",
+    "▀████████████████▀",
+    " ▀▀████████████▀▀ ",
   ]);
   for (const l of lines) expect(textWidth(stripAnsi(l))).toBe(TERM_MARK_COLS);
   const all = lines.join("");
-  // 满覆盖的像素就是浅色圆盘；不设任何"假想底色"大块：背景只用于上下两个像素都有颜色的格子。
-  expect(all).toContain("38;2;245;245;247m█");
+  // 满覆盖的像素就是团子紫方块；不设任何"假想底色"大块：背景只用于上下两个像素都有颜色的格子。
+  expect(all).toContain("38;2;134;136;255m█");
   expect(all).not.toContain("48;2;18;18;18");
-  // 光标中心（第 5 行、第 7–11 列）露出终端底色：是不带转义的空格。
-  expect(stripAnsi(lines[4]).slice(6, 12)).toBe("      ");
+  // 两只眼（第 5 行、第 6–7 列与第 12–13 列）露出终端底色：是不带转义的空格。
+  expect(stripAnsi(lines[4]).slice(5, 7)).toBe("  ");
+  expect(stripAnsi(lines[4]).slice(11, 13)).toBe("  ");
   // 256 色同样是抗锯齿画法（38;5 / 48;5），不出 truecolor 序列。
   const c256 = renderTermMark({ level: 2 }).join("");
   expect(c256).toContain("38;5;");
   expect(c256).not.toContain("38;2;");
 });
 
-test("TermMark.test_disc_is_round", () => {
-  // 每格上下两个像素、终端字符格高 ≈ 宽 × 2 → 像素是方的。圆盘的像素外接框必须是正方形，
-  // 且上下 / 左右各一半的面积接近（光标在里面挖掉的部分不算）。
+test("TermMark.test_head_is_square_and_symmetric", () => {
+  // 每格上下两个像素、终端字符格高 ≈ 宽 × 2 → 像素是方的。方块的像素外接框必须是正方形，
+  // 四条边对称，两只眼左右镜像。
   const px: [number, number][] = [];
-  for (let y = 0; y < TERM_MARK_PX; y++) for (let x = 0; x < TERM_MARK_PX; x++) {
-    if (parseInt(TERM_MARK_COVERAGE[y][x], 16) >= 8) px.push([x, y]);
-  }
+  const on = (x: number, y: number) => parseInt(TERM_MARK_COVERAGE[y][x], 16) >= 8;
+  for (let y = 0; y < TERM_MARK_PX; y++) for (let x = 0; x < TERM_MARK_PX; x++) if (on(x, y)) px.push([x, y]);
   const xs = px.map((p) => p[0]); const ys = px.map((p) => p[1]);
   expect(Math.max(...xs) - Math.min(...xs)).toBe(Math.max(...ys) - Math.min(...ys));
-  // 外圈（第一行 / 最后一行 / 第一列 / 最后一列）的亮像素数一致：四边对称。
   const edge = (f: (p: [number, number]) => boolean) => px.filter(f).length;
   const top = edge((p) => p[1] === 0); const bottom = edge((p) => p[1] === TERM_MARK_PX - 1);
   const left = edge((p) => p[0] === 0); const right = edge((p) => p[0] === TERM_MARK_PX - 1);
   expect(new Set([top, bottom, left, right]).size).toBe(1);
+  for (let y = 0; y < TERM_MARK_PX; y++) for (let x = 0; x < TERM_MARK_PX; x++) expect(on(x, y)).toBe(on(TERM_MARK_PX - 1 - x, y));
+  // 眼睛：方块中部有镂空。
+  const holes = px.length;
+  expect(TERM_MARK_PX * TERM_MARK_PX - holes).toBeGreaterThan(8);
 });
 
 test("TermMark.test_style_and_light_detection", () => {

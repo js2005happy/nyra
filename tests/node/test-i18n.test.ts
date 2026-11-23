@@ -131,12 +131,12 @@ test("I18n.test_header_snapshot_en", () => {
   setLang("en");
   const lines = renderHeader(INFO, { width: 100, color: false, unicode: true, home: "/home/sj" });
   expect(lines.slice(4).join("\n")).toBe([
-    " ██████   ▀▀███████   Nyra v0.5.5",
-    " ██████      ▀█████   An open-source AI agent that runs on your computer",
-    " ██████        ▀███",
-    "  ██████      ████",
-    "   ▀████ ▄█▄  ▄█▀",
-    "     ▀▀██████▀▀",
+    " █████▀▀████▀▀█████   Nyra v0.5.5",
+    " █████  ████  █████   An open-source AI agent that runs on your computer",
+    " █████  ████  █████",
+    " ██████████████████",
+    " ██████████████████",
+    "  ▀██████████████▀",
     "",
     "╭──────────────────────────────────────────╮",
     "│ Model   deepseek / deepseek-flash        │",
@@ -158,12 +158,12 @@ test("I18n.test_header_snapshot_zh", () => {
   setLang("zh");
   const lines = renderHeader(INFO, { width: 100, color: false, unicode: true, home: "/home/sj" });
   expect(lines.slice(4).join("\n")).toBe([
-    " ██████   ▀▀███████   Nyra v0.5.5",
-    " ██████      ▀█████   跑在你电脑上的开源 AI Agent",
-    " ██████        ▀███",
-    "  ██████      ████",
-    "   ▀████ ▄█▄  ▄█▀",
-    "     ▀▀██████▀▀",
+    " █████▀▀████▀▀█████   Nyra v0.5.5",
+    " █████  ████  █████   跑在你电脑上的开源 AI Agent",
+    " █████  ████  █████",
+    " ██████████████████",
+    " ██████████████████",
+    "  ▀██████████████▀",
     "",
     "╭──────────────────────────────────────────╮",
     "│ 模型  deepseek / deepseek-flash          │",

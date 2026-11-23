@@ -1,41 +1,57 @@
-// 正式标志（圆盘 + 光标，= 入场动画终帧）：几何来源唯一、生成文件同步、各处引用的是真标志。
+// 品牌标志（方块头 = 应用图标 C：紫色圆角方块 + 两只竖眼）：几何来源唯一、与应用图标一致、生成文件同步、各处引用的是真标志。
 import { expect, test } from "bun:test";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { inflateSync } from "node:zlib";
 import {
-  MARK_CIRCLE, MARK_CURSOR, MARK_INK, MARK_PAPER, MARK_PRESETS, MARK_ROTATE_DEG,
-  icnsFromPngs, icoFromPngs, markPng, markSvg, rasterizeMark,
+  MARK_BODY, MARK_EYE, MARK_INK, MARK_PRESETS, MARK_TILE, SPLASH_BG,
+  icnsFromPngs, icoFromPngs, inlineMarkSvg, markEyeScaleFor, markEyes, markPng, markSvg, rasterizeMark,
 } from "../../src/brandMark.ts";
 import { SVG_OUTPUTS } from "../../scripts/make-icons.ts";
-import { ICON_BG, ICON_EYE, ICON_PURPLE, appIconSvg } from "../../src/appIcon.ts";
+import { ICON_BG, ICON_EYE, ICON_PURPLE, appIconSvg, eyeScaleFor, iconEyes } from "../../src/appIcon.ts";
 import { DESKTOP_HTML } from "../../src/webuiDesktop.ts";
 import { MOBILE_V2_HTML } from "../../src/webuiMobile.ts";
+import { PAGE_HTML } from "../../src/webuiPage.ts";
 import { Gateway } from "../../src/gateway.ts";
 
 const ROOT = join(import.meta.dir, "..", "..");
 const STAR = "M8 0C9 5 11 7 16 8";
 
-test("几何与入场动画一致：光标 = splash arrowD(40,31,0.86)，圆盘 r40，旋转 -6°", () => {
+test("方块头几何 = 应用图标 C（同色、眼睛逐点一致、圆角 22%），开机动画用同一几何", () => {
+  expect(MARK_BODY).toBe(ICON_PURPLE);
+  expect(MARK_EYE).toBe(ICON_EYE);
+  expect(MARK_TILE.r / MARK_TILE.size).toBeCloseTo(0.22, 5);
+  for (const scale of [1, 1.08, 1.18]) {
+    const a = markEyes(scale);
+    const b = iconEyes(scale).map((e) => ({ x: e.x / 10.24, y: e.y / 10.24, w: e.w / 10.24, h: e.h / 10.24 }));
+    for (let i = 0; i < 2; i++) for (const k of ["x", "y", "w", "h"] as const) expect(a[i][k]).toBeCloseTo(b[i][k], 6);
+  }
+  for (const px of [16, 20, 24, 28, 32, 64]) expect(markEyeScaleFor(px)).toBe(eyeScaleFor(px));
+  // 开机动画（设计源与运行时）用同一套方块头几何与配色。
   const splash = readFileSync(join(ROOT, "src", "assets", "mobile-splash.js.txt"), "utf-8");
-  const ar = JSON.parse(/const AR=(\[\[.*?\]\]);/.exec(splash)![1]) as [number, number][];
-  const expected = ar.map(([a, b]) => [Number((40 + a * 0.86).toFixed(2)), Number((31 + b * 0.86).toFixed(2))]);
-  expect(MARK_CURSOR).toEqual(expected as [number, number][]);
-  expect(splash).toContain('r="40" fill="${FG}"');
-  expect(MARK_CIRCLE.r).toBe(40);
-  expect(MARK_ROTATE_DEG).toBe(-6);
-  expect(splash).toContain(`const W=1280,H=800,BG="${MARK_INK}",FG="${MARK_PAPER}"`);
+  const design = readFileSync(join(ROOT, "docs", "design", "splash", "splash.js"), "utf-8");
+  const e = markEyes(1)[0];
+  for (const src of [splash, design]) {
+    expect(src).toContain(`BG="${SPLASH_BG}",BODY="${MARK_BODY}",EYE="${MARK_EYE}"`);
+    expect(src).toContain(`RAD=${MARK_TILE.r}, EW=${e.w.toFixed(2)}, EH=${e.h.toFixed(2)}, EDX=${(50 - e.x - e.w / 2).toFixed(2)}, ECY=${(e.y + e.h / 2).toFixed(2)}`);
+  }
+  // 运行时的 frame 与设计源逐字一致。
+  const body = (src: string) => src.slice(src.indexOf("const W=1280"), src.indexOf("\n}", src.indexOf("function frame(")) + 2);
+  expect(body(splash)).toBe(body(design));
 });
 
 test("仓库里的标志 / 应用图标 SVG 与 src/brandMark.ts、src/appIcon.ts 同步（bun scripts/make-icons.ts 生成）", () => {
   for (const [rel, svg] of Object.entries(SVG_OUTPUTS)) {
     expect(readFileSync(join(ROOT, rel), "utf-8")).toBe(svg);
     expect(svg).not.toContain("<text"); // 不带字标
-    expect(svg).not.toContain("mask"); // 标志镂空是 evenodd 单路径；应用图标用 clipPath，GitHub / 任意光栅器都一致
+    expect(svg).not.toContain("mask"); // 单色标志镂空是 evenodd 单路径；应用图标用 clipPath，GitHub / 任意光栅器都一致
   }
-  expect(readFileSync(join(ROOT, "docs/assets/nyra-mark.svg"), "utf-8")).toContain(`fill="${MARK_INK}"`);
-  expect(readFileSync(join(ROOT, "docs/assets/nyra-mark-dark.svg"), "utf-8")).toContain(`fill="${MARK_PAPER}"`);
+  for (const rel of ["docs/assets/nyra-mark.svg", "docs/assets/nyra-mark-dark.svg", "desktop/ui/mark.svg", "desktop/ui/mark-dark.svg"]) {
+    expect(readFileSync(join(ROOT, rel), "utf-8").trim()).toBe(markSvg());
+  }
+  const mono = readFileSync(join(ROOT, "docs/assets/nyra-mark-mono.svg"), "utf-8");
+  expect(mono).toContain(`fill="${MARK_INK}" fill-rule="evenodd"`);
   // favicon / App 图标 = 紫色团子方块：只用团子紫与深色眼两种颜色。
   expect(ICON_BG).toBe(ICON_PURPLE);
   for (const rel of ["docs/assets/favicon.svg", "docs/assets/nyra-app-icon.svg", "desktop/icon-src/nyra-app-icon.svg"]) {
@@ -101,20 +117,30 @@ test("手机 Capacitor 图标：前景只有两只眼（在 72dp 可见区内）
   expect(icon.px(512 - 142, 545)).toEqual([...EYE, 255]);
 });
 
-test("16 / 32 px 小尺寸光标仍可辨（圆盘里有一块镂空）", () => {
+test("16 / 32 px 小尺寸方块头：两只眼仍可辨（眼睛放大、镂空可见）", () => {
   for (const s of [16, 32]) {
-    const rgba = rasterizeMark(s, MARK_PRESETS.light());
-    let holes = 0;
-    for (let y = 0; y < s; y++) for (let x = 0; x < s; x++) {
-      const inDisc = Math.hypot(x + 0.5 - s / 2, y + 0.5 - s / 2) < s * 0.4;
-      if (inDisc && rgba[(y * s + x) * 4 + 3] < 128) holes++;
-    }
-    expect(holes).toBeGreaterThanOrEqual(s === 16 ? 12 : 50);
+    const rgba = rasterizeMark(s, MARK_PRESETS.cut());
+    const alpha = (x: number, y: number) => rgba[(y * s + x) * 4 + 3];
+    expect(alpha(Math.floor(s / 2), Math.floor(s * 0.2))).toBe(255); // 额头是实心方块
+    expect(alpha(Math.floor(s / 2), Math.floor(s * 0.53))).toBe(255); // 两眼之间
+    expect(alpha(Math.floor(s * 0.35), Math.floor(s * 0.53))).toBeLessThan(128); // 左眼镂空
+    expect(alpha(Math.floor(s * 0.65), Math.floor(s * 0.53))).toBeLessThan(128); // 右眼镂空
   }
+  const color = rasterizeMark(64, MARK_PRESETS.color());
+  expect([...color.subarray((32 * 64 + 32) * 4, (32 * 64 + 32) * 4 + 3)]).toEqual([0x86, 0x88, 0xff]);
+  expect([...color.subarray((34 * 64 + 22) * 4, (34 * 64 + 22) * 4 + 3)]).toEqual([0x14, 0x14, 0x14]);
+});
+
+test("手机原生启动图：#1a1a1a 底、方块头居中（与开机动画同底色）", () => {
+  const p = pngPixels(readFileSync(join(ROOT, "mobile/assets/splash.png")));
+  expect(p.w).toBe(2732);
+  expect(p.px(10, 10)).toEqual([0x1a, 0x1a, 0x1a, 255]);
+  expect(p.px(1366, 1366 - 150).slice(0, 3)).toEqual(PURPLE);
+  expect(p.px(Math.round(1366 - 0.1522 * 0.15 * 2732), Math.round(1366 + 0.0326 * 0.15 * 2732)).slice(0, 3)).toEqual(EYE);
 });
 
 test("ICO / ICNS 编码结构", () => {
-  const png = markPng(16, MARK_PRESETS.light());
+  const png = markPng(16, MARK_PRESETS.color());
   const ico = icoFromPngs([{ size: 16, png }, { size: 256, png }]);
   expect(ico.readUInt16LE(2)).toBe(1);
   expect(ico[22]).toBe(0); // 256 记为 0
@@ -123,32 +149,37 @@ test("ICO / ICNS 编码结构", () => {
   expect(icns.length).toBe(16 + png.length);
 });
 
-test("页面里用的是真标志，不再是 ✦ 占位；README / 启动页引用新文件，官网内联真标志 SVG", () => {
-  const svg = markSvg({ disc: "currentColor" });
-  const d = /d="([^"]+)"/.exec(svg)![1];
+test("页面里用的是真标志（方块头），不再是 ✦ 占位或旧圆盘光标；README / 启动页引用新文件，官网内联方块头 SVG", () => {
+  const inline = inlineMarkSvg("brand-mark");
+  const eyes = /<rect x="28\.26"[^>]*\/>/.exec(inline)![0];
   expect(DESKTOP_HTML).not.toContain(STAR);
-  expect(DESKTOP_HTML.split(d).length - 1).toBe(2); // 新对话空状态 + 首次设置
-  expect(MOBILE_V2_HTML).toContain(d); // 配对页 + 空对话列表模板
+  expect(DESKTOP_HTML.split(inline).length - 1).toBe(2); // 新对话空状态 + 首次设置
+  expect(MOBILE_V2_HTML).toContain(inline); // 配对页 + 空对话列表模板
   expect(MOBILE_V2_HTML).toContain('id="tpl-mark"');
+  for (const html of [DESKTOP_HTML, MOBILE_V2_HTML, PAGE_HTML]) {
+    expect(html).not.toContain("A40 40 0 1 0"); // 旧圆盘
+    expect(html).toContain(eyes);
+  }
   const readme = readFileSync(join(ROOT, "README.md"), "utf-8");
-  expect(readme).toContain("desktop/icon-src/nyra-app-icon.svg"); // README 顶部用应用图标（紫色团子方块）
+  expect(readme).toContain("desktop/icon-src/nyra-app-icon.svg"); // README 顶部用应用图标（方块头）
+  const logo = inlineMarkSvg("logo-mark");
   for (const page of ["index", "faq", "privacy", "terms", "acceptable-use"]) {
     const html = readFileSync(join(ROOT, "docs", `${page}.html`), "utf-8");
     expect(html).toContain('href="assets/favicon.svg"');
     expect(html).toContain('href="assets/apple-touch-icon.png"');
-    // 官网 v4 把导航 / 页脚标志改成内联 SVG：每个 class="brand" 的标志都必须是 brandMark.ts 生成的真几何，
-    // 不能换成 ✦ 占位、别的图形或外链假图。
+    expect(html).toContain('content="https://js2005happy.github.io/nyra/assets/og.png"');
     expect(html).not.toContain(STAR);
+    expect(html).not.toContain("A40 40 0 1 0");
+    // 导航 / 页脚的品牌位：每个 class="brand" 都是 brandMark.ts 生成的方块头 + Inter 字标 “Nyra”。
     const brands = [...html.matchAll(/<a class="brand"[^>]*>([\s\S]*?)<\/a>/g)].map((m) => m[1]);
     expect(brands.length).toBeGreaterThanOrEqual(1);
     for (const b of brands) {
-      const inline = /<svg viewBox="([^"]+)"[^>]*>\s*<path fill="currentColor" fill-rule="evenodd" d="([^"]+)"\s*\/><\/svg>/.exec(b);
-      expect(inline).not.toBeNull();
-      expect(inline![1]).toBe("6 6 88 88");
-      expect(inline![2]).toBe(d);
+      expect(b.startsWith(logo)).toBe(true);
       expect(b).not.toContain("<img");
     }
   }
+  const og = pngPixels(readFileSync(join(ROOT, "docs/assets/og.png")));
+  expect(og.w).toBe(1200);
   const launch = readFileSync(join(ROOT, "desktop/ui/index.html"), "utf-8");
   expect(launch).toContain('srcset="mark-dark.svg"');
 });

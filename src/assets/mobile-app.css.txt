@@ -146,7 +146,7 @@ svg.i.f{fill:currentColor;stroke:none}
 .textbtn{color:var(--rm);font-weight:600;padding:14px;width:100%;text-align:center}
 /* 配对页 */
 .pair{padding:calc(48px + var(--sat)) 24px 32px;max-width:480px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
-/* 正式标志（圆盘 + 镂空光标，= 入场动画终帧） */
+/* 品牌标志（方块头，彩色，深浅主题同一枚） */
 .mk{width:48px;height:48px;color:#0B0B0C;display:flex;align-items:center;justify-content:center;margin-bottom:8px}
 .mk svg{width:48px;height:48px;display:block}
 @media (prefers-color-scheme: dark){.mk{color:#F5F5F7}}
@@ -157,8 +157,8 @@ svg.i.f{fill:currentColor;stroke:none}
 .err{color:var(--rm);font-size:13.5px;min-height:1em}
 .err:empty{display:none}
 .toast{position:fixed;left:50%;top:calc(64px + var(--sat));transform:translateX(-50%);background:var(--btn);color:var(--btnfg);padding:10px 16px;border-radius:14px;font-size:14px;z-index:40;max-width:86vw;text-align:center;box-shadow:0 6px 20px var(--shadow)}
-/* 入场动画（原 Nyra splash：黑底、白点 → 光标滑入 → 标志 → 字标）；结束后整层淡出露出应用 */
-#splash{position:fixed;inset:0;z-index:100;background:#0B0B0C;display:flex;align-items:center;justify-content:center;transition:opacity .45s ease}
+/* 入场动画（方块头转眼球：浮现 → 左看右看 → 转一圈 → 眨眼 → 字标）；结束后整层淡出露出应用 */
+#splash{position:fixed;inset:0;z-index:100;background:#1a1a1a;display:flex;align-items:center;justify-content:center;transition:opacity .45s ease}
 #splash svg{width:100%;height:100%;display:block}
 #splash.out{opacity:0;pointer-events:none}
 #splash.reduce svg{animation:sp-fade .5s ease-out both}

@@ -6,7 +6,7 @@
 // 小尺寸规则：≤20 px 眼睛放大 18%，≤28 px 放大 8%。
 //
 // 只管“应用图标”：桌面安装包图标、手机启动器图标、PWA manifest、apple-touch-icon、favicon。
-// 界面里的团子头像（src/nyraAvatar.ts）和圆盘 + 光标标志（src/brandMark.ts）不在这里。
+// 界面里的团子头像（src/nyraAvatar.ts）不在这里；品牌标志（src/brandMark.ts）是同一枚方块头的视框 100 版本，测试保证两边几何一致。
 // 编码（PNG / ICO / ICNS）复用 src/brandMark.ts；scripts/make-icons.ts 与 mobile/scripts/make-assets.ts
 // 用这里生成提交进仓库的图标文件，网关在运行时用它出 PWA 图标。零依赖。
 import { rgbaPng } from "./brandMark.ts";

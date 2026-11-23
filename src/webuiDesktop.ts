@@ -5,7 +5,7 @@
 // 设计稿 v8（docs/design/v8）：会话常驻左侧 + 右侧抽屉面板（概览 / 改动 / 计划 / 证据 / 终端）、工作中一行实时状态、
 // 每轮收尾交代、回复底部用时与 token、顶栏审批模式胶囊、新审批卡、项目记忆卡；logo 与颜色不变，团子头像取自 v6.2。
 // 浅色默认，prefers-color-scheme: dark 跟随系统。窗口用系统原生标题栏，页面里不画假窗口按钮。
-// 样式与脚本分别在 src/assets/desktop-app.css.txt / desktop-app.js.txt；入场动画复用 src/assets/mobile-splash.js.txt，
+// 样式与脚本分别在 src/assets/desktop-app.css.txt / desktop-app.js.txt；入场动画（方块头转眼球）复用 src/assets/mobile-splash.js.txt，
 // 只在桌面外壳里（/api/info 的 shell === "desktop"）每次冷启动播一次。界面文案在 src/i18n.ts 的 d.* 键（复用部分 m.* 键）。
 // 旧网页界面（PAGE_HTML，src/webuiPage.ts）保留导出，不再挂在 / 上。
 import { MESSAGES, type Lang } from "./i18n.ts";
@@ -33,7 +33,7 @@ export function desktopMessages(): Record<Lang, Record<string, string>> {
 const I18N_JSON = JSON.stringify(desktopMessages()).replace(/</g, "\\u003c");
 
 const SVG = (body: string, cls = "", vb = "0 0 24 24") => `<svg${cls ? ` class="${cls}"` : ""} viewBox="${vb}" aria-hidden="true">${body}</svg>`;
-// 正式标志（圆盘 + 光标镂空，= 入场动画终帧）：圆盘跟随文字色，深浅主题自动反色。
+// 品牌标志（方块头：紫色圆角方块 + 两只竖眼，src/brandMark.ts），深浅主题同一枚。
 const MARK = inlineMarkSvg("brand-mark");
 const ICONS: Record<string, string> = {
   pencil: SVG('<path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/>'),

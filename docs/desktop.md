@@ -86,7 +86,7 @@ cd src-tauri && cargo test                      # 外壳的单元测试
 - 画面：团子本身就是图块——整块纯紫 #8688ff，只有两只 #141414 竖胶囊眼（比例同界面里的团子头像）。和手机启动器、PWA、favicon 同一套。矢量源 `desktop/icon-src/nyra-app-icon.svg`（Windows / Linux 图块，四周 6% 边距、圆角 19%）。
 - 16 / 24 / 32 px 用满格圆角版 `desktop/icon-src/nyra-mark-small.svg`（不留边距，眼睛按小尺寸规则放大：≤20 px +18%，≤28 px +8%），标题栏、任务栏、资源管理器列表里也看得清。
 - `icon.ico`（16/24/32/48/64/256）用于 exe、安装程序（`nsis.installerIcon`）、桌面与开始菜单快捷方式、任务栏和窗口；`icon.icns`（16–1024，含 @2x；≥64 px 按 macOS 图标网格 824/1024 的连续圆角主体 + 标准投影）用于 macOS 的 .app、程序坞与访达；`icon.png`（512）给 Linux。没有使用 Tauri 默认图标。
-- 启动引导页（`desktop/ui/`）的标志：浅色 `mark.svg`、深色 `mark-dark.svg`，用 `<picture>` 跟随系统切换。
+- 启动引导页（`desktop/ui/`）的标志：方块头 `mark.svg`（`mark-dark.svg` 内容相同，保留 `<picture>` 结构），由 `bun scripts/make-icons.ts` 从 `src/brandMark.ts` 生成。
 
 ## 已知限制 / 待办
 

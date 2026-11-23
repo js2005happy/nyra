@@ -3,11 +3,11 @@
 // 视觉严格按设计稿 docs/assets/screenshots/android.png / ios.png（nyra-design v2：mobile.py + kit.py）：
 // 浅色默认、黑白单色（白底、黑色主按钮、灰色次要文字、Inter / JetBrains Mono），
 // prefers-color-scheme: dark 时用设计稿的 DARK 令牌。样式与前端脚本分别放在
-// src/assets/mobile-app.css.txt / mobile-app.js.txt；入场动画移植自原 Nyra splash
-// （src/assets/mobile-splash.js.txt）。界面文案在 src/i18n.ts 的 m.* 键（中英）。
+// src/assets/mobile-app.css.txt / mobile-app.js.txt；入场动画是方块头转眼球
+// （src/assets/mobile-splash.js.txt，设计源 docs/design/splash/splash.js）。界面文案在 src/i18n.ts 的 m.* 键（中英）。
 // 页面本身不含任何秘密：设备 token 只在 localStorage，每次 API 调用带 X-Nyra-Token 头。
 // 主屏幕 / 浏览器图标是应用图标（紫色团子方块，几何在 src/appIcon.ts）在本机光栅化的 PNG；
-// 页面里内联的标志仍是圆盘 + 光标（src/brandMark.ts）。
+// 页面里内联的品牌标志是同一枚方块头（src/brandMark.ts）。
 import { icoFromPngs, inlineMarkSvg } from "./brandMark.ts";
 import { appIconPng, appIconSvg, rasterizeAppIcon, type IconShape } from "./appIcon.ts";
 import { MESSAGES, type Lang } from "./i18n.ts";
@@ -20,19 +20,18 @@ import INTER_600 from "./assets/mobile-fonts/inter-600.woff.b64.txt" with { type
 import JBM_400 from "./assets/mobile-fonts/jbm-400.woff.b64.txt" with { type: "text" };
 
 // ---------------------------------------------------------------- 颜色 ---
-/** 设计稿令牌（nyra-design v2 kit.py LIGHT / DARK）。图标与入场动画用原 splash 的黑底 / 浅色前景。 */
+/** 设计稿令牌（nyra-design v2 kit.py LIGHT / DARK）。入场动画：#1a1a1a 底、方块头、浅色字标。 */
 export const MOBILE_COLORS = {
   light: { bg: "#FFFFFF", fg: "#0D0D0D", muted: "#6E6E73", chip: "#F2F2F3", line: "#ECECEE" },
   dark: { bg: "#0B0B0C", fg: "#EDEDED", muted: "#8E8E93", chip: "#1C1C1E", line: "#232325" },
-  splashBg: "#0B0B0C",
+  splashBg: "#1a1a1a",
   splashFg: "#F5F5F7",
   mark: "#0B0B0C",
 };
 
 // ---------------------------------------------------------------- 图标 ---
-// 正式标志（圆盘 + 光标，入场动画终帧）的几何与光栅化都在 src/brandMark.ts；这里只选用途。
-// 旧名字照旧导出，调用方与测试不用改。
-export { MARK_CIRCLE, MARK_CURSOR, MARK_STROKE, MARK_ROTATE_DEG, rgbaPng } from "./brandMark.ts";
+// 品牌标志（方块头）的几何与光栅化都在 src/brandMark.ts；这里只选用途。
+export { MARK_TILE, MARK_EYE_GEOM, markEyes, rgbaPng } from "./brandMark.ts";
 
 type IconKind = "any" | "maskable" | "apple" | "favicon";
 
@@ -81,7 +80,7 @@ export function mobileFaviconSvg(): string {
   return appIconSvg("tile");
 }
 
-/** 内联进页面的标志（圆盘 = currentColor，光标镂空）。 */
+/** 内联进页面的品牌标志（彩色方块头）。 */
 export const MARK_INLINE = inlineMarkSvg("brand-mark");
 
 export const MOBILE_V2_MANIFEST = {
@@ -92,7 +91,7 @@ export const MOBILE_V2_MANIFEST = {
   scope: "/m",
   display: "standalone",
   orientation: "portrait",
-  // 系统启动屏与入场动画同为黑底，之后淡入浅色应用。
+  // 系统启动屏与入场动画同为 #1a1a1a 深底，之后淡入应用。
   background_color: MOBILE_COLORS.splashBg,
   theme_color: MOBILE_COLORS.light.bg,
   icons: [

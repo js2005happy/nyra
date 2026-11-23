@@ -1,19 +1,18 @@
-// src/termMark.ts — 终端欢迎屏上的 Nyra 标志（圆盘 + 光标）。
+// src/termMark.ts — 终端欢迎屏上的 Nyra 标志（方块头：圆角紫方块 + 两只竖眼）。
 //
 // 所有终端都用半块字符 ▀▄█ 拼（像素风，不画内联图片）。
 //
-// 半块字符画：几何来自 src/brandMark.ts（圆盘 r=40、光标绕圆心 -6°、光标四周 3 个单位的镂空），
+// 半块字符画：几何来自 src/brandMark.ts（圆角方块 + 两只胶囊眼，眼睛镂空），
 // 光栅化成 18×18 的覆盖率网格（每格 0–f 共 16 级），一个字符格上下各放一个像素
-// （终端字符格高 ≈ 宽 × 2，所以像素是方的、圆盘是圆的），画成 18 列 × 9 行。
+// （终端字符格高 ≈ 宽 × 2，所以像素是方的、方块是方的），画成 18 列 × 9 行。
 // 网格预先算好写成常量（启动时不光栅化、不加载 brandMark）；
 // 改了几何，tests/node/test-term-mark.test.ts 会失败并打印新常量，贴回这里即可。
 //
 // 字符画的三种画法：
-// - color（深色终端、256 色或 truecolor）：每个像素按覆盖率在“假定深底”与浅色圆盘 #F5F5F7 之间
+// - color（深色终端、256 色或 truecolor）：每个像素按覆盖率在“假定深底”与团子紫 #8688ff 之间
 //   混色（先过一条对比度曲线），fg/bg 各管上下半格，边缘抗锯齿；覆盖率很低的像素不上色，露出终端自己的底色——
-//   光标就是终端底色（= 入场动画终帧）。
-// - mono（浅色终端、16 色、NO_COLOR）：覆盖率 ≥ 50% 的像素画实，不带任何颜色，用终端默认前景色。
-//   浅色终端上自然是深色圆盘 + 浅色镂空光标（= 浅色版标志），NO_COLOR 的深色终端上是浅色圆盘。
+//   眼睛就是终端底色（深色终端上 ≈ 标志的深色眼）。
+// - mono（浅色终端、16 色、NO_COLOR）：覆盖率 ≥ 50% 的像素画实，不带任何颜色，用终端默认前景色，眼睛镂空。
 // - 不能画块字符（老 conhost 等）或终端太窄：不调用这里，欢迎屏退回单行 "✻ Nyra"/"* Nyra"。
 import { fgCode, bgCode, mix, type ColorLevel } from "./theme.ts";
 
@@ -26,32 +25,32 @@ export const TERM_MARK_ROWS = TERM_MARK_PX / 2;
 
 /**
  * 预先算好的覆盖率（每行 18 个十六进制数字，0 = 空、f = 全满）：
- * rasterizeMark(18, { disc, bg: null, discFraction: 1, stroke: MARK_STROKE })
+ * rasterizeMark(18, MARK_PRESETS.cut())（方块撑满、眼睛镂空、18 px 眼睛放大 18%）
  * 的 alpha，量化到 16 级。
  */
 export const TERM_MARK_COVERAGE: readonly string[] = [
-  "0000049dffd9400000",
-  "0003bffffffffb3000",
-  "003effffffffffe300",
-  "03effffffffffffe30",
-  "0bfffd6effffffffb0",
-  "4ffffb02cffffffff4",
-  "9ffffb0019fffffff9",
-  "dffffe00007ffffffd",
-  "ffffff000004efffff",
-  "ffffff1000002cffff",
-  "dfffff400000019ffd",
-  "9fffff400000002ff9",
-  "4fffff8000007ffff4",
-  "0bffff8001001effb0",
-  "03efff906d1007fe30",
-  "003effd7ef8008e300",
-  "0003bffffff8db3000",
-  "0000049dffd9400000",
+  "03affffffffffffa30",
+  "3effffffffffffffe3",
+  "affffffffffffffffa",
+  "ffffffffffffffffff",
+  "ffffffffffffffffff",
+  "ffffffffffffffffff",
+  "ffffffffffffffffff",
+  "ffffe55effe55effff",
+  "ffffb008ff800bffff",
+  "ffffb008ff800bffff",
+  "ffffb008ff800bffff",
+  "ffffd22dffd22dffff",
+  "ffffffffffffffffff",
+  "ffffffffffffffffff",
+  "ffffffffffffffffff",
+  "affffffffffffffffa",
+  "3effffffffffffffe3",
+  "03affffffffffffa30",
 ];
 
-/** 深色终端上的圆盘色（= brandMark 的 MARK_PAPER，测试保证二者一致）。 */
-export const TERM_MARK_PAPER = "#F5F5F7";
+/** 深色终端上的方块色（= brandMark 的 MARK_BODY 团子紫，测试保证二者一致）。 */
+export const TERM_MARK_BODY = "#8688ff";
 /** 抗锯齿混色时假定的终端底色（常见深色终端 #000–#1E1E1E 的中间值）。 */
 export const TERM_MARK_ASSUMED_BG = "#121212";
 /**
@@ -64,7 +63,7 @@ const COLOR_FLOOR = 0.15;
 
 function colorAt(c: number): string | null {
   const v = Math.min(1, Math.max(0, (c - RAMP_LO) / (RAMP_HI - RAMP_LO)));
-  return v < COLOR_FLOOR ? null : mix(TERM_MARK_ASSUMED_BG, TERM_MARK_PAPER, v);
+  return v < COLOR_FLOOR ? null : mix(TERM_MARK_ASSUMED_BG, TERM_MARK_BODY, v);
 }
 /** mono 画法里像素画实的门槛。 */
 const MONO_THRESHOLD = 8 / 15;

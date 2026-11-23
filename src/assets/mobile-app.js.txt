@@ -759,7 +759,7 @@ function runSplash(){
   const s = $('splash');
   if (!shouldSplash()) { s.remove(); return; }
   let reduce = false; try { reduce = matchMedia('(prefers-reduced-motion: reduce)').matches; } catch(e){}
-  s.classList.remove('hidden'); s.dataset.state = 'playing'; setThemeColor('#0B0B0C');
+  s.classList.remove('hidden'); s.dataset.state = 'playing'; setThemeColor('#1a1a1a');
   const finish = () => {
     s.dataset.state = 'done'; s.classList.add('out'); setThemeColor('');
     setTimeout(() => s.remove(), 480);

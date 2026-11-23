@@ -1,219 +1,142 @@
-// src/brandMark.ts — Nyra 正式标志（圆盘 + 光标）的唯一几何来源与全部导出格式。
+// src/brandMark.ts — Nyra 品牌标志“方块头”的唯一几何来源与全部导出格式。
 //
-// 标志 = 入场动画终帧里的那枚圆标（docs/design/splash/splash.js 的 frame(3.0)）：
-//   圆盘 r=40（中心 50,50）；光标 = splash 的 arrowD(40,31,0.86)，绕圆心旋转 -6°，
-//   描边 6、圆角接头；光标整体落在圆盘内，画成“底色”——浅底上是深色圆盘 + 镂空光标，
-//   深底上是浅色圆盘（#F5F5F7）+ 底色光标，与终帧完全一致。不带 “Nyra” 字标。
-// 视框 6 6 88 88：圆盘直径占 91%，四周 4 个单位留白（抗锯齿不被裁）。
+// 标志 = 已定稿的应用图标 C：圆角方块（团子紫 #8688ff）+ 两只竖向圆角矩形眼（#141414）。
+// 视框 0 0 100 100：方块撑满视框，圆角 22（= src/appIcon.ts 的 tile 圆角 22%）；
+// 眼睛比例沿用团子头像（r46 圆里 12×21、眼心离中心 ±14、低 3），按半边长 50 换算：
+//   眼 13.04×22.83、眼心 (50±15.22, 53.26)，与 appIcon.ts 的 1024 网格逐点一致（测试保证）。
+// 深浅底都用同一枚彩色标志；需要单色（印刷、终端 mono）时用 mono：一条 evenodd 路径，眼睛镂空。
+// 不带 “Nyra” 字标；字标用 Inter，在用到的地方排字。agent 头像（src/nyraAvatar.ts 的圆团子）不在这里。
 //
 // 本文件零依赖：SVG 字符串、RGBA 光栅化（超采样抗锯齿）、PNG / ICO / ICNS 编码。
-// 手机 PWA 图标（src/webuiMobile.ts）在运行时用它；scripts/make-icons.ts 用它生成
-// docs/assets/ 与 desktop/ 下所有提交进仓库的图标文件。改几何只改这里，再跑一次脚本。
+// 网页端、手机 PWA、网关 /nyra-mark.svg 在运行时用它；scripts/make-icons.ts、mobile/scripts/make-assets.ts
+// 用它生成提交进仓库的标志文件。改几何只改这里（并同步 appIcon.ts），再跑一次脚本。
 import { deflateSync } from "node:zlib";
 
-export const MARK_INK = "#0B0B0C"; // 深色：浅底上的圆盘；深底 / 图块的底色
-export const MARK_PAPER = "#F5F5F7"; // 浅色：深底上的圆盘（= 入场动画终帧）
-export const MARK_VIEWBOX: [number, number, number, number] = [6, 6, 88, 88];
-export const MARK_CIRCLE = { cx: 50, cy: 50, r: 40 };
-export const MARK_CURSOR: [number, number][] = [
-  [40.0, 31.0], [40.0, 75.72], [50.75, 65.83], [58.06, 81.74], [65.37, 78.47], [58.06, 62.65], [72.25, 62.65],
-];
-export const MARK_STROKE = 6;
-export const MARK_ROTATE_DEG = -6;
-/** 16–32 px 用的加粗版：光标镂空加粗（描边 10），线条在小尺寸下不糊成一团。 */
-export const MARK_STROKE_SMALL = 10;
+export const MARK_BODY = "#8688ff"; // 方块（团子紫）
+export const MARK_EYE = "#141414"; // 眼睛
+export const MARK_INK = "#0B0B0C"; // 单色标志在浅底上的颜色
+export const MARK_PAPER = "#F5F5F7"; // 单色标志在深底上的颜色；开机动画字标色
+export const MARK_VIEWBOX: [number, number, number, number] = [0, 0, 100, 100];
+/** 方块：视框内的位置、边长与圆角（视框单位）。 */
+export const MARK_TILE = { x: 0, y: 0, size: 100, r: 22 } as const;
+/** 眼睛几何（视框单位，scale = 1）：宽、高、眼心离中线的水平距离、眼心 y。 */
+export const MARK_EYE_GEOM = { w: (12 / 46) * 50, h: (21 / 46) * 50, dx: (14 / 46) * 50, cy: 50 + (3 / 46) * 50 } as const;
+/** 16–32 px 小尺寸用：≤20 px 眼睛放大 18%，≤28 px 放大 8%（与 appIcon.ts 相同）。 */
 export const SMALL_MAX_PX = 32;
+export function markEyeScaleFor(px: number): number {
+  return px <= 20 ? 1.18 : px <= 28 ? 1.08 : 1;
+}
 
-export const CURSOR_D = "M" + MARK_CURSOR.map(([x, y]) => `${x.toFixed(2)} ${y.toFixed(2)}`).join(" L") + " Z";
+/** 两只眼（视框单位）：左上角 x,y + 宽高，圆角 = w/2。 */
+export function markEyes(scale = 1): { x: number; y: number; w: number; h: number }[] {
+  const { w, h, dx, cy } = MARK_EYE_GEOM;
+  const W = w * scale;
+  const H = h * scale;
+  const DX = dx * (1 + (scale - 1) * 0.5);
+  return [-1, 1].map((s) => ({ x: 50 + s * DX - W / 2, y: cy - H / 2, w: W, h: H }));
+}
+
+const f = (n: number) => Number(n.toFixed(2)).toString();
+
+/** 圆角矩形路径（顺时针）；ccw = 逆时针（evenodd 镂空时方向无所谓，留着方便非零规则）。 */
+function rrectD(x: number, y: number, w: number, h: number, r: number): string {
+  const rr = Math.min(r, w / 2, h / 2);
+  return `M${f(x + rr)} ${f(y)}H${f(x + w - rr)}A${f(rr)} ${f(rr)} 0 0 1 ${f(x + w)} ${f(y + rr)}` +
+    `V${f(y + h - rr)}A${f(rr)} ${f(rr)} 0 0 1 ${f(x + w - rr)} ${f(y + h)}` +
+    `H${f(x + rr)}A${f(rr)} ${f(rr)} 0 0 1 ${f(x)} ${f(y + h - rr)}` +
+    `V${f(y + rr)}A${f(rr)} ${f(rr)} 0 0 1 ${f(x + rr)} ${f(y)}Z`;
+}
+
+/** 单色标志的单条路径（evenodd）：方块 + 两只眼的镂空。 */
+export function markPathD(eyeScale = 1): string {
+  const t = MARK_TILE;
+  return [rrectD(t.x, t.y, t.size, t.size, t.r), ...markEyes(eyeScale).map((e) => rrectD(e.x, e.y, e.w, e.h, e.w / 2))].join(" ");
+}
 
 // ---------------------------------------------------------------- SVG ---
 export interface MarkSvgOpts {
-  /** 圆盘颜色；默认深色。 */
-  disc?: string;
-  /** 光标外扩的描边宽度（镂空比光标本身每边宽 stroke/2）。 */
-  stroke?: number;
-  /** 视框外再包一层底色图块（App 图标）：底色、圆角比例（相对边长）、圆盘占图块的比例。 */
-  tile?: { fill: string; radius: number; disc: number };
-  /** favicon：跟随系统深浅色（深色时圆盘换浅色）。 */
-  adaptive?: boolean;
+  /** 单色：整枚标志一个颜色、眼睛镂空（露出底色）。不给 = 彩色（紫方块 + 深色眼）。 */
+  mono?: string;
+  /** 眼睛放大系数（小尺寸用）。 */
+  eyeScale?: number;
 }
 
-/**
- * 光标外扩 stroke/2（圆角）的轮廓：凸角画圆弧、凹角取两条外扩边的交点，已绕圆心旋转 -6°。
- * 这正是 splash 里 “填充 + 描边 6、圆角接头” 的光标外形，写成一条路径，不用 mask，
- * GitHub README、老浏览器、各种 SVG 光栅器都按同一个形状画。
- */
-export function cursorOutlineD(stroke = MARK_STROKE): string {
-  const h = stroke / 2;
-  const P = rotatedCursor();
-  const n = P.length;
-  // 多边形方向（屏幕坐标、y 向下）：面积 > 0 为顺时针。
-  let area = 0;
-  for (let i = 0; i < n; i++) { const [x1, y1] = P[i]; const [x2, y2] = P[(i + 1) % n]; area += x1 * y2 - x2 * y1; }
-  const cw = area > 0;
-  const normal = (a: [number, number], b: [number, number]): [number, number] => {
-    const dx = b[0] - a[0]; const dy = b[1] - a[1]; const L = Math.hypot(dx, dy);
-    // 外法线（y 向下的屏幕坐标）：顺时针多边形是 (dy, -dx)，逆时针反过来。
-    return cw ? [dy / L, -dx / L] : [-dy / L, dx / L];
-  };
-  const f = (v: number) => v.toFixed(2);
-  let d = "";
-  for (let i = 0; i < n; i++) {
-    const prev = P[(i - 1 + n) % n]; const cur = P[i]; const next = P[(i + 1) % n];
-    const n1 = normal(prev, cur); const n2 = normal(cur, next);
-    const cross = (cur[0] - prev[0]) * (next[1] - cur[1]) - (cur[1] - prev[1]) * (next[0] - cur[0]);
-    const convex = cw ? cross > 0 : cross < 0;
-    const a: [number, number] = [cur[0] + n1[0] * h, cur[1] + n1[1] * h];
-    const b: [number, number] = [cur[0] + n2[0] * h, cur[1] + n2[1] * h];
-    if (convex) {
-      d += (d ? " L" : "M") + `${f(a[0])} ${f(a[1])} A${h} ${h} 0 0 ${cw ? 1 : 0} ${f(b[0])} ${f(b[1])}`;
-    } else {
-      // 两条外扩边（过 a 方向 cur-prev，过 b 方向 next-cur）的交点。
-      const d1 = [cur[0] - prev[0], cur[1] - prev[1]]; const d2 = [next[0] - cur[0], next[1] - cur[1]];
-      const den = d1[0] * d2[1] - d1[1] * d2[0];
-      const t = ((b[0] - a[0]) * d2[1] - (b[1] - a[1]) * d2[0]) / den;
-      d += (d ? " L" : "M") + `${f(a[0] + d1[0] * t)} ${f(a[1] + d1[1] * t)}`;
-    }
-  }
-  return d + " Z";
+/** 标志内部（不含 <svg> 外壳）：彩色是三块实心图形，单色是一条 evenodd 路径。 */
+export function markShapes(o: MarkSvgOpts = {}): string {
+  const s = o.eyeScale ?? 1;
+  if (o.mono) return `<path fill="${o.mono}" fill-rule="evenodd" d="${markPathD(s)}"/>`;
+  const t = MARK_TILE;
+  return `<rect x="${t.x}" y="${t.y}" width="${t.size}" height="${t.size}" rx="${t.r}" fill="${MARK_BODY}"/>` +
+    markEyes(s).map((e) => `<rect x="${f(e.x)}" y="${f(e.y)}" width="${f(e.w)}" height="${f(e.h)}" rx="${f(e.w / 2)}" fill="${MARK_EYE}"/>`).join("");
 }
 
-/** 圆盘去掉光标的单条路径（evenodd）：圆 + 光标外扩轮廓。 */
-export function markPathD(stroke = MARK_STROKE): string {
-  const { cx, cy, r } = MARK_CIRCLE;
-  const circle = `M${cx - r} ${cy} A${r} ${r} 0 1 0 ${cx + r} ${cy} A${r} ${r} 0 1 0 ${cx - r} ${cy} Z`;
-  return `${circle} ${cursorOutlineD(stroke)}`;
-}
-
-/**
- * 标志 SVG：一条 evenodd 路径，光标是镂空的——放在任何底色上，光标处露出的都是底色
- * （= 终帧里光标是底色）。tile 模式下外面包一块实心圆角图块（App 图标）。
- */
+/** 标志 SVG（独立文件用）。 */
 export function markSvg(o: MarkSvgOpts = {}): string {
-  const disc = o.disc ?? MARK_INK;
-  const d = markPathD(o.stroke ?? MARK_STROKE);
-  const style = o.adaptive
-    ? `<style>path{fill:${disc}}@media (prefers-color-scheme:dark){path{fill:${MARK_PAPER}}}</style>`
-    : "";
-  const path = `<path fill="${disc}" fill-rule="evenodd" d="${d}"/>`;
-  if (o.tile) {
-    const S = 80 / o.tile.disc;
-    const x0 = (50 - S / 2).toFixed(2);
-    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${x0} ${x0} ${S.toFixed(2)} ${S.toFixed(2)}">` +
-      `<rect x="${x0}" y="${x0}" width="${S.toFixed(2)}" height="${S.toFixed(2)}" rx="${(S * o.tile.radius).toFixed(2)}" fill="${o.tile.fill}"/>${path}</svg>`;
-  }
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${MARK_VIEWBOX.join(" ")}">${style}${path}</svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${MARK_VIEWBOX.join(" ")}">${markShapes(o)}</svg>`;
 }
 
-/** 内联进页面的标志：圆盘 = currentColor，光标镂空露出页面底色；aria-hidden。 */
-export function inlineMarkSvg(cls = ""): string {
-  return markSvg({ disc: "currentColor" }).replace("<svg ", `<svg${cls ? ` class="${cls}"` : ""} aria-hidden="true" focusable="false" `);
+/** 内联进页面的标志（彩色方块头）；aria-hidden。 */
+export function inlineMarkSvg(cls = "", o: MarkSvgOpts = {}): string {
+  return `<svg${cls ? ` class="${cls}"` : ""} viewBox="${MARK_VIEWBOX.join(" ")}" aria-hidden="true" focusable="false">${markShapes(o)}</svg>`;
 }
 
 // ---------------------------------------------------------- 光栅化 ---
 export interface RasterOpts {
-  /** 圆盘颜色。 */
-  disc: string;
-  /** 不透明底色（null = 透明底，光标镂空为透明）。 */
+  /** 方块颜色；默认团子紫。 */
+  body?: string;
+  /** 眼睛颜色；null = 镂空（透明，或露出 bg）。 */
+  eye: string | null;
+  /** 方块外的不透明底色（null = 透明）。 */
   bg: string | null;
-  /** 底色的形状：full = 铺满正方形；圆角比例（相对边长）。 */
+  /** 底色的圆角比例（相对边长）；不给 = 铺满正方形。 */
   bgRadius?: number;
-  /** 底色图块四周的透明边距（相对边长，macOS 图标网格用）。 */
-  bgMargin?: number;
-  /** 圆盘直径占整幅的比例。 */
-  discFraction: number;
-  /** 光标镂空描边；不给时按尺寸取正常 / 加粗。 */
-  stroke?: number;
+  /** 方块边长占整幅的比例。 */
+  fraction: number;
+  /** 眼睛放大系数；不给时按方块实际像素取。 */
+  eyeScale?: number;
 }
 
 function hexRgb(hex: string): [number, number, number] {
   return [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
 }
 
-let ROT_CACHE: [number, number][] | null = null;
-function rotatedCursor(): [number, number][] {
-  if (ROT_CACHE) return ROT_CACHE;
-  const a = (MARK_ROTATE_DEG * Math.PI) / 180;
-  const c = Math.cos(a);
-  const s = Math.sin(a);
-  ROT_CACHE = MARK_CURSOR.map(([x, y]) => {
-    const dx = x - 50;
-    const dy = y - 50;
-    return [50 + dx * c - dy * s, 50 + dx * s + dy * c];
-  });
-  return ROT_CACHE;
-}
-
-function insidePolygon(poly: [number, number][], x: number, y: number): boolean {
-  let inside = false;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const [xi, yi] = poly[i];
-    const [xj, yj] = poly[j];
-    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
-  }
-  return inside;
-}
-
-function distToPolygon(poly: [number, number][], x: number, y: number): number {
-  let best = Infinity;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const [ax, ay] = poly[j];
-    const [bx, by] = poly[i];
-    const vx = bx - ax;
-    const vy = by - ay;
-    const t = Math.max(0, Math.min(1, ((x - ax) * vx + (y - ay) * vy) / (vx * vx + vy * vy)));
-    const d = Math.hypot(x - (ax + t * vx), y - (ay + t * vy));
-    if (d < best) best = d;
-  }
-  return best;
-}
-
-/** 点到圆角矩形（中心 c、半边长 h、圆角 r）的有符号距离，单位与输入相同。 */
-function roundRectSd(x: number, y: number, c: number, h: number, r: number): number {
-  const qx = Math.abs(x - c) - (h - r);
-  const qy = Math.abs(y - c) - (h - r);
+/** 点到圆角矩形（中心 cx,cy、半宽 hw、半高 hh、圆角 r）的有符号距离。 */
+function rrectSd(x: number, y: number, cx: number, cy: number, hw: number, hh: number, r: number): number {
+  const qx = Math.abs(x - cx) - (hw - r);
+  const qy = Math.abs(y - cy) - (hh - r);
   return Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0) - r;
 }
 
-/** 光栅化标志为 RGBA。坐标：像素 → 视框单位，圆盘直径 = size * discFraction。 */
+/** 光栅化标志为 RGBA（边缘 4×4 超采样）。 */
 export function rasterizeMark(size: number, o: RasterOpts): Uint8Array {
   const out = new Uint8Array(size * size * 4);
-  const stroke = o.stroke ?? (size <= SMALL_MAX_PX ? MARK_STROKE_SMALL : MARK_STROKE);
-  const half = stroke / 2;
-  const unit = (size * o.discFraction) / (2 * MARK_CIRCLE.r); // 1 视框单位 = 多少像素
-  const toU = (p: number) => 50 + (p - size / 2) / unit;
-  const disc = hexRgb(o.disc);
+  const box = size * o.fraction;
+  const k = box / 100; // 1 视框单位 = 多少像素
+  const ox = (size - box) / 2;
+  const body = hexRgb(o.body ?? MARK_BODY);
+  const eyeCol = o.eye ? hexRgb(o.eye) : null;
   const bg = o.bg ? hexRgb(o.bg) : null;
-  const margin = (o.bgMargin ?? 0) * size;
-  const bgHalf = size / 2 - margin;
-  const bgR = (o.bgRadius ?? 0) * (size - 2 * margin);
-  const poly = rotatedCursor();
+  const bgR = (o.bgRadius ?? 0) * size;
+  const t = MARK_TILE;
+  const tileSd = (x: number, y: number) => rrectSd(x, y, ox + (t.x + t.size / 2) * k, ox + (t.y + t.size / 2) * k, (t.size / 2) * k, (t.size / 2) * k, t.r * k);
+  const eyes = markEyes(o.eyeScale ?? markEyeScaleFor(box)).map((e) => ({ cx: ox + (e.x + e.w / 2) * k, cy: ox + (e.y + e.h / 2) * k, hw: (e.w / 2) * k, hh: (e.h / 2) * k }));
+  const eyeSd = (x: number, y: number) => Math.min(...eyes.map((e) => rrectSd(x, y, e.cx, e.cy, e.hw, e.hh, e.hw)));
+  const bgSd = (x: number, y: number) => rrectSd(x, y, size / 2, size / 2, size / 2, size / 2, bgR);
   const SS = 4;
   for (let py = 0; py < size; py++) {
     for (let px = 0; px < size; px++) {
-      const cx = toU(px + 0.5);
-      const cy = toU(py + 0.5);
-      const pxU = 1 / unit;
-      const dPoly = distToPolygon(poly, cx, cy);
-      const inP = insidePolygon(poly, cx, cy);
-      const edge = Math.min(
-        Math.abs(Math.hypot(cx - MARK_CIRCLE.cx, cy - MARK_CIRCLE.cy) - MARK_CIRCLE.r),
-        inP ? Infinity : Math.abs(dPoly - half),
-        bg ? Math.abs(roundRectSd(px + 0.5, py + 0.5, size / 2, bgHalf, bgR)) / unit : Infinity,
-      );
-      const ss = edge > pxU * 1.5 ? 1 : SS;
+      const cx = px + 0.5;
+      const cy = py + 0.5;
+      const near = Math.min(Math.abs(tileSd(cx, cy)), Math.abs(eyeSd(cx, cy)), bg && bgR > 0 ? Math.abs(bgSd(cx, cy)) : Infinity);
+      const ss = near > 1.5 ? 1 : SS;
       let r = 0, g = 0, b = 0, a = 0;
       for (let sy = 0; sy < ss; sy++) {
         for (let sx = 0; sx < ss; sx++) {
-          const fx = px + (sx + 0.5) / ss;
-          const fy = py + (sy + 0.5) / ss;
-          const x = toU(fx);
-          const y = toU(fy);
-          const inDisc = Math.hypot(x - MARK_CIRCLE.cx, y - MARK_CIRCLE.cy) <= MARK_CIRCLE.r;
-          const inCut = insidePolygon(poly, x, y) || distToPolygon(poly, x, y) <= half;
+          const x = px + (sx + 0.5) / ss;
+          const y = py + (sy + 0.5) / ss;
           let col: [number, number, number] | null = null;
-          if (inDisc && !inCut) col = disc;
-          else if (bg && roundRectSd(fx, fy, size / 2, bgHalf, bgR) <= 0) col = bg;
+          if (tileSd(x, y) <= 0) col = eyeSd(x, y) <= 0 ? eyeCol : body;
+          if (!col && bg && (bgR <= 0 || bgSd(x, y) <= 0)) col = bg;
           if (col) { r += col[0]; g += col[1]; b += col[2]; a += 1; }
         }
       }
@@ -227,19 +150,16 @@ export function rasterizeMark(size: number, o: RasterOpts): Uint8Array {
 
 /** 预设：各用途的标志光栅参数。 */
 export const MARK_PRESETS = {
-  /** 透明底、深色圆盘、光标镂空（浅色界面 / favicon / PWA any）。 */
-  light: (): RasterOpts => ({ disc: MARK_INK, bg: null, discFraction: 0.92 }),
-  /** 透明底、浅色圆盘（深色界面）。 */
-  dark: (): RasterOpts => ({ disc: MARK_PAPER, bg: null, discFraction: 0.92 }),
-  /** 手机主屏幕 maskable：黑底铺满，浅色圆盘在 80% 安全区内。 */
-  maskable: (): RasterOpts => ({ disc: MARK_PAPER, bg: MARK_INK, discFraction: 0.66 }),
-  /** apple-touch-icon：黑底铺满（iOS 自己切圆角），浅色圆盘。 */
-  apple: (): RasterOpts => ({ disc: MARK_PAPER, bg: MARK_INK, discFraction: 0.72 }),
-  /** 桌面 App 图标（Windows / Linux）：黑色圆角图块铺满，浅色圆盘；小尺寸圆盘更满。 */
-  app: (size: number): RasterOpts => ({ disc: MARK_PAPER, bg: MARK_INK, bgRadius: 0.225, discFraction: size <= SMALL_MAX_PX ? 0.82 : 0.7 }),
-  /** macOS 图标网格：1024 画布里 824 的圆角图块（四周约 10% 透明边距）。 */
-  appMac: (size: number): RasterOpts => ({ disc: MARK_PAPER, bg: MARK_INK, bgRadius: 0.225, bgMargin: size <= SMALL_MAX_PX ? 0 : 0.0977, discFraction: size <= SMALL_MAX_PX ? 0.82 : 0.56 }),
+  /** 透明底、彩色方块头（任何底色）。 */
+  color: (): RasterOpts => ({ eye: MARK_EYE, bg: null, fraction: 1 }),
+  /** 透明底、眼睛镂空（单色 / 终端：眼睛露出底色）。 */
+  cut: (): RasterOpts => ({ eye: null, bg: null, fraction: 1 }),
+  /** 手机原生启动图：深色底铺满，方块头居中（与开机动画首尾帧同底色）。 */
+  splash: (): RasterOpts => ({ eye: MARK_EYE, bg: SPLASH_BG, fraction: 0.15 }),
 };
+
+/** 开机动画与原生启动图的底色。 */
+export const SPLASH_BG = "#1a1a1a";
 
 // ------------------------------------------------------------ 编码 ---
 const CRC_TABLE: Int32Array = (() => {

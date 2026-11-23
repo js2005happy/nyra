@@ -3,6 +3,11 @@
 // 四件事在手机上都能完成。页面本身不含 token：token 从 URL ?token= 或
 // localStorage（设备 token）取，每次 API 调用都带 X-Nyra-Token 头。
 // CSP 与 Python 版一致：default-src 'none'，只允许同源连接与内联脚本/样式。
+import { inlineMarkSvg } from "./brandMark.ts";
+
+/** 品牌位：方块头标志（src/brandMark.ts）+ 字标。 */
+const BRAND_MARK = inlineMarkSvg("brand-mark");
+
 export const CSP =
   "default-src 'none'; manifest-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; " +
   "connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
@@ -45,7 +50,7 @@ a{color:#0B0B0C}button{font:inherit;padding:8px 14px;border:1px solid #0B0B0C;ba
 button.ghost{background:#FFF;color:#0B0B0C}button.danger{background:#B3261E;border-color:#B3261E}
 button:disabled{opacity:.5;cursor:default}input,textarea,select{font:inherit;padding:8px;border:1px solid #C9C9C9;border-radius:8px;width:100%}
 header{position:sticky;top:0;background:#FFF;border-bottom:1px solid #E5E5E5;padding:10px 16px;display:flex;gap:12px;align-items:center;z-index:10}
-header h1{font-size:18px;margin:0}header .sp{flex:1}nav{display:flex;gap:4px;flex-wrap:wrap}
+header h1{font-size:18px;margin:0;display:flex;align-items:center;gap:8px}header h1 .brand-mark{width:22px;height:22px;flex:none}header .sp{flex:1}nav{display:flex;gap:4px;flex-wrap:wrap}
 nav button{background:none;color:#0B0B0C;border:1px solid transparent;padding:6px 10px}
 nav button.on{border-color:#0B0B0C}
 main{max-width:960px;margin:0 auto;padding:16px}
@@ -247,7 +252,7 @@ export const PAGE_HTML = `<!doctype html><html lang="zh-CN"><head><meta charset=
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Nyra</title><link rel="manifest" href="/manifest.json">
 <style>${SHARED_CSS}</style></head><body>
-<header><h1>Nyra</h1><span id="approval-count" class="err"></span><span class="sp"></span>
+<header><h1>${BRAND_MARK}Nyra</h1><span id="approval-count" class="err"></span><span class="sp"></span>
 <nav>
 <button data-nav="chat" onclick="showTab('chat')">会话</button>
 <button data-nav="tasks" onclick="showTab('tasks');loadSchedule()">任务</button>
@@ -425,7 +430,7 @@ export const MOBILE_HTML = `<!doctype html><html lang="zh-CN"><head><meta charse
 <meta name="theme-color" content="#0B0B0C">
 <title>Nyra 手机</title><link rel="manifest" href="/m/manifest.json">
 <style>${SHARED_CSS}</style></head><body>
-<header><h1>Nyra</h1><span id="approval-badge" class="err"></span><span class="sp"></span>
+<header><h1>${BRAND_MARK}Nyra</h1><span id="approval-badge" class="err"></span><span class="sp"></span>
 <nav>
 <button data-nav="chat" onclick="showTab('chat')">会话</button>
 <button data-nav="approvals" onclick="showTab('approvals');renderApprovals()">审批</button>

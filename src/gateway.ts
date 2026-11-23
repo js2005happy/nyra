@@ -1604,7 +1604,7 @@ export class Gateway {
     const method = req.method ?? "GET";
 
     // 手机公共壳：页面与静态资源不含秘密，不用 token；API 仍要鉴权。
-    // 手机 v2（src/webuiMobile.ts）：按 docs/assets/screenshots 设计稿的黑白界面、审批底部弹层、从正式标志（src/brandMark.ts）光栅化的图标。
+    // 手机 v2（src/webuiMobile.ts）：按 docs/assets/screenshots 设计稿的黑白界面、审批底部弹层、从应用图标（src/appIcon.ts）光栅化的图标。
     if (method === "GET" && (path === "/m" || path === "/m/")) {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": CSP, "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Frame-Options": "DENY" });
       res.end(MOBILE_V2_HTML);
@@ -1665,7 +1665,7 @@ export class Gateway {
     }
     if (method === "GET" && path === "/nyra-mark.svg") {
       if (!this.pageTokenOk(req)) { this.sendError(res, 403, "token 无效"); return; }
-      // 内置正式标志（与 docs/assets/nyra-mark.svg 同源生成），不再依赖当前目录下有 docs/。
+      // 内置品牌标志（方块头，与 docs/assets/nyra-mark.svg 同源生成），不再依赖当前目录下有 docs/。
       res.writeHead(200, { "Content-Type": "image/svg+xml" });
       res.end(markSvg());
       return;

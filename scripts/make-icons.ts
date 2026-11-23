@@ -1,13 +1,14 @@
 #!/usr/bin/env bun
 // scripts/make-icons.ts — 生成仓库里的全部图标文件：
-//   标志（src/brandMark.ts：圆盘 + 光标，= 入场动画终帧）→ nyra-mark*.svg、桌面外壳启动页标志；
+//   品牌标志（src/brandMark.ts：方块头）→ nyra-mark*.svg、桌面外壳启动页标志；
 //   应用图标（src/appIcon.ts：紫色团子方块）→ favicon、apple-touch-icon、桌面安装包图标。
 // 零依赖（自带光栅化与 PNG / ICO / ICNS 编码），任何平台 `bun scripts/make-icons.ts` 即可重新生成。
 //   --check  只核对 SVG 是否与几何一致（不写文件，不一致时退出码 1）。
 //
 // 产物：
-//   docs/assets/nyra-mark.svg        主文件：深色圆盘 + 镂空光标（浅色背景用；README、官网、网页 /nyra-mark.svg）
-//   docs/assets/nyra-mark-dark.svg   浅色圆盘 + 镂空光标（深色背景用）
+//   docs/assets/nyra-mark.svg        主文件：彩色方块头（深浅底通用；官网、网页 /nyra-mark.svg）
+//   docs/assets/nyra-mark-dark.svg   与主文件相同（深色背景引用名，保留兼容）
+//   docs/assets/nyra-mark-mono.svg   单色版：深色方块、眼睛镂空（印刷 / 单色场合）
 //   docs/assets/nyra-app-icon.svg    应用图标满版母版（方形，系统加遮罩）
 //   docs/assets/favicon.svg          应用图标圆角图块版矢量 favicon
 //   docs/assets/favicon.ico          16 / 32 / 48（≤28 px 眼睛放大）
@@ -15,23 +16,24 @@
 //   desktop/icon-src/*.svg           桌面图标的矢量源（Windows / Linux 图块、16–32 px 满格版）
 //   desktop/src-tauri/icons/*        Tauri：icon.png(512) / 32x32 / 128x128 / 128x128@2x / icon.ico / icon.icns
 //                                    （≥48 px 四周 6% 边距；icns 按 macOS 网格 824/1024 + 投影；≤32 px 满格圆角）
-//   desktop/ui/mark.svg、mark-dark.svg  桌面外壳启动页的标志（浅 / 深）
+//   desktop/ui/mark.svg、mark-dark.svg  桌面外壳启动页的标志（同一枚方块头）
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { ICNS_TYPES, MARK_INK, MARK_PAPER, icnsFromPngs, icoFromPngs, markSvg } from "../src/brandMark.ts";
+import { ICNS_TYPES, MARK_INK, icnsFromPngs, icoFromPngs, markSvg } from "../src/brandMark.ts";
 import { appIconPng, appIconSvg } from "../src/appIcon.ts";
 
 const ROOT = join(import.meta.dir, "..");
 
 export const SVG_OUTPUTS: Record<string, string> = {
-  "docs/assets/nyra-mark.svg": markSvg({ disc: MARK_INK }) + "\n",
-  "docs/assets/nyra-mark-dark.svg": markSvg({ disc: MARK_PAPER }) + "\n",
+  "docs/assets/nyra-mark.svg": markSvg() + "\n",
+  "docs/assets/nyra-mark-dark.svg": markSvg() + "\n",
+  "docs/assets/nyra-mark-mono.svg": markSvg({ mono: MARK_INK }) + "\n",
   "docs/assets/nyra-app-icon.svg": appIconSvg("square") + "\n",
   "docs/assets/favicon.svg": appIconSvg("tile") + "\n",
   "desktop/icon-src/nyra-mark-small.svg": appIconSvg("tile", 1.08) + "\n",
   "desktop/icon-src/nyra-app-icon.svg": appIconSvg("win") + "\n",
-  "desktop/ui/mark.svg": markSvg({ disc: MARK_INK }) + "\n",
-  "desktop/ui/mark-dark.svg": markSvg({ disc: MARK_PAPER }) + "\n",
+  "desktop/ui/mark.svg": markSvg() + "\n",
+  "desktop/ui/mark-dark.svg": markSvg() + "\n",
 };
 
 function binaryOutputs(): Record<string, Buffer> {

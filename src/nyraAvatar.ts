@@ -1,6 +1,6 @@
 // src/nyraAvatar.ts — Nyra 的 agent 头像：v6.2 设计稿的紫色小团子（#8688ff 圆身 + #141414 胶囊眼），
 // 几何与颜色原样取自 nyra-design/v6/out-6.2/avatars.py（svg("nyra", state, size) 的输出），没有新增色值。
-// 品牌标志（圆盘 + 光标）不变，仍由 brandMark.ts 提供；团子只用在会话里代表 Nyra（实时状态行、回复署名）。
+// 品牌标志（方块头）由 brandMark.ts 提供；圆团子头像只用在会话里代表 Nyra（实时状态行、回复署名），不作品牌位。
 // 状态：idle 空闲、work 工作中（眯眼）、wait 等你确认（圆眼，32 档带问号）、done 完成（弯眼）。
 // s 档按 ≤20px 的眼睛放大（18px 用），m 档按 32px 画。
 export type AvatarState = "idle" | "work" | "wait" | "done";

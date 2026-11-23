@@ -12,7 +12,7 @@ import {
 } from "../../src/approvalRules.ts";
 import { checkApproval, newToolContext, ToolError, findApprovalRule } from "../../src/tools.ts";
 import { encode, toSvg, toTerminal } from "../../src/qrcode.ts";
-import { MOBILE_ICON_ROUTES, MARK_CURSOR, MARK_CIRCLE, MARK_STROKE, MOBILE_V2_MANIFEST } from "../../src/webuiMobile.ts";
+import { MOBILE_ICON_ROUTES, MARK_TILE, MARK_EYE_GEOM, MOBILE_V2_MANIFEST } from "../../src/webuiMobile.ts";
 import { markSvg } from "../../src/brandMark.ts";
 import { Gateway } from "../../src/gateway.ts";
 import { fakeProvider } from "./fake-provider.ts";
@@ -306,11 +306,10 @@ function pngInfo(buf: Uint8Array): { w: number; h: number; colorType: number; pi
 
 test("icons: manifest 192/512 any + maskable、apple 180、favicon；几何与 nyra-mark.svg 一致", async () => {
   const svg = readFileSync(join(import.meta.dir, "..", "..", "docs", "assets", "nyra-mark.svg"), "utf-8");
-  // 主文件由 src/brandMark.ts 生成：圆盘 r40 + 光标外扩 MARK_STROKE/2 的镂空（evenodd）。
+  // 主文件由 src/brandMark.ts 生成：方块头（圆角 22 的紫方块 + 两只竖眼）。
   expect(svg.trim()).toBe(markSvg());
-  expect(svg).toContain(`A${MARK_CIRCLE.r} ${MARK_CIRCLE.r} 0 1 0`);
-  expect(svg).toContain(`A${MARK_STROKE / 2} ${MARK_STROKE / 2} 0 0`);
-  expect(MARK_CURSOR[0]).toEqual([40, 31]);
+  expect(svg).toContain(`rx="${MARK_TILE.r}" fill="#8688ff"`);
+  expect(MARK_EYE_GEOM.w).toBeCloseTo(13.04, 2);
   const purposes = MOBILE_V2_MANIFEST.icons.map((i) => `${i.sizes}:${i.purpose}`);
   expect(purposes).toEqual(["192x192:any", "512x512:any", "192x192:maskable", "512x512:maskable"]);
   const gw = new Gateway({ home: tmp("nyra-icons-"), workdir: "/tmp", host: "127.0.0.1", port: 0, config: { mcp_enabled: false } });
@@ -374,7 +373,7 @@ test("settings: 手机切全权要二次确认标记，电脑端不受影响；�
   } finally { await gw.stop(); }
 });
 
-test("splash: 原 Nyra 入场动画，只在手机主屏幕独立窗口播放、不能点击跳过，减少动态效果时只淡入终帧", async () => {
+test("splash: 方块头转眼球入场动画，只在手机主屏幕独立窗口播放、不能点击跳过，减少动态效果时只淡入终帧", async () => {
   const gw = new Gateway({ home: tmp("nyra-splash-"), workdir: "/tmp", host: "127.0.0.1", port: 0, config: { mcp_enabled: false } });
   const info = await gw.start();
   try {
@@ -382,8 +381,11 @@ test("splash: 原 Nyra 入场动画，只在手机主屏幕独立窗口播放、
     expect(page).toContain("(display-mode: standalone)");
     expect(page).toContain("navigator.standalone");
     expect(page).toContain("prefers-reduced-motion: reduce");
-    // 原 Nyra splash：0–2.95 s 动画、终帧停到 3.8 s 再淡出；不能点击跳过。
-    expect(page).toContain("SPLASH_END=2.95, SPLASH_HOLD=3.8");
+    // 方块头 splash：0–2.4 s 动画（浮现 → 左看 → 右看 → 转一圈 → 眨眼 → 字标）、终帧停到 2.65 s 再淡出；不能点击跳过。
+    expect(page).toContain("SPLASH_END=2.4, SPLASH_HOLD=2.65");
+    expect(page).toContain("function gaze(t)");
+    expect(page).toContain("function lid(t)");
+    expect(page).not.toContain("arrowD");
     expect(page).toContain("function frame(t,lang)");
     expect(page).not.toContain("finish('skipped')");
     expect(page).not.toMatch(/addEventListener\('(click|touchstart)'/);
