@@ -1,3 +1,7 @@
+## Unreleased — 2026-11-23 web_fetch evidence URL privacy (static only)
+
+- Do not echo the fetched URL in the model-visible `web_fetch` evidence marker: URL query parameters and userinfo may contain secrets. Keep the existing evidence save and its source metadata unchanged; this is not full output redaction. No dependencies, approvals or network behavior changed. Static review only; tests not run.
+
 ## Unreleased — 2026-11-23 bounded web_search backend reads (static only)
 
 - Limit each Bing/Baidu search HTML fetch to 128 KiB plus a one-byte overflow check; reject oversized pages rather than parsing partial HTML, allowing existing fallback behavior. No new dependencies or retries. Static inspection only; tests not run.
