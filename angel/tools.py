@@ -794,9 +794,14 @@ def _tool_web_fetch(ctx: ToolContext, url: str) -> str:
         request = urllib.request.Request(url, headers={"User-Agent": "Angel/0.2"})
         with open_url(request, 30) as response:
             charset = response.headers.get_content_charset() or "utf-8"
-            text = response.read().decode(charset, errors="replace")
+            byte_limit = MAX_OUTPUT_CHARS * 4
+            payload = response.read(byte_limit + 1)
+            clipped = len(payload) > byte_limit
+            text = payload[:byte_limit].decode(charset, errors="replace")
         cleaned = re.sub(r"<[^>]+>", " ", text)
         cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        if clipped:
+            cleaned += "\n……（网页正文超过读取上限，证据仅包含已读取部分）"
         body = _truncate(cleaned)
         if ctx.evidence is not None:
             path = ctx.evidence.save("web_fetch", url, cleaned)
