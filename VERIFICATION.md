@@ -1,3 +1,10 @@
+## 2026-11-24 — web_fetch non-2xx evidence guard (static only)
+
+- **Source fact:** web_fetch previously processed and could persist a response body without inspecting response.status; urllib transports normally raise HTTPError, but alternate response adapters can return non-2xx directly. The new guard returns a fixed error before read/save.
+- **Scope:** one read-only fetch path, no external requests or test execution. Status may be absent in nonstandard adapters; fail-closed generic error remains. No claim of successful cross-platform or runtime verification.
+- **Research context:** external [Codex #37121](https://github.com/openai/codex/issues/37121) (repository-recorded 2026-08-05) discusses incomplete/recoverable tool evidence, and [Codex #34233](https://github.com/openai/codex/issues/34233) (repository-recorded 2026-07-19) discusses sensitive tool output; reviewed from existing repository research 2026-11-24. Neither demonstrates this specific issue or its frequency.
+- No tests, builds, CI, dependency installation, account changes, main merge or release.
+
 ## 2026-11-24 — Read-only web charset fallback (static only)
 
 - Reviewed development-branch README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, core Agent/Tools, recent commits, open issues (none), PR #113 and available CI metadata; angel redirects to nyra.
