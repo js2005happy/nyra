@@ -8,7 +8,7 @@ from angel.tools import ToolContext, execute_tool
 
 
 def test_unknown_tool_does_not_echo_private_name(tmp_path: Path) -> None:
-    ctx = ToolContext(workdir=tmp_path, mode="readonly", interactive=False)
+    ctx = ToolContext(workdir=tmp_path, mode="readonly", interactive=False, memory_path=tmp_path / "MEMORY.md", skills_dir=tmp_path / "skills")
     private_name = "missing_tool_TOKEN=private-example-value"
     result = execute_tool(private_name, {}, ctx)
     assert result == "错误：未知工具"
@@ -17,7 +17,7 @@ def test_unknown_tool_does_not_echo_private_name(tmp_path: Path) -> None:
 
 
 def test_unknown_tool_does_not_echo_private_path(tmp_path: Path) -> None:
-    ctx = ToolContext(workdir=tmp_path, mode="readonly", interactive=False)
+    ctx = ToolContext(workdir=tmp_path, mode="readonly", interactive=False, memory_path=tmp_path / "MEMORY.md", skills_dir=tmp_path / "skills")
     result = execute_tool("/private/example/secret-tool", {}, ctx)
     assert result == "错误：未知工具"
     assert "/private/example" not in result
