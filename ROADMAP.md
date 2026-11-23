@@ -1,3 +1,11 @@
+
+## P1 — bounded search backend reads (2026-11-23, static only)
+
+- **Observed in source:** `_fetch_search_page` read complete untrusted Bing/Baidu HTML before parsing, unlike the newly bounded `web_fetch` path. A very large response could consume memory and create incomplete downstream evidence if blindly truncated.
+- **External user feedback (not proof of Angel incidence):** Codex issue [#30831](https://github.com/openai/codex/issues/30831), opened 2026-07-01, requests bounded output with recoverable artifacts; [#37121](https://github.com/openai/codex/issues/37121), opened 2026-08-05, reports loss of recoverable state after truncation. Rechecked 2026-11-23. These reports motivate explicit incompleteness handling; prevalence is unknown.
+- **Implemented:** read at most 131,073 bytes from each search backend, reject oversized HTML instead of parsing a partial page, and use the existing fallback chain and fixed error handling. No new dependencies or retries. **Static only; tests not run.**
+- **Remaining candidate ranking (value / difficulty / safety / dependency):** P1 structured HTTP/Shell outcomes (high / medium / medium / legacy result classifier); P1 other tool output privacy audit (high / medium / medium / tool inventory); P1 pre-model/pre-record privacy controls (high / high / high / trust boundary design); P1 independent side-effect receipts (high / high / high / journal semantics); P2 recoverable large-output artifacts (medium-high / high / medium-high / storage policy). This is prioritization inference, not measured user demand.
+
 ## 2026-11-23 — bounded web_fetch input and honest partial evidence (static only)
 
 - **Source fact:** `_tool_web_fetch` read the entire HTTP body before truncating text for the model and could persist an oversized cleaned page as evidence. This is a code-level memory and evidence-integrity risk, not a confirmed production incident.
