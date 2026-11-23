@@ -183,6 +183,25 @@ test("启动器页：方块头品牌，不再有旧光标 logo 与金色；标�
   expect(html).toContain("'/m' + (code ? '#pair=' + code : '')");
 });
 
+test("启动器页 v16：“连家里电脑”是可展开卡——有上次的电脑默认展开、一键直连；没有就收起、只给配对新电脑；不写扫码", () => {
+  const html = read("mobile/www/index.html");
+  expect(html).not.toContain('class="sepl"');
+  expect(html).toContain('id="lanToggle"');
+  expect(html).toContain("同一 Wi-Fi 下，不用账号");
+  expect(html).toContain("上次连的是");
+  expect(html).toContain(">直接连上次的</button>");
+  expect(html).toContain('id="lanBtn">配对新电脑</button>');
+  // 直连上次 = 现有 goLan，不带配对码
+  expect(html).toContain("goLan(last.host, last.port || 8765, '')");
+  // 默认展开与否只看有没有上次的电脑；展开/收起记在本机
+  expect(html).toContain("var open = hasLast;");
+  expect(html).toContain("localStorage.setItem('nyra-lan-open'");
+  // APK 里没有扫码，首屏不提
+  const first = html.slice(html.indexOf('<section id="first"'), html.indexOf('<section id="lan"'));
+  expect(first).not.toContain("扫码");
+  expect(first).not.toContain("二维码");
+});
+
 test("文字只写 Nyra：手机页、启动器页、文案里没有旧名或其他第三方产品名（Google / GitHub 按钮除外）", () => {
   const { zh, en } = mobileMessages();
   const all = [MOBILE_V2_HTML, read("mobile/www/index.html"), JSON.stringify(zh), JSON.stringify(en)].join("\n");
