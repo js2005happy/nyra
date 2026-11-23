@@ -1,3 +1,9 @@
+## 2026-11-24 — P1 web_search HTTP status evidence boundary (static only)
+
+- **Code fact:** _fetch_search_page had a bounded read but no explicit status check; an adapter returning non-2xx normally could have its error HTML parsed as results. Reject non-2xx/missing status before body read, retaining existing fallback. No runtime incident established.
+- **External feedback (reviewed 2026-11-24):** [Codex #34233](https://github.com/openai/codex/issues/34233), opened 2026-07-19, reports sensitive tool output; [Codex #24823](https://github.com/openai/codex/issues/24823), opened 2026-05-27, requests complete approval visibility. These are individual external reports, not Angel bug frequency evidence. **Engineering inference:** preserve search evidence integrity and reduce unnecessary error-body processing.
+- **Prioritized backlog (value / difficulty / safety risk / dependency; engineering estimates):** P1 search non-2xx guard high / low / low / current search transport (implemented, untested); P1 other tool-output privacy audit high / medium / medium / output inventory (open); P1 remote shell trusted status high / high / high / backend protocol (open); P1 pre-model/pre-record secret protection high / high / high / privacy policy (research); P1 independent side-effect receipts high / high / high / trusted readback (blocked); P2 recoverable large outputs medium-high / high / medium / private storage policy (research). No tests or CI executed.
+
 ## 2026-11-24 — P1 web_fetch HTTP status evidence boundary (static only)
 
 - **Code fact:** read-only web_fetch accepted and could save any response returned by the HTTP adapter without checking status; non-2xx content is not reliable successful-page evidence. Guard implemented before body read/evidence save; runtime behavior not tested.
