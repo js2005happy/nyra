@@ -805,7 +805,9 @@ def _tool_web_fetch(ctx: ToolContext, url: str) -> str:
         body = _truncate(cleaned)
         if ctx.evidence is not None:
             path = ctx.evidence.save("web_fetch", url, cleaned)
-            # URLs can contain query tokens or credentials. Do not echo them\n            # again in the model-visible evidence marker.\n            body += f"\n\n[证据已保存：{path}]"
+            # URLs can contain query tokens or credentials. Do not echo them
+            # again in the model-visible evidence marker.
+            body += f"\n\n[证据已保存：{path}]"
         return body
     except Exception:
         # Network exceptions can include private URLs, tokens or headers.
