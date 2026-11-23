@@ -133,6 +133,7 @@
 | `nyra mcp server <status\|enable\|disable\|allow-writes-on\|allow-writes-off>` | 对外 MCP 服务开关：别的 agent 经网关 `POST /mcp` 调 Nyra 的记忆与任务（默认关闭；写操作须显式开且过独立审查，详见 `docs/mcp.md`） |
 | `nyra peer <status\|enable\|disable\|list\|auth\|ask\|handoff\|card\|code\|add\|request\|accept\|friends\|block\|circle\|share\|grant\|proposal\|branch\|discover\|token>` | 对端协作：问别的 Nyra 实例、交接运行上下文、名片加好友（默认关闭；对外发送须开独立审查，详见 `docs/peer.md`）；第 2 批 G-P1-5/G-P1-6/G-P1-8/G-P1-10：名片 per-circle 可见性、带 scope 可吊销的 grant、对方写操作默认进提议、外来任务隔离分支；第 3 批 G-P1-4/G-P1-7：公开发现（well-known 名片 + 验签，不靠线下传码）、per-peer token（出站，每好友一条）、名片 JWS 签名（详见 `docs/peer-discovery.md`） |
 | `nyra circle <create\|list\|show\|invite\|revoke\|delete\|bind\|unbind\|owner\|check\|bindings>` | 信任圈与跨实例准入：谁能给 agent 发任务（默认全封闭，圈外消息网关直接丢弃；详见 `docs/circles.md`） |
+| `nyra org <create\|list\|show\|add\|remove\|role\|delete\|check>` | 组织与团队 workspace：组织/成员/角色 admin/member/viewer（机主是超级管理员；详见 `docs/orgs.md`） |
 | `nyra session <create\|list\|show\|join\|leave\|delegate\|accept\|complete\|share\|frame\|record\|end\|join-request\|join-approve\|join-decline\|join-list>` | 跨 agent 联合会话：多人多 agent 视频会（本地扇出模型），会内委派 + 共享任务产物（allowlist），画面默认不留存、录制须全体同意；第 2 批 G-P1-5：好友进会要批（待批请求，批准时重查准入闸，详见 `docs/sessions.md`） |
 | `nyra call <ledger\|show <通话 id>\|summary>` | 通话成本与隐私仪表：每通电话的三本账（传输/媒体/token，本地与云端分开记）+ 录制仪表 + 通话纪要进证据链（详见 `docs/call-ledger.md`） |
 | `nyra budget <list\|show\|reserve\|settle\|release\|strict>` | 并发预算预留：模型调用前先预留额度、超上限不发请求；金额未知默认暂停等人工处理（详见 `docs/budget.md`） |
