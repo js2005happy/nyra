@@ -416,6 +416,10 @@ session_delegation_verified: ["session", "delegation", "verdict", "passed", "tot
 // 深挖；只记数字与档位，不记召回内容原文。
 active_memory_recalled: ["tier", "hits", "escalated"],
 active_memory_escalated: ["tier", "hits"],
+// G-P1-34 对话里自动提炼记忆进证据链：提炼出几条候选、进库决定是确认
+// 还是拒绝（确认的记进库条目 id）；只记数量与 id，不记候选内容原文。
+memory_proposal_extracted: ["session", "added", "total"],
+memory_proposal_decided: ["proposal", "decision", "entry"],
 // G-P1-32 对话转人工坐席进证据链：只记单号、会话 id 与操作人身份，
 // 不记对话原文；hitl_bot_held 是转人工期间网关拦下 bot 自动回复的那次。
 hitl_started: ["handoff", "session", "by"],

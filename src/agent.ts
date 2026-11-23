@@ -2177,6 +2177,18 @@ export class Agent {
           }
         }
         this.emit("final", { content: final });
+        // G-P1-34：对话结束自动提炼候选记忆（确定性规则抽取，不调模型、
+        // 不花 token；只提主对话——子 agent 与无人值守巡查不提炼，提炼
+        // 失败绝不破坏本次回复；提炼出的只是候选，进库前要人确认）。
+        if (!this.subagentRunId && !this.unattended) {
+          try {
+            const { extractMemoryProposals } = await import("./memoryProposals.ts");
+            const extracted = extractMemoryProposals(this.home, this.sessionId, this.messages);
+            if (extracted.added > 0) {
+              this.emit("memory_proposal_extracted", { session: this.sessionId, added: extracted.added, total: extracted.total });
+            }
+          } catch { /* ignore */ }
+        }
         return final;
       }
       for (const tc of toolCalls) {
