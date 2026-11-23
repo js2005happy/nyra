@@ -663,7 +663,8 @@ def _tool_edit_file(
         )
         return ctx.backend.write_file(resolved, changed)
     if not target.is_file():
-        return f"错误：文件不存在：{path}"
+        # Do not expose caller-supplied private paths to the model.
+        return "错误：文件不存在"
     content = target.read_text(encoding="utf-8")
     count = content.count(old_text)
     if count == 0:
