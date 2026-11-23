@@ -71,7 +71,7 @@ export const CONNECTOR_DECLARATIONS: ConnectorPermissionDeclaration[] = [
   {
     id: "gmail",
     displayName: "Gmail",
-    description: "Google 邮箱：读信、按 thread 回复、代发草稿（缺口 6 已落地）；附件下载、标签、标已读、进回收站（缺口 44 第三批）。",
+    description: "Google 邮箱：读信、按 thread 回复、代发草稿（缺口 6 已落地）；附件下载、标签、标已读、进回收站（缺口 44 第三批）；列草稿与发送草稿（G-P0-6 做深）。",
     status: "available",
     scopes: {
       read: ["https://www.googleapis.com/auth/gmail.readonly"],
@@ -98,7 +98,7 @@ export const CONNECTOR_DECLARATIONS: ConnectorPermissionDeclaration[] = [
   {
     id: "shopify",
     displayName: "Shopify",
-    description: "用户自己的 Hollow & Scale 店铺：查商品、订单、库存（只读起步，缺口 44 第一批；不做任何写操作）。",
+    description: "用户自己的 Hollow & Scale 店铺：查商品、订单、库存（只读起步，缺口 44 第一批；不做任何写操作）；订单履约核查（订单详情 + 行项目 + 库存逐项核对，G-P0-6 做深，只读）。",
     status: "available",
     scopes: {
       read: ["read_products", "read_orders", "read_inventory"],
@@ -119,7 +119,7 @@ export const CONNECTOR_DECLARATIONS: ConnectorPermissionDeclaration[] = [
   {
     id: "slack",
     displayName: "Slack",
-    description: "团队消息与审批卡的落点：读频道/消息、发消息（须显式批准）、发审批卡（缺口 44 第二批）。",
+    description: "团队消息与审批卡的落点：读频道/消息、发消息（须显式批准）、发审批卡（缺口 44 第二批）；审批卡按钮回调回写审批桥（G-P0-6 做深）。",
     status: "available",
     scopes: {
       read: ["channels:read", "channels:history"],

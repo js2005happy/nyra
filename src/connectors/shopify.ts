@@ -4,6 +4,8 @@
 // - 只读：查商品 / 查订单 / 查库存水平。任何写操作（改价、改库存、下单、
 //   退款、发折扣码、删单）都在调 Shopify API 之前就拒绝，不留后门——本批
 //   连写操作的调用入口都不提供，CLI 上写意图的词也直接回一句明确拒绝。
+// - G-P0-6 做深：订单履约核查（checkOrderFulfillment）——订单详情 + 行项目
+//   + 库存水平逐项核对“可售 ≥ 要发”，仍是只读判断，不改订单、不动库存。
 // - 凭证：Shopify 自定义应用的 Admin API access token（shpat_…）+ 店铺域名，
 //   用户在 Shopify 后台建 custom app、把 token 粘贴进密码箱（nyra shopify
 //   auth 交互输入，只存密码箱）。localhost 没有公网回调，做不了 Shopify
@@ -78,6 +80,8 @@ export interface ShopifyOrderSummary {
   currency: string;
   financialStatus: string;
   fulfillmentStatus: string;
+  /** 取消时间（缺失 = 未取消；履约核查靠它判“已取消”，fulfillment_status 里没有取消这一档）。 */
+  cancelledAt?: string;
   createdAt: string;
   lineItemsCount: number;
 }
@@ -225,6 +229,7 @@ export function parseProductSummary(data: unknown): ShopifyProductSummary | null
 export function parseOrderSummary(data: unknown): ShopifyOrderSummary | null {
   const d = asRecord(data);
   if (!d || typeof d.id !== "number") return null;
+  const cancelledAt = asString(d.cancelled_at);
   return {
     id: d.id,
     name: asString(d.name),
@@ -232,9 +237,42 @@ export function parseOrderSummary(data: unknown): ShopifyOrderSummary | null {
     currency: asString(d.currency),
     financialStatus: asString(d.financial_status),
     fulfillmentStatus: asString(d.fulfillment_status),
+    ...(cancelledAt ? { cancelledAt } : {}),
     createdAt: asString(d.created_at),
     lineItemsCount: asArray(d.line_items).length,
   };
+}
+
+/** 订单行项目（G-P0-6 履约核查用）：只取发货要核的字段——商品名、数量、
+ * 库存项 id（没有它就没法按库存核对，核查时如实记“无法核查”）。 */
+export interface ShopifyOrderLineItem {
+  id: number;
+  title: string;
+  variantId?: number;
+  inventoryItemId?: number;
+  quantity: number;
+}
+
+export function parseOrderLineItems(data: unknown): ShopifyOrderLineItem[] {
+  const items = asArray(asRecord(data)?.line_items);
+  const out: ShopifyOrderLineItem[] = [];
+  for (const raw of items) {
+    const d = asRecord(raw);
+    if (!d || typeof d.id !== "number") continue;
+    out.push({
+      id: d.id,
+      title: asString(d.title),
+      ...(typeof d.variant_id === "number" ? { variantId: d.variant_id } : {}),
+      ...(typeof d.inventory_item_id === "number" ? { inventoryItemId: d.inventory_item_id } : {}),
+      quantity: asNumber(d.quantity),
+    });
+  }
+  return out;
+}
+
+export interface ShopifyOrderDetail {
+  order: ShopifyOrderSummary;
+  lineItems: ShopifyOrderLineItem[];
 }
 
 export function parseInventoryLevel(data: unknown): ShopifyInventoryLevel | null {
@@ -369,6 +407,19 @@ export class ShopifyApiClient {
     return order;
   }
 
+  /** 查一个订单的详情（订单 + 行项目，G-P0-6 履约核查用）：行项目里没有
+   * inventory_item_id 的项照常返回，核查时记“无法核查”，不静默跳过。 */
+  async getOrderDetail(id: string): Promise<ShopifyOrderDetail> {
+    if (!/^\d+$/.test(id)) throw new ShopifyError(`订单 id 不合法：${id}（只接受数字 id）`);
+    const startedAt = Date.now();
+    const { data } = await this.get(`orders/${id}.json`, {});
+    const order = parseOrderSummary(asRecord(data)?.order);
+    if (!order) throw new ShopifyError(`Shopify 没有返回 id 为 ${id} 的订单`);
+    const lineItems = parseOrderLineItems(asRecord(data)?.order);
+    this.audit("get_order_detail", lineItems.length, startedAt);
+    return { order, lineItems };
+  }
+
   async listInventoryLevels(opts?: { locationIds?: number[]; inventoryItemIds?: number[]; limit?: number; pageInfo?: string }): Promise<{ levels: ShopifyInventoryLevel[]; nextPageInfo?: string }> {
     const query: Record<string, string> = { limit: String(clampLimit(opts?.limit)) };
     if (opts?.locationIds?.length) query.location_ids = opts.locationIds.join(",");
@@ -405,6 +456,89 @@ export function createShopifyClient(home: string, config: Record<string, unknown
   });
   if (!usable.ok) throw new ShopifyAuthError(usable.message);
   return new ShopifyApiClient({ credentials: creds, home, userId, fetchFn: opts?.fetchFn });
+}
+
+/** 履约核查结论（G-P0-6）：只读判断，不改订单、不改库存。 */
+export type FulfillmentVerdict = "fulfillable" | "short" | "already-fulfilled" | "cancelled";
+
+export interface FulfillmentItemCheck {
+  lineItem: ShopifyOrderLineItem;
+  required: number;
+  /** 库存接口返回的可售数；没返回（没该项 / 没库存项 id）记 null，不猜 0。 */
+  available: number | null;
+  ok: boolean;
+  note?: string;
+}
+
+export interface FulfillmentCheck {
+  order: ShopifyOrderSummary;
+  items: FulfillmentItemCheck[];
+  verdict: FulfillmentVerdict;
+  summary: string;
+}
+
+/**
+ * 订单履约核查（G-P0-6，Shopify 的真实业务流程）：订单详情 → 行项目 →
+ * 按库存项 id 查库存水平 → 逐项核对“可售 ≥ 要发”。
+ * - 订单已取消：verdict cancelled，逐项不核（发了也是错）。
+ * - 发货状态已是 fulfilled：verdict already-fulfilled，逐项不核（不用再发）。
+ * - 行项目没有 inventory_item_id、或库存接口没返回该项：available 记 null、
+ *   该项 ok=false（无法核查按缺货算，fail-closed），不静默跳过。
+ * 只读：不改订单状态、不动库存。
+ */
+export async function checkOrderFulfillment(client: ShopifyApiClient, orderId: string): Promise<FulfillmentCheck> {
+  const { order, lineItems } = await client.getOrderDetail(orderId);
+  if (order.cancelledAt) {
+    return { order, items: [], verdict: "cancelled", summary: `订单 ${order.name || order.id} 已取消（${order.cancelledAt}），不发货。` };
+  }
+  if (order.fulfillmentStatus === "fulfilled") {
+    return { order, items: [], verdict: "already-fulfilled", summary: `订单 ${order.name || order.id} 已发货，无需再核。` };
+  }
+  const itemIds = lineItems.filter((i) => i.inventoryItemId !== undefined).map((i) => i.inventoryItemId as number);
+  const levels = itemIds.length
+    ? (await client.listInventoryLevels({ inventoryItemIds: itemIds, limit: SHOPIFY_MAX_PAGE_LIMIT })).levels
+    : [];
+  const availableByItem = new Map<number, number>();
+  for (const l of levels) {
+    if (l.available !== null && !availableByItem.has(l.inventoryItemId)) availableByItem.set(l.inventoryItemId, l.available);
+  }
+  const items: FulfillmentItemCheck[] = lineItems.map((lineItem) => {
+    const required = lineItem.quantity;
+    if (lineItem.inventoryItemId === undefined) {
+      return { lineItem, required, available: null, ok: false, note: "没有库存项 id，无法核查库存" };
+    }
+    const available = availableByItem.get(lineItem.inventoryItemId) ?? null;
+    if (available === null) {
+      return { lineItem, required, available: null, ok: false, note: "库存接口没返回该项" };
+    }
+    if (available < required) {
+      return { lineItem, required, available, ok: false, note: `缺 ${required - available} 件` };
+    }
+    return { lineItem, required, available, ok: true };
+  });
+  const short = items.filter((i) => !i.ok);
+  if (!short.length) {
+    return { order, items, verdict: "fulfillable", summary: `订单 ${order.name || order.id} 可以发货：${items.length} 项商品库存都够。` };
+  }
+  return {
+    order,
+    items,
+    verdict: "short",
+    summary: `订单 ${order.name || order.id} 现在发不了：${short.map((i) => `${i.lineItem.title || `商品 ${i.lineItem.id}`}（${i.note ?? `要 ${i.required}、有 ${i.available ?? "未知"}`}）`).join("；")}。`,
+  };
+}
+
+/** 履约核查格式化（纯文本：逐项一行 + 结论一行）。 */
+export function formatFulfillmentCheck(check: FulfillmentCheck): string {
+  const lines = [
+    `订单：${check.order.name || check.order.id}（${check.order.totalPrice || "?"} ${check.order.currency || ""}，付款：${check.order.financialStatus || "未知"}，发货：${check.order.fulfillmentStatus || "未知"}）`,
+  ];
+  for (const item of check.items) {
+    lines.push(`- ${item.lineItem.title || `商品 ${item.lineItem.id}`}：要 ${item.required} 件，可售 ${item.available ?? "未知"}${item.ok ? "（够）" : `（${item.note ?? "不够"}）`}`);
+  }
+  const verdictLabel = { fulfillable: "可以发货", short: "缺货、现在发不了", "already-fulfilled": "已发货", cancelled: "已取消" }[check.verdict];
+  lines.push(`结论：${verdictLabel}——${check.summary}`);
+  return lines.join("\n");
 }
 
 /** 商品列表格式化（纯文本，一行一个商品）。 */

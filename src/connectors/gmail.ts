@@ -132,6 +132,20 @@ export interface GmailLabel {
   type?: string;
 }
 
+/** 草稿摘要（drafts.list 只给 id 与邮件 id；主题与收件人要 getDraft 再取）。 */
+export interface GmailDraftSummary {
+  id: string;
+  messageId?: string;
+  threadId?: string;
+}
+
+/** 一封草稿的详情（收件人、主题从草稿里的邮件头取）。 */
+export interface GmailDraft extends GmailDraftSummary {
+  to: string;
+  subject: string;
+  snippet: string;
+}
+
 export interface GmailAttachment {
   /** 附件原始字节（base64url 解码后）。 */
   bytes: Buffer;
@@ -146,7 +160,11 @@ export interface GmailTransport {
   get(id: string): Promise<GmailMessage>;
   send(opts: GmailSendOptions): Promise<{ id: string; threadId: string }>;
   createDraft(opts: GmailSendOptions): Promise<{ id: string }>;
-  /** 缺口 44 第三批：标签（只读列出）与写操作（改标签、标已读、进回收站）。
+  /** G-P0-6 做深：草稿闭环——列草稿、读一封草稿、发一封草稿。发草稿是写操作，
+   * 在 CLI 层须用户显式确认并过红线（与 send 同款门），transport 本身只负责调 API。 */
+  listDrafts(): Promise<GmailDraftSummary[]>;
+  getDraft(draftId: string): Promise<GmailDraft>;
+  sendDraft(draftId: string): Promise<{ id: string; threadId: string }>;  /** 缺口 44 第三批：标签（只读列出）与写操作（改标签、标已读、进回收站）。
    * 写操作在 CLI 层须用户显式确认，transport 本身只负责调 API。 */
   listLabels(): Promise<GmailLabel[]>;
   modifyLabels(id: string, addLabelIds: string[], removeLabelIds: string[]): Promise<{ id: string; labelIds: string[] }>;
@@ -553,6 +571,56 @@ export class GmailApiTransport implements GmailTransport {
     return { id: draft.id };
   }
 
+  /** 列出草稿（只读）：id + 邮件 id；主题与收件人要 getDraft 再取。 */
+  async listDrafts(): Promise<GmailDraftSummary[]> {
+    const startedAt = Date.now();
+    const data = await this.request("/users/me/drafts", { method: "GET" }) as Record<string, unknown>;
+    const list = Array.isArray(data.drafts) ? data.drafts : [];
+    const drafts = list
+      .filter((d): d is Record<string, unknown> => !!d && typeof d === "object" && typeof (d as Record<string, unknown>).id === "string")
+      .map((d) => {
+        const message = d.message && typeof d.message === "object" ? (d.message as Record<string, unknown>) : {};
+        return {
+          id: d.id as string,
+          ...(typeof message.id === "string" && message.id ? { messageId: message.id } : {}),
+          ...(typeof message.threadId === "string" && message.threadId ? { threadId: message.threadId } : {}),
+        };
+      });
+    this.audit("list_drafts", drafts.length, startedAt);
+    return drafts;
+  }
+
+  /** 读一封草稿的详情（收件人、主题、摘要；正文不取——发之前 CLI 只展示头信息）。 */
+  async getDraft(draftId: string): Promise<GmailDraft> {
+    assertMessageId(draftId);
+    const data = await this.request(`/users/me/drafts/${draftId}`, { method: "GET" }) as Record<string, unknown>;
+    if (typeof data.id !== "string" || !data.id) throw new GmailError(`Gmail 没有返回 id 为 ${draftId} 的草稿`);
+    const message = data.message && typeof data.message === "object" ? data.message : {};
+    const parsed = parseMessage(message);
+    return {
+      id: data.id,
+      ...(parsed.id ? { messageId: parsed.id } : {}),
+      ...(parsed.threadId ? { threadId: parsed.threadId } : {}),
+      to: parsed.to,
+      subject: parsed.subject,
+      snippet: parsed.snippet,
+    };
+  }
+
+  /** 发一封草稿（写操作）：CLI 层须先显式确认并过红线；发完返回邮件 id。 */
+  async sendDraft(draftId: string): Promise<{ id: string; threadId: string }> {
+    assertMessageId(draftId);
+    const startedAt = Date.now();
+    const data = await this.request("/users/me/drafts/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: draftId }),
+    }) as Record<string, unknown>;
+    if (typeof data.id !== "string" || !data.id) throw new GmailError("Gmail 发送草稿后没有返回邮件 id");
+    this.audit("send_draft", 1, startedAt);
+    return { id: data.id, threadId: typeof data.threadId === "string" ? data.threadId : "" };
+  }
+
   /** 授权时取回的账号邮箱（GET /users/me/profile），只作状态展示。 */
   async profileEmail(): Promise<string> {
     const data = await this.request("/users/me/profile", { method: "GET" }) as Record<string, unknown>;
@@ -951,6 +1019,12 @@ export function formatGmailMessage(msg: GmailMessage): string {
 export function formatGmailLabels(labels: GmailLabel[]): string {
   if (!labels.length) return "没有标签。";
   return labels.map((l) => `- ${l.name}（${l.id}）${l.type ? ` [${l.type}]` : ""}`).join("\n");
+}
+
+/** 草稿列表格式化：一行一个“草稿 id（邮件 id）”。 */
+export function formatGmailDrafts(drafts: GmailDraftSummary[]): string {
+  if (!drafts.length) return "没有草稿。";
+  return drafts.map((d) => `- 草稿 ${d.id}${d.messageId ? `（邮件 ${d.messageId}）` : ""}`).join("\n");
 }
 
 /** 附件下载结果格式化：说明行 + 文本文档提取的内容（有才附）。 */

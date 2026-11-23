@@ -8,9 +8,10 @@
 //   在交互确认里答 y 就拒绝（默认不发）；删消息、改频道、管理成员一律在调
 //   API 之前就拒绝，本批连写入口都不提供。
 // - 审批卡落点：把 Bot Phase 2 的挂起审批（PendingApproval）拼成 Block Kit
-//   消息发到指定频道，带 Approve / Reject 两个按钮；按钮回调本批只做“收
-//   到并记审计”（parse + audit），不回写进 ApprovalBridge——回写是下一批，
-//   不在本批假装接通。
+//   消息发到指定频道，带 Approve / Reject 两个按钮；按钮回调由
+//   resolveSlackApprovalCallback 回写进 ApprovalBridge（G-P0-6 做深，
+//   缺口 44 第二批只解析不回写的那一步这批接上了）——回写只认 owner/admin
+//   白名单，重复回调幂等（已处理过的审批不再解决）。
 // - 凭证：Slack app 的 Bot token（xoxb-…）+ workspace 名，用户在 Slack
 //   后台建 app、把 token 粘贴进密码箱（nyra slack auth 交互输入，只存密码
 //   箱）。localhost 没有公网回调，做不了 Slack OAuth 回环，所以本批不走
@@ -21,6 +22,7 @@
 //   记录数、耗时，不记 token、不记消息内容。
 // - 不引新依赖：只用全局 fetch 调 Slack Web API。
 import { getCredential, Vault, vaultPath } from "../vault.ts";
+import type { ApprovalBridge } from "../bot/approvalBridge.ts";
 import {
   appendConnectorAudit,
   ensureConnectorUsable,
@@ -490,11 +492,12 @@ export function parseApprovalCallback(payload: unknown): SlackApprovalCallback |
 }
 
 /**
- * 按钮回调的收件处（本批）：解析出结论就记一行审计（action "call"、
+ * 按钮回调的收件处：解析出结论就记一行审计（action "call"、
  * operation "approval_callback"，reason 只写结论与审批 id），返回解析结果；
  * 不是审批回调就返回 null、什么都不记。
- * 注意：本批不回写 ApprovalBridge——按钮点了，审批本身还是挂起状态，
- * 回写进审批桥是下一批；这点写进文档，不假装接通。
+ * 注意：这里只解析、不解决审批——真正解决走下面的
+ * resolveSlackApprovalCallback（调审批桥 decide），两处审计各记各的，
+ * 别把“收到回调”和“审批已解决”混成一行。
  */
 export function handleApprovalCallback(home: string, payload: unknown): SlackApprovalCallback | null {
   const parsed = parseApprovalCallback(payload);
@@ -509,4 +512,57 @@ export function handleApprovalCallback(home: string, payload: unknown): SlackApp
     reason: `${parsed.decision}:${parsed.approvalId}`,
   });
   return parsed;
+}
+
+export type SlackCallbackResolutionStatus = "resolved" | "not-found" | "not-pending" | "not-approver";
+
+export interface SlackCallbackResolution {
+  status: SlackCallbackResolutionStatus;
+  approvalId?: string;
+  decision?: SlackApprovalDecision;
+  reason: string;
+}
+
+/**
+ * 审批卡按钮回调回写（G-P0-6 做深；缺口 44 第二批只解析不回写的那一步）：
+ * 解析回调 → 审批桥 decide（via "button"，档位 once）→ 记一行解决审计。
+ * - 找不到审批：not-found；已处理过：not-pending（重放回调不报错、不重复
+ *   解决，幂等）；决定人不在 owner/admin 白名单：not-approver（桥里记审计，
+ *   不改状态）。
+ * 桥由调用方建（CLI 按本机配置建，网关传运行中 BotRunner 里的桥）——本模块
+ * 不自己建桥，免得两处各建一个桥、各读一份账本。
+ */
+export async function resolveSlackApprovalCallback(
+  home: string,
+  opts: { payload: unknown; decidedBy: string; bridge: ApprovalBridge },
+): Promise<SlackCallbackResolution> {
+  const parsed = parseApprovalCallback(opts.payload);
+  if (!parsed) {
+    return { status: "not-found", reason: "不是审批卡按钮回调（payload 里没有 slack:approve:/slack:reject: 按钮）。" };
+  }
+  const result = await opts.bridge.decide(parsed.approvalId, parsed.decision === "approved", opts.decidedBy, "button", "once");
+  if (!result.ok) {
+    if (result.reason === "not-found") {
+      return { status: "not-found", approvalId: parsed.approvalId, reason: `找不到审批 ${parsed.approvalId}（可能已被清理）。` };
+    }
+    if (result.reason === "not-pending") {
+      return { status: "not-pending", approvalId: parsed.approvalId, reason: `审批 ${parsed.approvalId} 已处理过，重复回调不再解决（幂等）。` };
+    }
+    return { status: "not-approver", approvalId: parsed.approvalId, reason: `决定人 ${opts.decidedBy} 不在 owner/admin 白名单里，回调无效。` };
+  }
+  appendConnectorAudit(home, {
+    action: "call",
+    connector: "slack",
+    userId: resolveConnectorUserId(home),
+    operation: "approval_callback_resolved",
+    records: 1,
+    durationMs: 0,
+    reason: `${parsed.decision}:${parsed.approvalId}`,
+  });
+  return {
+    status: "resolved",
+    approvalId: parsed.approvalId,
+    decision: parsed.decision,
+    reason: `审批 ${parsed.approvalId} 已${parsed.decision === "approved" ? "批准" : "拒绝"}（Slack 按钮，决定人 ${opts.decidedBy}）。`,
+  };
 }
