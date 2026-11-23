@@ -979,8 +979,8 @@ def _tool_grep_search(
         if regex:
             try:
                 re.compile(pattern, 0 if case_sensitive else re.IGNORECASE)
-            except re.error as exc:
-                return f"错误：正则表达式无效：{exc}"
+            except re.error:
+                return "错误：正则表达式无效"
         flags = ["-rn"]
         if regex:
             flags.append("-E")
@@ -1011,8 +1011,8 @@ def _tool_grep_search(
         flags = 0 if case_sensitive else re.IGNORECASE
         try:
             compiled = re.compile(pattern, flags)
-        except re.error as exc:
-            return f"错误：正则表达式无效：{exc}"
+        except re.error:
+            return "错误：正则表达式无效"
         match = lambda line: compiled.search(line) is not None
     else:
         needle = pattern if case_sensitive else pattern.lower()
