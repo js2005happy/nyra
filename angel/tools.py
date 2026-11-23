@@ -1095,8 +1095,12 @@ def _tool_git_status(ctx: ToolContext, path: str = ".") -> str:
     except subprocess.TimeoutExpired:
         # A partial status is not a complete status/diff snapshot.
         return "错误：git diff 超时"
+    # A failed diff cannot be reported as a complete status snapshot.
+    # Do not expose stderr: git errors can contain private repository paths.
+    if diff.returncode != 0:
+        return "错误：git diff 失败（状态快照不完整）"
     out = (status.stdout or "（工作区干净）").strip()
-    if diff.returncode == 0 and diff.stdout.strip():
+    if diff.stdout.strip():
         out += "\n\n改动统计：\n" + diff.stdout.strip()
     return _truncate(out)
 
