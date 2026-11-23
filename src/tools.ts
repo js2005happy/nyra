@@ -462,6 +462,11 @@ export const TOOL_SCHEMAS: Record<string, unknown>[] = [
   // 的命中消息与上文下文，模型再决定要不要深读；结果进上下文前过脱敏。
   schema("session_search", "搜用户自己的旧会话：全文检索过往对话（用户与 assistant 消息），按会话分组返回，每会话最多 3 条命中消息、每条附上文下文；不给 query 时列出最近会话。scope 默认 project（只搜当前工作目录下记的会话），all 搜全部；session_id 只搜某一会话；after/before 按时间过滤（YYYY-MM-DD 或 ISO 时间）",
     { query: { type: "string", description: "关键词或短语，不给则列出最近会话" }, scope: { type: "string", enum: ["project", "all"], description: "project（默认）：只搜当前工作目录下记的会话；all：搜全部会话" }, session_id: { type: "string", description: "只搜该会话" }, after: { type: "string", description: "只搜该时间及之后的消息（YYYY-MM-DD 或 ISO 时间）" }, before: { type: "string", description: "只搜该时间及之前的消息（YYYY-MM-DD 或 ISO 时间）" }, limit: { type: "integer", default: 5, description: "最多返回几个会话（默认 5）" } }),
+  // G-P0-3：编辑器上下文做成模型工具——读最近一次编辑器快照（当前文件、
+  // 光标、选区文本、打开的文件、诊断），只读，不需审批；编辑器没连上时
+  // 直接告诉模型没快照，不编一个假快照；选区与诊断文本进上下文前过脱敏。
+  schema("editor_context", "读用户当前编辑器的上下文：最近一次编辑器快照里的当前文件、光标位置、选区文本、打开的文件列表与诊断（错误/警告）。只读，不需审批；编辑器没连上（没装插件或没跑 serve）时直接说没快照，不编内容",
+    { max_chars: { type: "integer", default: 4000, description: "最多返回几个字符（默认 4000）" } }),
   // 缺口 2：删除长期记忆（memory_forget 与 memory_delete 同义，两个名字都留着：
   // 别家 MCP 叫 forget_session，用户口语也常说“忘记这条”）。与 write_file
   // 同级审批；删错 owner 的不删、进行中会话的记忆拒绝删除；删除本身记进证据链。
@@ -2455,6 +2460,25 @@ async function toolSessionSearch(ctx: ToolContext, args: Record<string, unknown>
   return body;
 }
 
+// G-P0-3：editor_context 工具实现——只读最近一次编辑器快照，不调编辑器、
+// 不启动 serve；快照不存在直接明说。格式化与脱敏走 editorBridge。
+async function toolEditorContext(ctx: ToolContext, args: Record<string, unknown>): Promise<string> {
+  const maxChars = typeof args.max_chars === "number" && args.max_chars > 0
+    ? Math.min(Math.floor(args.max_chars), 20000) : 4000;
+  const { loadEditorState, formatEditorSnapshot, recordEditorEvent } = await import("./editorBridge.ts");
+  // ctx.home 没传时没处读快照：直接按“未连接”回，不编内容。
+  const home = ctx.home;
+  if (!home) return formatEditorSnapshot(null, maxChars);
+  const snap = loadEditorState(home);
+  const body = formatEditorSnapshot(snap, maxChars);
+  try {
+    await recordEditorEvent(home, "editor_snapshot", {
+      workspace: snap?.workspace ?? "", files: snap?.openFiles.length ?? 0, diagnostics: snap?.diagnostics.length ?? 0,
+    }, `editor_context：${snap ? `${snap.host} 快照` : "无快照"}`);
+  } catch { /* 证据写不上不破坏工具结果本身 */ }
+  return body;
+}
+
 async function toolMemoryForget(ctx: ToolContext, toolName: string, args: Record<string, unknown>): Promise<string> {
   const ids = Array.isArray(args.ids)
     ? (args.ids as unknown[]).map((v) => String(v)).filter(Boolean)
@@ -3269,6 +3293,7 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
       case "memory_search": return await toolMemorySearch(ctx, String(args.query), args.limit === undefined ? 5 : Number(args.limit), typeof args.session_id === "string" ? args.session_id : null, typeof args.owner === "string" ? args.owner : null);
       case "knowledge_search": return await toolKnowledgeSearch(ctx, args);
       case "session_search": return await toolSessionSearch(ctx, args);
+      case "editor_context": return await toolEditorContext(ctx, args);
       case "memory_forget": case "memory_delete": return await toolMemoryForget(ctx, name, args);
       case "gmail_search": return await toolGmailSearch(ctx, String(args.query), typeof args.limit === "number" ? args.limit : undefined, typeof args.page_token === "string" ? args.page_token : undefined);
       case "gmail_read": return await toolGmailRead(ctx, String(args.id));
@@ -3356,7 +3381,7 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
 /** 可安全直接重试的只读工具（无副作用）。截图类工具不在内：每次执行都会在本地多存一个截图文件。 */
 export const READONLY_TOOLS = new Set([
   "read_file", "list_dir", "grep_search", "git_status",
-  "web_fetch", "web_search", "read_skill", "memory_search", "knowledge_search", "session_search",
+  "web_fetch", "web_search", "read_skill", "memory_search", "knowledge_search", "session_search", "editor_context",
   "poppy_discover", "poppy_identity_check", "poppy_permission_check",
   "lsp_diagnostics", "lsp_symbols",
   // 缺口 16：describe_image 只读（不写文件、不改状态）；每次执行都是一次计费

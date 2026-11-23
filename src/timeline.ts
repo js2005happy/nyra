@@ -852,6 +852,31 @@ export function buildTimeline(store: RunStore, runId: string): Timeline {
         push(at, "event", `会话 ${str(ev.session_id) ?? "?"} 已导出`, `${num(ev.messages) ?? 0} 条消息`, null, null);
         break;
       }
+      // G-P0-3：编辑器桥事件进时间线（只记相对路径与计数）。
+      case "editor_connected": {
+        push(at, "event", `编辑器已连接（${str(ev.host) ?? "?"}）`, null, null, null);
+        break;
+      }
+      case "editor_snapshot": {
+        push(at, "event", `编辑器快照：${num(ev.files) ?? 0} 个打开文件、${num(ev.diagnostics) ?? 0} 条诊断`, null, null, null);
+        break;
+      }
+      case "editor_diagnostics": {
+        push(at, "event", `编辑器诊断：${str(ev.file) ?? "?"}（错误 ${num(ev.errors) ?? 0} / 警告 ${num(ev.warnings) ?? 0}）`, null, null, null);
+        break;
+      }
+      case "editor_asked": {
+        push(at, "event", `编辑器提问（附快照 ${num(ev.chars) ?? 0} 字上下文）`, null, null, null);
+        break;
+      }
+      case "editor_preview": {
+        push(at, "event", `编辑器 diff 预览：${str(ev.file) ?? "?"}（+${num(ev.additions) ?? 0} −${num(ev.deletions) ?? 0}）`, null, null, null);
+        break;
+      }
+      case "editor_applied": {
+        push(at, "event", `编辑器预览已应用：${str(ev.file) ?? "?"}（+${num(ev.additions) ?? 0} −${num(ev.deletions) ?? 0}）`, null, null, null);
+        break;
+      }
       case "redline_changed": {
         const connector = str(ev.connector) ?? "未知连接器";
         const action = str(ev.action) ?? "未知动作";

@@ -100,6 +100,7 @@ import { MailInboxError } from "./mailInbox.ts";
 import { ResponsibilityError } from "./responsibilities.ts";
 import { knowledgeMain } from "./knowledge.ts";
 import { handleSearch } from "./searchCli.ts";
+import { handleEditor } from "./editorCli.ts";
 import { PermissionLedger, PermissionConflict } from "./poppy.ts";
 import { doctor as eigenfluxDoctor, onboardingSteps as eigenfluxOnboarding, doctorExitCode as eigenfluxDoctorExitCode } from "./eigenflux.ts";
 import { NetworkPolicy } from "./eigenfluxPolicy.ts";
@@ -268,6 +269,7 @@ nyra account <status|login|logout|list|revoke|link|suspend|reactivate>   用户�
 nyra sso <provider|login|status|scim>   企业 SSO：OIDC 身份提供方注册与登录、SCIM 账号开通（详见 docs/sso.md）
 nyra kb <create|list|add|search|ask|remove|test>  本地知识库：外部文档（文本/Markdown/PDF/网页）收录、分块、BM25 检索 + 检索测试台（详见 docs/knowledge.md）
 nyra search <关键词> [--scope project|all] [--session <会话 id>] [--after <日期>] [--before <日期>] [--limit <n>] [--export <路径>] [--json]  会话全文搜索：搜自己过去的对话，按会话分组回命中消息与上文下文；不给关键词列出最近会话，--export 把会话全文导出为 Markdown（详见 docs/session-search.md）
+nyra editor <serve|status|snapshot|ask|preview|apply|hosts>  编辑器插件：编辑器桥服务（VS Code / JetBrains / Zed 共用同一协议），快照带光标选区与诊断进模型上下文，diff 预览不动磁盘、应用须显式确认（详见 docs/editor-plugins.md）
 nyra knowledge test <库名> --file <问题文件> [--top-k N] [--min-score X] [--json]  检索测试台：批量典型问题看召回片段与分数，调参对比（详见 docs/knowledge.md）
 nyra plugin <list|search|install|uninstall|enable|disable|verify|audit|pin|unpin>  插件市场（最小版：技能包，只装带来源、可审计的插件）
 nyra hooks list                列出已安装的钩子（~/.nyra/hooks/<事件>.d/ 下的脚本，详见 docs/hooks.md）
@@ -412,6 +414,7 @@ nyra account <status|login|logout|list|revoke|link|suspend|reactivate>   user ac
 nyra sso <provider|login|status|scim>   enterprise SSO: OIDC identity provider registration and login, SCIM provisioning (see docs/sso.md)
 nyra kb <create|list|add|search|ask|remove|test>  local knowledge base: ingest external docs (text/Markdown/PDF/web pages), chunk, BM25 search + retrieval test bench (see docs/knowledge.md)
 nyra search <keywords> [--scope project|all] [--session <session id>] [--after <date>] [--before <date>] [--limit <n>] [--export <path>] [--json]  session full-text search: search your past conversations, grouped by session with matching messages and context; without keywords lists recent sessions, --export dumps a session to Markdown (see docs/session-search.md)
+nyra editor <serve|status|snapshot|ask|preview|apply|hosts>  editor plugins: editor bridge service (VS Code / JetBrains / Zed share one protocol), snapshots carry cursor, selection and diagnostics into model context, diff previews never touch disk, applying needs explicit confirmation (see docs/editor-plugins.md)
 nyra knowledge test <base> --file <questions file> [--top-k N] [--min-score X] [--json]  retrieval test bench: run a batch of typical questions, see recalled snippets and scores, compare params (see docs/knowledge.md)
 nyra plugin <list|search|install|uninstall|enable|disable|verify|audit|pin|unpin>  plugin market (skill packs with source, auditable)
 nyra hooks list                list installed hooks (~/.nyra/hooks/<event>.d/, see docs/hooks.md)
@@ -6796,6 +6799,7 @@ export async function main(argv: string[]): Promise<number> {
   if (args.subcommand === "rendezvous") return handleRendezvous(args.subArgs ?? [], home);
   if (args.subcommand === "queue") return handleQueue(args.subArgs ?? [], home);
   if (args.subcommand === "search") return handleSearch(args.subArgs ?? [], home);
+  if (args.subcommand === "editor") return handleEditor(args.subArgs ?? [], home);
   if (args.subcommand === "call") return callLedgerMain(args.subArgs ?? [], home);
   if (args.subcommand === "budget") return budgetMain(args.subArgs ?? [], home);
   if (args.subcommand === "agui") return aguiMain(args.subArgs ?? [], home);

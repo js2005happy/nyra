@@ -114,6 +114,14 @@ knowledge_search: ["base", "query", "hits", "top_score"],
 // 几个会话；导出记会话与消息数（不记导出路径，绝对路径不过事件）。
 session_searched: ["scope", "query", "hits", "sessions"],
 session_exported: ["session_id", "messages"],
+// G-P0-3：编辑器桥进证据链——只记 host、工作区相对路径、计数与 diff 行数，
+// 不记文件原文、不记绝对路径、不记选区文本（选区文本只进模型上下文，且过脱敏）。
+editor_connected: ["host", "workspace"],
+editor_snapshot: ["workspace", "files", "diagnostics"],
+editor_diagnostics: ["workspace", "file", "errors", "warnings"],
+editor_asked: ["workspace", "chars"],
+editor_preview: ["file", "additions", "deletions"],
+editor_applied: ["file", "additions", "deletions"],
 // 内置机器人市场：安装（哪个条目、哪个版本、哪种、哪个源、Bot Ready 评分、
 // 审查模型）、卸载（哪个条目、哪种）、发布（哪个条目、哪个版本、哪种、
 // 许可证、Bot Ready 评分）。事件里只记名字与来源 id，不记绝对路径——
