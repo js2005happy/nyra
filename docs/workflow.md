@@ -228,6 +228,7 @@ DSL 用自写的确定性 YAML 子集解析器（无依赖），只认 block 风
 - **定时触发**：`triggers: [{ type: "schedule", cron: "30 10 * * *" }]`（5 字段 cron：分 时 日 月 周；`*`、列表、范围、步长都认；日与周两边都限时任一边命中；7 当周日）。守护进程每轮跑到点的触发器（每轮最多 5 个、同一分钟不重复），只跑 `active` 的工作流，执行走 `runWorkflowByName`（mode normal、interactive false、成本上限继承定义里的 `max_cost_usd`）；失败记 `failed` 不炸整轮；每轮结果写证据 `~/.nyra/evidence/workflow-triggers/<日期>.jsonl`。
 - **事件触发**：`triggers: [{ type: "event", event: "github_issue_opened" }]`（事件名精确命中）。网关 webhook 与 Gmail 轮询派发事件后顺带触发同名工作流（fire-and-forget，不等跑完、不破坏 webhook 响应）；同事件 id 只跑一次；事件 payload 不注进工作流输入（不可信外部数据）。
 - **总开关默认关**：`nyra workflow triggers enable --yes` 才开（须显式批准）；`status` 看开关与最近触发记录；`disable` 关闭；`run` 手动跑一轮到点触发器。关着时定时与事件触发全部跳过，只记 skipped。
+- **cron 成熟语义（G-P1-38）**：漏跑补跑（默认 once 只补跑一次，窗口默认 120 分钟）、配额 hold（成本上限触顶时挂起并打 `quota_hold_until` 戳）、事故账（`nyra cron incidents` 查漏跑 / 补跑 / hold / 失败），详见 `docs/cron-maturity.md`；策略与 hold 状态用 `nyra cron policy` / `nyra cron hold` 看。
 
 ## 诚实边界
 

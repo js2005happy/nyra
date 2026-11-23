@@ -79,6 +79,7 @@
 | `nyra events <list\|add\|remove\|enable\|disable\|test\|poll>` | 事件触发任务：webhook 与新邮件触发进任务队列（详见 `docs/event-triggers.md`） |
 | `nyra thread <create\|list\|search\|show\|copy\|prune\|state\|history\|runs\|cron-add\|cron-remove\|crons\|archive\|unarchive\|remove>` | 远端线程操作 API：建线程、搜线程、复制接着跑、剪历史、读写状态、给线程绑 cron（详见 `docs/threads.md`） |
 | `nyra automation <list\|show\|install\|remove\|suggested>` | 自动化 bundle：一次装好整条自动化，自带建议触发器（详见 `docs/automations.md`） |
+| `nyra cron <incidents\|policy\|hold>` | cron 成熟语义：漏跑补跑策略（once/skip）+ 配额 hold + 事故账（详见 `docs/cron-maturity.md`） |
 | `nyra mail-inbox <status\|enable\|disable\|allowlist\|set\|poll>` | 邮件即任务入口：白名单发件人的邮件直接进任务队列，跑完回信（详见 `docs/mail-inbox.md`） |
 | `nyra responsibility <list\|add\|set\|remove\|enable\|disable\|check\|pause\|resume\|complete\|cancel\|brief\|show>` | 持续责任语义：责任对象（归属人 + 验收标准 + 升级条件 + 过期时间）与晨间简报，无事安静（详见 `docs/responsibilities.md`） |
 | `nyra bot telegram <start\|stop\|status>` | Bot 方向 Phase 1+2+3：Telegram 渠道（长轮询收消息、会话串行、去重配额、确定性指令；角色路由与聊天内审批；主动推送 notifier 与附件处理，详见 `docs/bot.md`） |
@@ -181,5 +182,6 @@
 | `nyra events <list\|add\|remove\|enable\|disable\|test\|poll>` | 事件触发任务：webhook 与新邮件触发进任务队列（详见 [events.md](./events.md)） |
 | `nyra thread <create\|list\|search\|show\|copy\|prune\|state\|history\|runs\|cron-add\|cron-remove\|crons\|archive\|unarchive\|remove>` | 远端线程操作 API：建线程、搜线程、复制接着跑、剪历史、读写状态、给线程绑 cron（详见 [threads.md](./threads.md)） |
 | `nyra automation <list\|show\|install\|remove\|suggested>` | 自动化 bundle：一次装好整条自动化，自带建议触发器（详见 [automations.md](./automations.md)） |
+| `nyra cron <incidents\|policy\|hold>` | cron 成熟语义：漏跑补跑策略（once/skip）+ 配额 hold + 事故账（详见 [cron-maturity.md](./cron-maturity.md)） |
 | `nyra mail-inbox <status\|enable\|disable\|allowlist\|set\|poll>` | 邮件即任务入口：白名单发件人的邮件直接进队列，跑完回信 |
 | `nyra responsibility <list\|add\|set\|remove\|enable\|disable\|check\|pause\|resume\|complete\|cancel\|brief\|show>` | 持续责任语义：责任对象与晨间简报，无事安静 |

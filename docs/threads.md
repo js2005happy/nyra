@@ -56,6 +56,8 @@ nyra thread remove <线程 id> --yes
 
 守护进程每轮顺带跑到点的线程 cron；手动跑一轮用
 `nyra workflow triggers run`（工作流触发器与线程 cron 一起跑）。
+漏跑补跑、配额 hold 与事故账与工作流触发器同款（G-P1-38，详见
+`docs/cron-maturity.md`；策略与 hold 用 `nyra cron policy` / `nyra cron hold` 看）。
 
 ## 网关 API（远端调）
 
