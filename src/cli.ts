@@ -202,6 +202,7 @@ nyra governance <policy|mandate|mode|dry-runs>   企业治理：版本化策略 
 nyra governance caps <set|list|show|check|assign-team|pause|resume|discard|pauses>   分层成本上限：按 Bot/角色/团队/人设设月度上限，触顶进可恢复暂停态
 nyra governance audit <export|verify>   审计导出：治理审计日志导出给 SIEM（JSONL + 哈希链，可验证）
 nyra optimize <propose|list|show|edit|approve|reject|apply|verify|revert|loop|arms>   带人批的自优化环：只起草改指令建议，须人批才生效，三数据集 + holdout 定放行；loop 读评测报告自动起草并按 UCB 排队（详见 docs/governance.md）
+nyra eval <scenarios|scorecard|benchmarks|import|benchmark|remove|probes|probe|manifest>   评测当一等公民：场景成绩单 + 外部基准集导入 + 仓内探针 + 可复现清单（只读为主，跑评测走 bun run scripts/eval.ts；详见 docs/eval.md）
 nyra trust <register|list|show|evidence|promote|demote|review|check>   信任阶梯（GROK-6，缺口 43 治理深化）：新 agent / 新技能默认只读，攒够 N 次连续成功且零违规才升一级；每次记成功有概率被随机抽查，抽中须复核才计入；降级随时可做（详见 docs/trust-ladder.md）
 nyra workflow <import|list|show|run|dry-run|resume|trial|activate|remove|verify|triggers>   声明式可复用工作流（缺口 25）：YAML/JSON 定义 + 三种执行形态（固定图/协调者/动态）+ 审批节点 + dry-run，激活前须真实数据试跑 + 人工确认；触发器执行默认关，须显式开启（详见 docs/workflow.md）
 nyra template <list|show|builtin|import|trial|activate|run|dry-run|remove|publish|install>   业务流程模板库（缺口 46）：流程 DSL + 连接器 + 验收标准 + 试跑数据，激活前须真实数据试跑 + 人工确认，随机器人市场分发（详见 docs/templates.md）
@@ -349,6 +350,7 @@ nyra governance <policy|mandate|mode|dry-runs>   enterprise governance: versione
 nyra governance caps <set|list|show|check|assign-team|pause|resume|discard|pauses>   tiered cost caps: monthly USD/token limits per Bot/role/team/persona, over-cap tasks pause recoverably
 nyra governance audit <export|verify>   audit export: governance audit logs to SIEM (JSONL + hash chain, verifiable)
 nyra optimize <propose|list|show|edit|approve|reject|apply|verify|revert|loop|arms>   human-approved self-optimization loop: drafts instruction changes only, needs approval to apply, three datasets + holdout decide release; loop reads an eval report, auto-drafts and ranks by UCB (see docs/governance.md)
+nyra eval <scenarios|scorecard|benchmarks|import|benchmark|remove|probes|probe|manifest>   eval as a first-class citizen: scenario scorecards + external benchmark import + in-repo probes + reproducibility manifest (mostly read-only; run evals with bun run scripts/eval.ts; see docs/eval.md)
 nyra trust <register|list|show|evidence|promote|demote|review|check>   trust ladder (GROK-6, gap 43 governance): new agents / skills start read-only, earn one level per N consecutive successes with zero violations; each recorded success may be randomly spot-checked and only counts after review; demotion any time (see docs/trust-ladder.md)
 nyra workflow <import|list|show|run|dry-run|resume|trial|activate|remove|verify|triggers>   declarative reusable workflows (gap 25): YAML/JSON definitions + three execution modes (fixed graph / coordinator / dynamic) + approval nodes + dry-run; activation needs a real-data trial run + human confirmation; trigger execution is off by default and needs an explicit opt-in (see docs/workflow.md)
 nyra template <list|show|builtin|import|trial|activate|run|dry-run|remove|publish|install>   business process template library (gap 46): workflow DSL + connectors + acceptance criteria + trial data, distributed through the robot market; activation needs a real-data trial run + human confirmation (see docs/templates.md)
@@ -7148,6 +7150,11 @@ export async function main(argv: string[]): Promise<number> {
       return handleOptimizeLoop(subArgs, home, resolve(args.workdir));
     }
     return handleOptimize(subArgs, home, resolve(args.workdir));
+  }
+  if (args.subcommand === "eval") {
+    // evalCli 只引 eval/* 的纯函数与账本；动态 import，与 optimize loop 同款。
+    const { handleEval } = await import("./evalCli.ts");
+    return handleEval(args.subArgs ?? [], home, resolve(args.workdir));
   }
   if (args.subcommand === "verdict") {
     // --json：机器可读输出（CI 门禁只看 grade，看板画趋势线看 reasons 里的数字）。
