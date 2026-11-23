@@ -1,3 +1,10 @@
+## 2026-11-24 — delegated exception privacy (static only)
+
+- Inspected development-branch README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, core Agent/Tools, tool report classifier, recent main commits, open issues (none), PR #113 and previous commit status (no statuses returned). `js2005happy/angel` resolves to `js2005happy/nyra`.
+- **Source observation:** `Agent.delegate` previously returned `AgentError` message text and arbitrary exception type/message to its caller, potentially placing private paths, URLs or credentials in parent-model context and session records. Both exception branches now return fixed `错误：`-prefixed messages indicating unknown execution status. This does not change child creation or successful return handling.
+- **External evidence reviewed 2026-11-24:** [Codex #34233](https://github.com/openai/codex/issues/34233) (repository record dates report 2026-07-19) describes sensitive configuration in tool output; [Codex #31015](https://github.com/openai/codex/issues/31015) (repository record dates report 2026-07-03) concerns redaction timing. These are individual reports from another project, not Angel incident counts or confirmation of this precise bug. Date/source descriptions reused from previously recorded research, not independently reverified this run.
+- **Not executed:** tests, compilation, CI, network calls from project, installations, external account changes, main merge or production release. Static inspection does not establish runtime compatibility; successful child output and other tool results may still contain secrets.
+
 ## 2026-11-23 — web_fetch evidence URL echo (static only)
 
 - Inspected README, DESIGN, CHANGELOG, VERIFICATION, ROADMAP, Agent/Tools source, recent commits, open Issues (none), PR #113 and prior commit status/workflows (none returned). Repository `js2005happy/angel` resolves to `js2005happy/nyra`.
