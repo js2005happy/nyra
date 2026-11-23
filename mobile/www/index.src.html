@@ -200,6 +200,14 @@
   var hostEl = $('host'), portEl = $('port'), codeEl = $('code'), lanErrEl = $('lanErr');
   var last = null;
   try { last = JSON.parse(localStorage.getItem('nyra-last-gateway') || 'null'); } catch (e) {}
+  // 地址里自带端口（如 192.168.1.23:8765）时以它为准，端口框的值不再拼上去（原来会拼成 :8765:8765 连不上）。
+  function splitHostPort(host, port) {
+    host = String(host || '').trim().replace(/^https?:\/\//i, '').split('/')[0];
+    var m = /^([^:]*):(\d+)$/.exec(host);
+    if (m) { host = m[1]; port = m[2]; }
+    return { host: host, port: port };
+  }
+  if (last && last.host) { var lp = splitHostPort(last.host, last.port); last = { host: lp.host, port: lp.port }; }
   if (last && last.host) { hostEl.value = last.host; if (last.port) portEl.value = last.port; }
   function sync() {
     var v = codeEl.value.replace(/\D/g, '').slice(0, 6); if (codeEl.value !== v) codeEl.value = v;
@@ -210,10 +218,10 @@
   $('lanBtn').onclick = function () { lanErrEl.textContent = ''; show('lan'); sync(); };
   $('lanBack').onclick = function () { show('first'); };
   function goLan(host, port, code) {
-    host = (host || '').trim().replace(/^https?:\/\//i, '').split('/')[0];
+    var hp = splitHostPort(host, port); host = hp.host; port = hp.port;
     hostEl.classList.remove('bad');
     if (!host) { lanErrEl.textContent = '先填电脑地址。'; hostEl.classList.add('bad'); return; }
-    if (!/^[A-Za-z0-9._-]+(:\d+)?$/.test(host)) { lanErrEl.textContent = '电脑地址格式不对，只要 IP 或主机名，不要带 http://。'; hostEl.classList.add('bad'); return; }
+    if (!/^[A-Za-z0-9._-]+$/.test(host)) { lanErrEl.textContent = '电脑地址格式不对，只要 IP 或主机名，不要带 http://。'; hostEl.classList.add('bad'); return; }
     port = parseInt(port, 10);
     if (!port || port < 1 || port > 65535) { lanErrEl.textContent = '端口不对，应在 1–65535 之间。'; return; }
     code = (code || '').trim();
