@@ -1,3 +1,10 @@
+## 2026-11-24 — P1 HTTP POST response charset classification (static only)
+
+- **Source fact:** `execute_http_post_report` uses the untrusted HTTP Content-Type charset to decode an already-received 2xx response. An unsupported codec label previously escaped to the broad exception handler and returned `unknown`, obscuring the observed transport status. This is a source-level risk, not a confirmed incident.
+- **Implementation:** For unsupported/malformed codec labels, decode the bounded bytes with UTF-8 replacement and preserve the trusted 2xx report. No retry, new dependency, permissions or external action; only static review.
+- **External evidence reviewed 2026-11-24:** [Codex #31015](https://github.com/openai/codex/issues/31015), opened 2026-07-03, and [Codex #34233](https://github.com/openai/codex/issues/34233), opened 2026-07-19, report tool-output privacy issues in another product. They do not demonstrate this charset issue or establish prevalence. **Engineering inference:** correct status classification and strict output privacy remain separate needs.
+- **Ranked candidates (value / difficulty / safety risk / dependency):** P1 charset fallback high / low / low / existing POST report (implemented, untested); P1 other tool output privacy audit high / medium / medium / tool inventory (open); P1 remote shell structured status high / high / high / trusted backend protocol (open); P1 pre-model/pre-record privacy protection high / high / high / policy design (research); P1 independent side-effect receipts high / high / high / trusted readback (blocked); P2 recoverable large output medium-high / high / medium / storage policy (research). These priorities are engineering judgment, not measured demand.
+
 ## 2026-11-24 — HTTP POST 结构化报告（静态审查）
 
 - **源码事实**：现有 HTTP POST 已有非 2xx 文本失败提示，但 Agent 仍使用字符串前缀判断结果。此次只将 POST 的进程内 HTTP 状态独立交给 `StructuredToolReport`；2xx 是 reported_ok（不是业务验收），非 2xx/HTTPError 为 reported_error，传输异常为 unknown；不自动重试。保留旧字符串接口和审批。
