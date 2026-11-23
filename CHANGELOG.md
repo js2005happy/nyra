@@ -1,3 +1,7 @@
+## Unreleased — 2026-11-23 HTTP POST error-body privacy (static only)
+
+- HTTPError now returns status without untrusted response body, preventing that body from entering model-visible tool output. No automatic retry; success responses unchanged. Static review only, tests not run.
+
 ## Unreleased — 2026-11-23 HTTP POST failure classification (static only)
 
 - `http_post` now prefixes `urllib.error.HTTPError` results with `错误：` so existing legacy tool report classification records a reported failure, retaining HTTP status and truncated response body. No automatic retry, permission or dependency changes. Static review only; tests not executed.
