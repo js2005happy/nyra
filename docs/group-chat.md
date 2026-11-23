@@ -49,6 +49,9 @@ nyra group chat run room-1 --task "分工写周报" --mode handoff \
 群聊的开始、每轮发言、交接、终止都进运行事件
 （`group_chat_started` / `group_chat_turn` / `group_chat_handoff` /
 `group_chat_terminated`），只记轮次与终止原因，不记消息原文。
+被拦截器丢弃的轮次另记 `group_chat_turn_dropped`（详见
+`docs/interventions.md`：bot 回复是总线上的 `publish` 消息，先过拦截器
+再进群记录）。
 
 ## 诚实边界
 
