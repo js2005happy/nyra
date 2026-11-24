@@ -6,32 +6,34 @@
 
 **An open-source AI agent that runs on your own computer: it reads your project, edits code, runs commands and checks the web, and asks before it acts.**
 
-[**Website**](https://js2005happy.github.io/nyra/) &nbsp;·&nbsp; [Download](#quick-start) &nbsp;·&nbsp; [中文](README.md)
+[Website](https://js2005happy.github.io/nyra/) &nbsp;·&nbsp; [Download](https://github.com/js2005happy/nyra/releases/latest) &nbsp;·&nbsp; [Getting started](docs/beta.md)
 
-Use it from a desktop window, the terminal or a browser, and pair your phone to follow along and approve steps.
-Before it writes a file or runs a command, an approval card shows exactly what it is about to do.
-Bring your own model key (or a local model); conversations, memory and keys stay on your machine.
+Nyra is an **open-source** AI agent that **runs on your own computer**. Use it from a **desktop window**, the **terminal** or a **browser**, and pair your **phone** to follow along and approve steps. Bring **your own model key** (or a local model); conversations, memory and keys **stay on your machine**.
 
-[![Release](https://img.shields.io/github/v/release/js2005happy/nyra?label=release&color=7B7BFF)](https://github.com/js2005happy/nyra/releases/latest)
-[![Node CI](https://github.com/js2005happy/nyra/actions/workflows/node-ci.yml/badge.svg?branch=main)](https://github.com/js2005happy/nyra/actions/workflows/node-ci.yml)
-[![License](https://img.shields.io/github/license/js2005happy/nyra?color=0B0B0C)](LICENSE)
+Hand it a task and it reads the project, edits code, runs commands and checks the web on its own. Before it writes a file or runs a command, an approval card says exactly what it is about to do. Say what you need. Watch it work. Nothing important happens until you say yes.
+
+[![language: TypeScript](https://img.shields.io/badge/language-TypeScript-3178C6?logo=typescript&logoColor=white)](https://github.com/js2005happy/nyra)
+[![desktop: Windows · macOS · Linux](https://img.shields.io/badge/desktop-Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-7B7BFF)](https://github.com/js2005happy/nyra/releases/latest)
+[![mobile: Android · mobile web](https://img.shields.io/badge/mobile-Android%20%C2%B7%20mobile%20web-3DDC84?logo=android&logoColor=white)](docs/mobile-pwa.md)
+[![release](https://img.shields.io/github/v/release/js2005happy/nyra?label=release&color=7B7BFF)](https://github.com/js2005happy/nyra/releases/latest)
+[![CI](https://img.shields.io/github/actions/workflow/status/js2005happy/nyra/node-ci.yml?branch=main&label=CI)](https://github.com/js2005happy/nyra/actions/workflows/node-ci.yml)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-38d591)](CONTRIBUTING.md)
 
 <br>
 
-<a href="https://github.com/js2005happy/nyra/releases/latest/download/Nyra-windows-x64-setup.exe"><img src="https://img.shields.io/badge/%E2%AC%87%20Windows-x64%20installer%20.exe-0078D4?style=for-the-badge&labelColor=0B0B0C" alt="Download Nyra: Windows(Nyra-windows-x64-setup.exe)" height="40"></a>
-&nbsp;
-<a href="https://github.com/js2005happy/nyra/releases/latest/download/Nyra-macos-universal.dmg"><img src="https://img.shields.io/badge/%E2%AC%87%20macOS-universal%20.dmg-555555?style=for-the-badge&labelColor=0B0B0C" alt="Download Nyra: macOS(Nyra-macos-universal.dmg)" height="40"></a>
-&nbsp;
-<a href="https://github.com/js2005happy/nyra/releases/latest/download/Nyra-linux-x86_64.AppImage"><img src="https://img.shields.io/badge/%E2%AC%87%20Linux-AppImage-E95420?style=for-the-badge&labelColor=0B0B0C" alt="Download Nyra: Linux AppImage(Nyra-linux-x86_64.AppImage)" height="40"></a>
-&nbsp;
-<a href="https://github.com/js2005happy/nyra/releases/latest/download/Nyra-linux-amd64.deb"><img src="https://img.shields.io/badge/%E2%AC%87%20Debian%20%C2%B7%20Ubuntu-.deb-A81D33?style=for-the-badge&labelColor=0B0B0C" alt="Download Nyra: Debian/Ubuntu(Nyra-linux-amd64.deb)" height="40"></a>
-&nbsp;
-<a href="https://github.com/js2005happy/nyra/releases/latest/download/nyra-android.apk"><img src="https://img.shields.io/badge/%E2%AC%87%20Android-APK-3DDC84?style=for-the-badge&labelColor=0B0B0C" alt="Download Nyra: Android(nyra-android.apk)" height="40"></a>
+<a href="https://github.com/js2005happy/nyra/releases/latest/download/Nyra-windows-x64-setup.exe"><img src="https://img.shields.io/github/v/release/js2005happy/nyra?style=for-the-badge&label=%E2%AC%87%EF%B8%8F%20Download%20for%20Windows&labelColor=070707&color=0078D4" alt="Download Nyra for Windows (Nyra-windows-x64-setup.exe)" height="36"></a>
 
-<sub>Windows installers are **not code-signed** yet (SmartScreen: More info → Run anyway) · the macOS `.dmg` is ad-hoc signed and **not notarized** (right-click → Open the first time) · the Android APK is **temporarily debug-signed**; when release signing lands you will need to uninstall once and reinstall.</sub>
+<a href="https://github.com/js2005happy/nyra/releases/latest/download/Nyra-macos-universal.dmg"><img src="https://img.shields.io/github/v/release/js2005happy/nyra?style=for-the-badge&label=%E2%AC%87%EF%B8%8F%20Download%20for%20macOS&labelColor=070707&color=7B7BFF" alt="Download Nyra for macOS (Nyra-macos-universal.dmg)" height="36"></a>
 
-<br><br>
+<a href="https://github.com/js2005happy/nyra/releases/latest/download/Nyra-linux-x86_64.AppImage"><img src="https://img.shields.io/github/v/release/js2005happy/nyra?style=for-the-badge&label=%E2%AC%87%EF%B8%8F%20Download%20for%20Linux%20%28AppImage%29&labelColor=070707&color=E95420" alt="Download Nyra for Linux, AppImage (Nyra-linux-x86_64.AppImage)" height="36"></a>
+
+<a href="https://github.com/js2005happy/nyra/releases/latest/download/Nyra-linux-amd64.deb"><img src="https://img.shields.io/github/v/release/js2005happy/nyra?style=for-the-badge&label=%E2%AC%87%EF%B8%8F%20Download%20for%20Linux%20%28.deb%29&labelColor=070707&color=A81D33" alt="Download Nyra for Linux, .deb (Nyra-linux-amd64.deb)" height="36"></a>
+
+<a href="https://github.com/js2005happy/nyra/releases/latest/download/nyra-android.apk"><img src="https://img.shields.io/github/v/release/js2005happy/nyra?style=for-the-badge&label=%E2%AC%87%EF%B8%8F%20Download%20for%20Android&labelColor=070707&color=3DDC84" alt="Download Nyra for Android (nyra-android.apk)" height="36"></a>
+
+<sub>[latest release](https://github.com/js2005happy/nyra/releases/latest) &nbsp;·&nbsp; Windows x64 installer: **not code-signed** yet (SmartScreen: More info → Run anyway) &nbsp;·&nbsp; macOS universal `.dmg` (Apple silicon & Intel): ad-hoc signed, **not notarized** (right-click → Open the first time) &nbsp;·&nbsp; Linux x64: AppImage or `.deb` &nbsp;·&nbsp; Android APK: **temporarily debug-signed**; the release that switches to the final signing key needs one uninstall and reinstall &nbsp;·&nbsp; [all releases](https://github.com/js2005happy/nyra/releases) &nbsp;·&nbsp; [中文](README.md)</sub>
+
+<br>
 
 <img src="docs/assets/screenshots/hero-windows-approval.png" alt="Nyra on Windows: an approval card before running git status" width="900">
 

@@ -6,33 +6,34 @@
 
 **跑在你自己电脑上的开源 AI Agent：读项目、改代码、跑命令、联网查证，动手之前先问你。**
 
-[**官网**](https://js2005happy.github.io/nyra/) &nbsp;·&nbsp; [下载](#快速开始) &nbsp;·&nbsp; [完整手册](GUIDE.md) &nbsp;·&nbsp; [更新日志](CHANGELOG.md) &nbsp;·&nbsp; [English](README.en.md)
+[官网](https://js2005happy.github.io/nyra/) &nbsp;·&nbsp; [下载](https://github.com/js2005happy/nyra/releases/latest) &nbsp;·&nbsp; [上手说明](docs/beta.md)
 
-Nyra 在你的电脑上干活：桌面窗口、终端、浏览器都能用，手机配对后还能远程看进度、点批准。
-写文件、跑命令之前，它会弹一张审批卡写清这一步要做什么，你说可以才动。
-模型用你自己的 Key（也能接本地模型），对话、记忆和密钥都留在本机。
+Nyra 是一个**开源**、**跑在你自己电脑上**的 AI Agent：**桌面窗口**、**终端**、**浏览器**里都能用，**手机**配对后还能远程看进度、点批准。模型用**你自己的 Key**（也能接本地模型），对话、记忆和密钥都**留在本机**。
 
-[![语言](https://img.shields.io/github/languages/top/js2005happy/nyra?color=3178C6)](https://github.com/js2005happy/nyra)
-[![最新版本](https://img.shields.io/github/v/release/js2005happy/nyra?label=release&color=7B7BFF)](https://github.com/js2005happy/nyra/releases/latest)
-[![Node CI](https://github.com/js2005happy/nyra/actions/workflows/node-ci.yml/badge.svg?branch=main)](https://github.com/js2005happy/nyra/actions/workflows/node-ci.yml)
-[![License](https://img.shields.io/github/license/js2005happy/nyra?color=0B0B0C)](LICENSE)
+交给它一件事，它会自己读项目、改代码、跑命令、联网查证；写文件、跑命令之前，先弹一张审批卡写清这一步要做什么。说一句话交代任务。看它一步步做。要紧的那一步，你点头它才动。
+
+[![语言: TypeScript](https://img.shields.io/badge/%E8%AF%AD%E8%A8%80-TypeScript-3178C6?logo=typescript&logoColor=white)](https://github.com/js2005happy/nyra)
+[![桌面: Windows · macOS · Linux](https://img.shields.io/badge/%E6%A1%8C%E9%9D%A2-Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-7B7BFF)](https://github.com/js2005happy/nyra/releases/latest)
+[![手机: Android · 手机网页](https://img.shields.io/badge/%E6%89%8B%E6%9C%BA-Android%20%C2%B7%20%E6%89%8B%E6%9C%BA%E7%BD%91%E9%A1%B5-3DDC84?logo=android&logoColor=white)](docs/mobile-pwa.md)
+[![release](https://img.shields.io/github/v/release/js2005happy/nyra?label=release&color=7B7BFF)](https://github.com/js2005happy/nyra/releases/latest)
+[![CI](https://img.shields.io/github/actions/workflow/status/js2005happy/nyra/node-ci.yml?branch=main&label=CI)](https://github.com/js2005happy/nyra/actions/workflows/node-ci.yml)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-38d591)](CONTRIBUTING.md)
 
 <br>
 
-<a href="https://github.com/js2005happy/nyra/releases/latest/download/Nyra-windows-x64-setup.exe"><img src="https://img.shields.io/badge/%E2%AC%87%20Windows-x64%20%E5%AE%89%E8%A3%85%E5%8C%85%20.exe-0078D4?style=for-the-badge&labelColor=0B0B0C" alt="下载 Nyra：Windows（Nyra-windows-x64-setup.exe）" height="40"></a>
-&nbsp;
-<a href="https://github.com/js2005happy/nyra/releases/latest/download/Nyra-macos-universal.dmg"><img src="https://img.shields.io/badge/%E2%AC%87%20macOS-%E9%80%9A%E7%94%A8%E7%89%88%20.dmg-555555?style=for-the-badge&labelColor=0B0B0C" alt="下载 Nyra：macOS（Nyra-macos-universal.dmg）" height="40"></a>
-&nbsp;
-<a href="https://github.com/js2005happy/nyra/releases/latest/download/Nyra-linux-x86_64.AppImage"><img src="https://img.shields.io/badge/%E2%AC%87%20Linux-AppImage-E95420?style=for-the-badge&labelColor=0B0B0C" alt="下载 Nyra：Linux AppImage（Nyra-linux-x86_64.AppImage）" height="40"></a>
-&nbsp;
-<a href="https://github.com/js2005happy/nyra/releases/latest/download/Nyra-linux-amd64.deb"><img src="https://img.shields.io/badge/%E2%AC%87%20Debian%20%C2%B7%20Ubuntu-.deb-A81D33?style=for-the-badge&labelColor=0B0B0C" alt="下载 Nyra：Debian/Ubuntu（Nyra-linux-amd64.deb）" height="40"></a>
-&nbsp;
-<a href="https://github.com/js2005happy/nyra/releases/latest/download/nyra-android.apk"><img src="https://img.shields.io/badge/%E2%AC%87%20Android-APK-3DDC84?style=for-the-badge&labelColor=0B0B0C" alt="下载 Nyra：Android（nyra-android.apk）" height="40"></a>
+<a href="https://github.com/js2005happy/nyra/releases/latest/download/Nyra-windows-x64-setup.exe"><img src="https://img.shields.io/github/v/release/js2005happy/nyra?style=for-the-badge&label=%E2%AC%87%EF%B8%8F%20%E4%B8%8B%E8%BD%BD%20Windows%20%E7%89%88&labelColor=070707&color=0078D4" alt="下载 Nyra Windows 版（Nyra-windows-x64-setup.exe）" height="36"></a>
 
-<sub>[最新版本](https://github.com/js2005happy/nyra/releases/latest) &nbsp;·&nbsp; Windows 安装包**未做代码签名**，首次运行会出现 SmartScreen 提示（「更多信息 → 仍要运行」）&nbsp;·&nbsp; macOS `.dmg` 只有 ad-hoc 签名、**未经 Apple 公证**，首次打开需右键「打开」放行 &nbsp;·&nbsp; 安卓 APK 目前是**临时（debug）签名**，正式签名即将切换，切换那一版需要先卸载旧版再装一次 &nbsp;·&nbsp; [全部版本](https://github.com/js2005happy/nyra/releases)</sub>
+<a href="https://github.com/js2005happy/nyra/releases/latest/download/Nyra-macos-universal.dmg"><img src="https://img.shields.io/github/v/release/js2005happy/nyra?style=for-the-badge&label=%E2%AC%87%EF%B8%8F%20%E4%B8%8B%E8%BD%BD%20macOS%20%E7%89%88&labelColor=070707&color=7B7BFF" alt="下载 Nyra macOS 版（Nyra-macos-universal.dmg）" height="36"></a>
 
-<br><br>
+<a href="https://github.com/js2005happy/nyra/releases/latest/download/Nyra-linux-x86_64.AppImage"><img src="https://img.shields.io/github/v/release/js2005happy/nyra?style=for-the-badge&label=%E2%AC%87%EF%B8%8F%20%E4%B8%8B%E8%BD%BD%20Linux%20%E7%89%88%20AppImage&labelColor=070707&color=E95420" alt="下载 Nyra Linux 版 AppImage（Nyra-linux-x86_64.AppImage）" height="36"></a>
+
+<a href="https://github.com/js2005happy/nyra/releases/latest/download/Nyra-linux-amd64.deb"><img src="https://img.shields.io/github/v/release/js2005happy/nyra?style=for-the-badge&label=%E2%AC%87%EF%B8%8F%20%E4%B8%8B%E8%BD%BD%20Linux%20%E7%89%88%20.deb&labelColor=070707&color=A81D33" alt="下载 Nyra Linux 版 .deb（Nyra-linux-amd64.deb）" height="36"></a>
+
+<a href="https://github.com/js2005happy/nyra/releases/latest/download/nyra-android.apk"><img src="https://img.shields.io/github/v/release/js2005happy/nyra?style=for-the-badge&label=%E2%AC%87%EF%B8%8F%20%E4%B8%8B%E8%BD%BD%20Android%20%E7%89%88&labelColor=070707&color=3DDC84" alt="下载 Nyra Android 版（nyra-android.apk）" height="36"></a>
+
+<sub>[最新版本](https://github.com/js2005happy/nyra/releases/latest) &nbsp;·&nbsp; Windows x64 安装包：**未做代码签名**，首次运行会有 SmartScreen 提示（「更多信息 → 仍要运行」） &nbsp;·&nbsp; macOS 通用版 `.dmg`（Apple 芯片与 Intel）：只有 ad-hoc 签名、**未经 Apple 公证**，首次打开需右键「打开」 &nbsp;·&nbsp; Linux x64：AppImage 或 `.deb` &nbsp;·&nbsp; Android APK：目前是**临时（debug）签名**，切换正式签名的那一版需要先卸载旧版再装一次 &nbsp;·&nbsp; [全部版本](https://github.com/js2005happy/nyra/releases) &nbsp;·&nbsp; [English](README.en.md)</sub>
+
+<br>
 
 <img src="docs/assets/screenshots/hero-windows-approval.png" alt="Nyra Windows 桌面版：要跑 git status 之前，对话里的审批卡和右侧面板写清命令和范围，等你点「允许一次」" width="900">
 
