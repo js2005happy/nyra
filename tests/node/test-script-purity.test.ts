@@ -542,7 +542,8 @@ test("事件：两个新事件类型已注册，摘要不被脱敏掩掉，时�
   }
 });
 
-test("审计：脚本预授权审计进 SIEM 导出（共 11 个来源）", () => {
+test("审计：脚本预授权审计进 SIEM 导出（共 12 个来源）", () => {
   expect(AUDIT_SOURCES.some((s) => s.file === "script-preauth-audit.jsonl" && s.label === "script_preauth")).toBe(true);
-  expect(AUDIT_SOURCES.length).toBe(11); // Pi Bot 借鉴第 2 条加了第 10 个来源（交接契约验收审计）；O1 加了第 11 个来源（策略网关审计）。
+  expect(AUDIT_SOURCES.length).toBe(12); // Pi Bot 借鉴第 2 条加了第 10 个来源（交接契约验收审计）；O1 加了第 11 个来源（策略网关审计）；H1 加了第 12 个来源（网关客户端审计）。
+  expect(AUDIT_SOURCES.some((s) => s.file === "gateway-audit.jsonl" && s.label === "gateway")).toBe(true);
 });
