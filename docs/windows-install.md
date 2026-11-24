@@ -1,3 +1,5 @@
+**中文** · [English](windows-install.en.md)
+
 # 在 Windows 上安装 Nyra
 
 两种装法：**Node 二进制 exe 单文件**（不用装 Python，推荐）或

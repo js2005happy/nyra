@@ -1,3 +1,5 @@
+**中文** · [English](macos-install.en.md)
+
 # 在 macOS 上安装 Nyra（一键脚本）
 
 > 状态：Node 版脚本是在 Linux 上写好、只做了语法与占位替换检查，

@@ -1,3 +1,5 @@
+**中文** · [English](GUIDE.en.md)
+
 # Nyra 完整手册
 
 这里是 Nyra 的全部功能、命令与安全说明。简介与快速上手见 [README](README.md)。
@@ -146,7 +148,7 @@ Python worker（`nyra.worker`，stdio JSONL 协议 v1）已在 0.4.0 随 Python 
 
 ## 官网
 
-项目官网是 `docs/` 目录下的纯静态单页（`index.html` + `style.css` + `main.js`），由 GitHub Pages 从 `main` 分支的 `/docs` 发布，地址 <https://js2005happy.github.io/nyra/>。没有构建步骤、外部 CDN、外部字体或追踪脚本；默认中文，右上角可切换 English，支持手机与暗色模式。内容全部取自本 README、DESIGN.md 与 CHANGELOG.md。本地预览直接用浏览器打开 `docs/index.html` 即可；页面存在、内部链接/锚点有效、无外部资源加载这些检查在 0.4.0 尚无 Node 等价测试，待补。
+项目官网是 `docs/` 目录下的纯静态单页（`index.html` + `style.css` + `main.js`），由 GitHub Pages 从 `main` 分支的 `/docs` 发布，地址 <https://js2005happy.github.io/nyra/>。没有构建步骤、外部 CDN、外部字体或追踪脚本；默认跟随浏览器语言（中文或英文），右上角「中 / EN」可手动切换并记住，支持手机与暗色模式。内容全部取自本 README、DESIGN.md 与 CHANGELOG.md。本地预览直接用浏览器打开 `docs/index.html` 即可；页面存在、内部链接/锚点有效、无外部资源加载这些检查在 0.4.0 尚无 Node 等价测试，待补。
 
 ## 新功能（0.2.0 / 0.3.0）
 

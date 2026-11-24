@@ -6,7 +6,7 @@
 
 **An open-source AI agent that runs on your own computer: it reads your project, edits code, runs commands and checks the web, and asks before it acts.**
 
-[Website](https://js2005happy.github.io/nyra/) &nbsp;·&nbsp; [Download](https://github.com/js2005happy/nyra/releases/latest) &nbsp;·&nbsp; [Getting started](docs/beta.md)
+[Website](https://js2005happy.github.io/nyra/) &nbsp;·&nbsp; [Download](https://github.com/js2005happy/nyra/releases/latest) &nbsp;·&nbsp; [Getting started](docs/beta.en.md)
 
 Nyra is an **open-source** AI agent that **runs on your own computer**. Use it from a **desktop window**, the **terminal** or a **browser**, and pair your **phone** to follow along and approve steps. Bring **your own model key** (or a local model); conversations, memory and keys **stay on your machine**.
 
@@ -63,7 +63,7 @@ irm https://raw.githubusercontent.com/js2005happy/nyra/main/scripts/install-node
 
 Then run `nyra setup`. The scripts verify each download against the release `SHA256SUMS` and refuse to install on a mismatch.
 
-The full documentation is in Chinese: see [README.md](README.md) and [GUIDE.md](GUIDE.md). Contributions: [CONTRIBUTING.md](CONTRIBUTING.md) · Security: [SECURITY.md](SECURITY.md).
+Full guide: [GUIDE.en.md](GUIDE.en.md) (Chinese: [README.md](README.md), [GUIDE.md](GUIDE.md)). Install details: [installers](docs/installers.en.md) · [macOS](docs/macos-install.en.md) · [Windows](docs/windows-install.en.md). Contributions: [CONTRIBUTING.md](CONTRIBUTING.md) · Security: [SECURITY.md](SECURITY.md).
 
 ## Contributing
 
