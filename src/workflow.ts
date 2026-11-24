@@ -2294,6 +2294,14 @@ function resolveInputs(def: WorkflowDefinition, overrides: Record<string, unknow
 
 export async function runWorkflowByName(home: string, name: string, inputOverrides: Record<string, unknown>, req: WorkflowRunRequest): Promise<WorkflowRun> {
   const { def } = loadWorkflowDefinitionFile(home, name);
+  return runWorkflowDefinition(home, def, inputOverrides, req);
+}
+
+/**
+ * G-P2-5：直接跑一个已校验的内联工作流定义（不经注册表）——声明式 agent
+ * 的 workflow.inline 走这一条；与 runWorkflowByName 同款 runner 与输入解析。
+ */
+export async function runWorkflowDefinition(home: string, def: WorkflowDefinition, inputOverrides: Record<string, unknown>, req: WorkflowRunRequest): Promise<WorkflowRun> {
   const inputs = resolveInputs(def, inputOverrides);
   const runner = new WorkflowRunner(def, inputs, {
     home, workdir: req.workdir, mode: req.mode, interactive: req.interactive,

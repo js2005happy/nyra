@@ -727,6 +727,13 @@ export interface MiddlewareSetDeps {
   cacheableTools?: ReadonlySet<string>;
   /** 只读工具（审批模式判定用；不给 = 全部按写工具算）。 */
   readOnlyTools?: ReadonlySet<string>;
+  /**
+   * G-P2-5：审批模式解析覆盖（调用方注入）。不给时按配置文件里的
+   * approvalModes 解析；给了就用调用方的解析——Agent 注入自己的
+   * resolveMiddlewareApprovalMode，让声明的 approval 覆盖进 function
+   * 层（否则覆盖只进 ToolContext 的 checkApproval，中间件事件看不到它）。
+   */
+  resolveApprovalMode?: (tool: string) => ApprovalMode;
   sleep?: (ms: number) => Promise<void>;
   random?: () => number;
 }
@@ -774,7 +781,9 @@ export function buildMiddlewareSet(
   const fn: MiddlewareSet["function"] = [];
   if (config.layers.function) {
     fn.push(createApprovalModeMiddleware({
-      resolve: (tool) => resolveApprovalMode(config, tool, readOnlyTools),
+      // G-P2-5：调用方给了审批解析覆盖就用它（Agent 的合并解析，含声明
+      // 的 approval 覆盖）；没给时按配置文件解析（老行为不变）。
+      resolve: deps.resolveApprovalMode ?? ((tool) => resolveApprovalMode(config, tool, readOnlyTools)),
       emit,
     }));
     if (config.validation.enabled) {

@@ -214,6 +214,7 @@ nyra intervention <list|add|remove|enable|disable|on|off|log|test>   运行时�
 nyra admission <log|show|who-approved|policy-history|export>   企业级准入账本（G-P2-2）：好友批准、进圈/离圈、策略变更、token 发放/吊销都记进同一本只追加账本，只记元数据与指纹，不记 token 原文（详见 docs/admission.md）
 nyra middleware <status|enable|disable|set|approval|cache-clear>   类型化中间件链（G-P2-4）：chat / function / agent 三层可组合链，内置校验、重试、缓存、token 计数；默认只开校验与 token 计数，重试与缓存默认关；审批模式按工具配（详见 docs/middleware.md）
 nyra delegate "<任务>" [--preset <预设名>] [--max-turns <1-12>] [--model <模型>] [--agent <成员>] [--json]   一次性委派：派一个子 agent 跑任务并打印摘要；--preset 指定具名预设（review 是只读预设），不给时按项目默认 → 用户默认 → general-purpose 解析（详见 docs/subagent-presets.md）
+nyra agent <load|show|list|remove|run>   声明式 agent（G-P2-5）：一个 YAML 文件声明一个 agent（instructions + tools + workflow），load 校验并注册，run 用声明跑一轮；tools 是白名单上限、与预设交集只能收窄（详见 docs/agent-decl.md）
 nyra template <list|show|builtin|import|trial|activate|run|dry-run|remove|publish|install>   业务流程模板库（缺口 46）：流程 DSL + 连接器 + 验收标准 + 试跑数据，激活前须真实数据试跑 + 人工确认，随机器人市场分发（详见 docs/templates.md）
 nyra script check <文件> [--language python|javascript|lua|php]   判定一个脚本纯不纯（白名单静态分析）：纯返回 0，不纯返回 1
 nyra script preauth <list|grant|revoke> --workflow <名字>   脚本摘要预授权：激活时自动钉纯脚本摘要，内容一改授权失效；只在例行里有效（详见 docs/script-purity.md）
@@ -374,6 +375,7 @@ nyra intervention <list|add|remove|enable|disable|on|off|log|test>   runtime mes
 nyra admission <log|show|who-approved|policy-history|export>   enterprise admission ledger (G-P2-2): friend approvals, circle join/leave, policy changes and token issue/revoke all go into one append-only ledger; metadata and fingerprints only, no token plaintext (see docs/admission.md)
 nyra middleware <status|enable|disable|set|approval|cache-clear>   typed middleware chain (G-P2-4): composable chat / function / agent layers with validation, retry, caching and token counting; only validation and token counting are on by default, retry and caching are off; per-tool approval modes (see docs/middleware.md)
 nyra delegate "<task>" [--preset <preset>] [--max-turns <1-12>] [--model <model>] [--agent <member>] [--json]   one-off delegation: run a sub-agent on a task and print the summary; --preset picks a named preset (review is read-only), otherwise resolved as project default, then user default, then general-purpose (see docs/subagent-presets.md)
+nyra agent <load|show|list|remove|run>   declarative agents (G-P2-5): one YAML file declares one agent (instructions + tools + workflow); load validates and registers it, run runs one round with it; tools are an allowlist cap, intersecting with a preset can only narrow it (see docs/agent-decl.md)
 nyra template <list|show|builtin|import|trial|activate|run|dry-run|remove|publish|install>   business process template library (gap 46): workflow DSL + connectors + acceptance criteria + trial data, distributed through the robot market; activation needs a real-data trial run + human confirmation (see docs/templates.md)
 nyra script check <file> [--language python|javascript|lua|php]   judge whether a script is pure (allowlist static analysis): exit 0 if pure, 1 if not
 nyra script preauth <list|grant|revoke> --workflow <name>   script digest pre-authorization: pure script digests are pinned at activation, a changed script voids the grant; routine-only (see docs/script-purity.md)
@@ -6032,6 +6034,101 @@ async function handleDelegateCommand(args: CliArgs, home: string): Promise<numbe
   }
 }
 
+// ---- 声明式 agent ---- 
+/**
+ * G-P2-5：`nyra agent run <名字> ["<任务>"] [--preset <预设>] [--json]`——
+ * 用一条已注册的声明跑一轮。声明带 workflow 时走工作流（引用走
+ * runWorkflowByName，内联 fixed 走 runWorkflowDefinition；任务文本当
+ * inputs.task 传——工作流声明了 task 输入才接得住，没声明时 resolveInputs
+ * 直接拒绝，不静默丢任务）；没 workflow 时走 agent 主循环（建一个父级
+ * Agent 当委派人，调 delegateDetailed 派子 agent：声明转成会话层预设定
+ *（presetDef，名字就是声明名）+ tools 白名单 + model + instructions +
+ * approval，预设的 tools 与声明的 tools 同时给时取交集，只能收窄）。
+ * 调模型花真钱，和其他一次性运行同款。
+ */
+async function handleAgentRun(args: CliArgs, home: string): Promise<number> {
+  // 分发时 subArgs 还带着 "run"（["run", <名字>, ...]），先剥掉它再解析位置参数。
+  const rawSubArgs = args.subArgs ?? [];
+  const subArgs = rawSubArgs[0] === "run" ? rawSubArgs.slice(1) : rawSubArgs;
+  const get = (flag: string): string | undefined => {
+    const i = subArgs.indexOf(flag);
+    return i >= 0 ? subArgs[i + 1] : undefined;
+  };
+  const positional = subArgs.filter((a) => !a.startsWith("--"));
+  const name = positional[0] ?? "";
+  const task = get("--task") ?? positional[1] ?? "";
+  const presetFlag = get("--preset");
+  const asJson = subArgs.includes("--json");
+  if (!name.trim()) {
+    process.stderr.write("错误：用法：nyra agent run <名字> [\"<任务>\"] [--preset <预设>] [--json]\n");
+    return 2;
+  }
+  try {
+    const { loadStoredAgentDecl, agentDeclToPreset } = await import("./agentDecl.ts");
+    const { validateOpts } = await import("./agentDeclCli.ts");
+    const decl = loadStoredAgentDecl(home, name.trim(), validateOpts(home));
+    if (decl.workflow) {
+      const { runWorkflowByName, runWorkflowDefinition } = await import("./workflow.ts");
+      const config = loadConfig(home);
+      const primaryCfg = resolveProvider({ home, config });
+      const req = {
+        workdir: resolve(args.workdir),
+        mode: "normal" as const,
+        interactive: true,
+        ...(decl.limits?.max_cost_usd !== undefined ? { maxCostUsd: decl.limits.max_cost_usd } : {}),
+        ...(decl.model ? {
+          providerFactory: async () => {
+            const factory = makeModelFactory({ home, config, primaryName: primaryCfg.name });
+            return factory("agent-decl", decl.model!);
+          },
+        } : {}),
+      };
+      const overrides: Record<string, unknown> = task.trim() ? { task: task.trim() } : {};
+      const run = "ref" in decl.workflow
+        ? await runWorkflowByName(home, decl.workflow.ref, overrides, req)
+        : await runWorkflowDefinition(home, decl.workflow.inline, overrides, req);
+      const spent = typeof run.spentUsd === "number" ? `$${run.spentUsd.toFixed(4)}` : "未知（有调用没报用量）";
+      if (asJson) {
+        process.stdout.write(JSON.stringify({ ok: run.status === "completed", run_id: run.id, status: run.status, spent_usd: run.spentUsd ?? null }, null, 2) + "\n");
+      } else {
+        process.stdout.write(`声明 ${decl.name} 的工作流运行 ${run.id}：${run.status}（${run.nodes.length} 个节点，已花 ${spent}）\n`);
+        if (run.status === "failed" && run.error) process.stdout.write(`失败原因：${run.error}\n`);
+      }
+      return run.status === "completed" || run.status === "awaiting_approval" || run.status === "awaiting_interrupt" ? 0 : 1;
+    }
+    if (!task.trim()) {
+      process.stderr.write(`错误：声明 ${decl.name} 没有配 workflow，run 须给任务：nyra agent run ${decl.name} "<任务>"\n`);
+      return 2;
+    }
+    const maxTurns = decl.limits?.max_turns ?? 6;
+    const built = await buildAgent({ ...args, workdir: args.workdir, task: "" }, { interactive: true });
+    const { agent } = built;
+    const result = await agent.delegateDetailed(task.trim(), maxTurns, {
+      preset: presetFlag ?? decl.name,
+      presetDef: agentDeclToPreset(decl),
+      ...(decl.tools?.length ? { tools: decl.tools } : {}),
+      ...(decl.model ? { model: decl.model } : {}),
+      systemInstructions: decl.instructions,
+      ...(decl.approval ? { approvalModes: decl.approval } : {}),
+    });
+    if (asJson) {
+      process.stdout.write(JSON.stringify({
+        ok: result.ok, text: result.text, spent_usd: result.spentUsd ?? null, model: result.model,
+      }, null, 2) + "\n");
+    } else {
+      process.stdout.write(result.text + "\n");
+      if (!result.ok) {
+        process.stderr.write(`子任务失败（模型：${result.model ?? "未知"}，已花：${result.spentUsd === null ? "未知" : `$${result.spentUsd.toFixed(4)}`}）。\n`);
+        return 1;
+      }
+    }
+    return result.ok ? 0 : 1;
+  } catch (err: unknown) {
+    process.stderr.write(`错误：${err instanceof Error ? err.message : String(err)}\n`);
+    return 1;
+  }
+}
+
 /** GROK-1：`nyra team ...`——团队模式的 CLI 入口。create/list/show/add/remove/
  * handover 是纯本地操作（不建 agent、不烧 token）；只有 dispatch 跑模型：
  * 建一个参谋长 Agent（Soul = 参谋长、teamId = 团队、teamRole = chief，工作
@@ -7285,6 +7382,13 @@ export async function main(argv: string[]): Promise<number> {
   }
   // G-P2-3：一次性委派（nyra delegate "<任务>" --preset review）。
   if (args.subcommand === "delegate") return handleDelegateCommand(args, home);
+  // G-P2-5：声明式 agent（nyra agent <load|show|list|remove|run>）。
+  // run 要建 Agent，在 cli.ts 里做；其余纯本地操作走 agentDeclCli.ts。
+  if (args.subcommand === "agent") {
+    if ((args.subArgs ?? [])[0] === "run") return handleAgentRun(args, home);
+    const { handleAgentDecl } = await import("./agentDeclCli.ts");
+    return handleAgentDecl(args.subArgs ?? [], home);
+  }
   if (args.subcommand === "kb" || args.subcommand === "knowledge") return knowledgeMain(args.subArgs ?? []);
   if (args.subcommand === "plugin") return handlePlugin(args.subArgs ?? [], home);
   if (args.subcommand === "creator") return handleCreator(args.subArgs ?? [], home, resolve(args.workdir));

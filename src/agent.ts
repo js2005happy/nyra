@@ -346,6 +346,13 @@ export interface AgentOptions {
    *（toolShell 的写命令在 checkApproval 里直接拒绝）。根 agent 不设。
    */
   shellReadOnly?: boolean;
+  /**
+   * G-P2-5：声明式 agent 按工具配的审批模式——只对本次运行生效（不改
+   * 全局中间件配置），由 delegateDetailed 在构造子 Agent 时传
+   *（opts.approvalModes）；resolveMiddlewareApprovalMode 里与全局配置
+   * 合并后再算，never_require 只对只读工具生效。根 agent 不设。
+   */
+  approvalModeOverrides?: Record<string, "require" | "never_require"> | null;
   /** P2-2：单次运行的成本上限（美元）；null = 不设上限。 */
   maxCostUsd?: number | null;
   /** P2-2：该模型的单价；null = 未配置，金额未知（不编造）。 */
@@ -665,6 +672,8 @@ export class Agent {
   private delegateReasoningEffort: string | null;
   /** G-P2-3：本 Agent 的只读 shell（review 预设的子 Agent 才设；根 agent 不设）。 */
   private shellReadOnly: boolean;
+  /** G-P2-5：本次运行的审批模式覆盖（声明式 agent 的 approval 字段；只对本次运行生效）。 */
+  private approvalModeOverrides: Record<string, "require" | "never_require"> | null;
   /**
    * 缺口 10：独立审查层用的模型名（仅模型名）与注入的运行实例。
    * reviewerRunnerInstance 为 undefined = 还没建过（懒建一次后缓存；
@@ -812,6 +821,8 @@ export class Agent {
       ? opts.delegateReasoningEffort.trim() : null;
     // G-P2-3：只读 shell 只由 delegateDetailed 按预设设（review 预设的子 Agent）。
     this.shellReadOnly = opts.shellReadOnly === true;
+    // G-P2-5：审批模式覆盖只由 delegateDetailed 按声明设（本次运行有效）。
+    this.approvalModeOverrides = opts.approvalModeOverrides ?? null;
     this.reviewerModelName = opts.reviewerModel ?? null;
     this.reviewerRunnerOpt = opts.reviewerRunner ?? null;
     this.verifierModelName = opts.verifierModel ?? null;
@@ -1657,9 +1668,15 @@ export class Agent {
   /**
    * G-P2-4：按工具配的审批模式（ToolContext.approvalMode 闭包的落点）。
    * 链还没装配时（runLoop 之前）按默认配置算——默认全部 require。
+   * G-P2-5：声明式 agent 的 approval 覆盖先与全局配置合并（覆盖只对
+   * 本次运行生效）；合并后再过 resolveApprovalMode，写工具配了
+   * never_require 也按 require 算（纵深防御）。
    */
   private resolveMiddlewareApprovalMode(tool: string): "require" | "never_require" {
-    const config = this.middlewareSet?.config ?? defaultMiddlewareConfig();
+    const base = this.middlewareSet?.config ?? defaultMiddlewareConfig();
+    const config = this.approvalModeOverrides
+      ? { ...base, approvalModes: { ...base.approvalModes, ...this.approvalModeOverrides } }
+      : base;
     return resolveApprovalMode(config, tool, READONLY_TOOLS);
   }
 
@@ -1673,6 +1690,10 @@ export class Agent {
       getSchema: (tool) => toolArgSchemaLookup(tool),
       cacheableTools: READONLY_TOOLS,
       readOnlyTools: READONLY_TOOLS,
+      // G-P2-5：function 层的审批模式解析走 Agent 自己的合并解析（含声明
+      // 的 approval 覆盖），不只走配置文件——否则覆盖只进 checkApproval，
+      // 中间件事件看不到它。
+      resolveApprovalMode: (tool) => this.resolveMiddlewareApprovalMode(tool),
     }, this.middlewareCache ?? undefined);
     this.middlewareCache = set.cache;
     this.middlewareSet = set;
@@ -3098,6 +3119,11 @@ export class Agent {
     if (isForeign) {
       childSystemInstructions += `\n（你是外来 agent 派来的子任务：你在隔离分支 ${foreignBranch} 上干活，改动留在分支上，跑完由机主决定合不合入；不要尝试合并分支、不要碰主工作区以外的目录。）`;
     }
+    // G-P2-5：声明式 agent 的 instructions 拼到子任务系统提示的最前面——
+    // 它是这个 agent 的身份与目标，父级自己的系统提示排在后面。
+    if (opts.systemInstructions?.trim()) {
+      childSystemInstructions = opts.systemInstructions.trim() + (childSystemInstructions ? `\n${childSystemInstructions}` : "");
+    }
     // G-P2-3：预设写进子任务的系统提示——子级要知道自己被限住了（否则它会
     // 反复尝试被禁的写操作，白白烧轮数）；只记预设名与限制摘要，不记任务原文。
     if (presetIsRestrictive) {
@@ -3173,6 +3199,8 @@ export class Agent {
       commandBackend: this.ctx.commandBackend ?? null,
       // G-P2-3：review 预设的子 agent 拿只读 shell（写命令在 checkApproval 里直接拒绝）。
       shellReadOnly: preset.shellReadOnly === true,
+      // G-P2-5：声明式 agent 的审批模式只对本次子任务生效（不改全局配置）。
+      approvalModeOverrides: opts.approvalModes ?? null,
       // 缺口 29：月度上限子任务同样受限（没有豁免口子）。子任务的“本月已花”
       // = 父级账本口径 + 父级本次运行进行中的花费；父级花不出来（未计价）
       // 时子任务同样算不出，不假装封顶。

@@ -170,6 +170,19 @@ export interface DelegateOptions {
    * 以免一张定义被错挂到另一个预设名上）。
    */
   presetDef?: SubagentPreset;
+  /**
+   * G-P2-5：声明式 agent 的 instructions——本次委派的子任务用它当身份
+   * 与目标，拼到子任务系统提示的最前面（父级自己的系统提示排在后面）。
+   * 只由 `nyra agent run` 这类声明驱动的调用方传；模型调 delegate 工具
+   * 永远不传（delegate 工具没有这个参数）。
+   */
+  systemInstructions?: string;
+  /**
+   * G-P2-5：声明式 agent 按工具配的审批模式——只对本次委派的子任务
+   * 生效（不改全局中间件配置）。never_require 只对只读工具生效
+   *（resolveApprovalMode 里再拦一道，写工具配了也按 require 算）。
+   */
+  approvalModes?: Record<string, "require" | "never_require">;
   /** 子任务使用的模型（用便宜模型跑搜索类子任务）。 */
   model?: string;
   /** 缺口 3a：并行线程身份（第 index+1 个，共 total 个）——agent.ts 据此把收敛规则写进子任务系统提示。 */
