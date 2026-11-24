@@ -591,8 +591,8 @@ test("时间线渲染：五种交接契约事件都看得懂", () => {
   } finally { cleanup(home); }
 });
 
-test("审计：交接契约验收审计进 SIEM 导出（第 10 个来源）", () => {
+test("审计：交接契约验收审计进 SIEM 导出（第 11 个来源）", () => {
   expect(AUDIT_SOURCES.some((s) => s.file === "handover-contract-audit.jsonl" && s.label === "handover_contract")).toBe(true);
-  expect(AUDIT_SOURCES.length).toBe(10);
+  expect(AUDIT_SOURCES.length).toBe(11); // O1 加了第 11 个来源（策略网关审计 policy-audit.jsonl）。
   expect(AUDIT_SOURCES[9]!.file).toBe("handover-contract-audit.jsonl");
 });

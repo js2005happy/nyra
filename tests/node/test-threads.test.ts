@@ -55,6 +55,8 @@ async function importAndActivate(home: string, name: string): Promise<void> {
 }
 
 const MON_1030 = new Date(2026, 0, 5, 10, 30); // 周一
+// O6：触发测试用的 cron 须合规（间隔 ≥15 分钟）——"30 10 * * 1" 在 MON_1030
+// 到点（每周一 10:30），不要用 "* * * * *"（1 分钟，addThreadCron 会拦）。
 
 test("ThreadsTest.test_create_list_0600", () => {
   const home = tmpHome("nyra-threads-");
@@ -184,7 +186,7 @@ test("ThreadsTest.test_corrupt_ledger_backed_up_and_throws", () => {
 test("ThreadsTest.test_fire_gate_off_skips", async () => {
   const home = tmpHome("nyra-threads-");
   const t = createThread(home, "门关着");
-  addThreadCron(home, t.id, "* * * * *", "wf");
+  addThreadCron(home, t.id, "30 10 * * 1", "wf");
   const report = await fireDueThreadCrons(home, { now: MON_1030, runFn: async () => ({ id: "run_x" }) });
   expect(report.skipped).toBeTruthy();
   expect(report.fired).toEqual([]);
@@ -228,7 +230,7 @@ test("ThreadsTest.test_fire_skips_inactive_workflow", async () => {
   saveWorkflowRegistry(home, registry);
   setWorkflowTriggersEnabled(home, true);
   const t = createThread(home, "草稿工作流");
-  addThreadCron(home, t.id, "* * * * *", "wf-draft");
+  addThreadCron(home, t.id, "30 10 * * 1", "wf-draft");
   let calls = 0;
   const report = await fireDueThreadCrons(home, {
     now: MON_1030, workdir,
@@ -245,7 +247,7 @@ test("ThreadsTest.test_fire_caps_at_five_per_round", async () => {
   setWorkflowTriggersEnabled(home, true);
   for (let i = 0; i < 6; i++) {
     const t = createThread(home, `线程 ${i}`);
-    addThreadCron(home, t.id, "* * * * *", "wf-cap");
+    addThreadCron(home, t.id, "30 10 * * 1", "wf-cap");
   }
   let calls = 0;
   const report = await fireDueThreadCrons(home, {
@@ -262,7 +264,7 @@ test("ThreadsTest.test_fire_failure_recorded_not_retried_this_minute", async () 
   await importAndActivate(home, "wf-fail");
   setWorkflowTriggersEnabled(home, true);
   const t = createThread(home, "会失败");
-  addThreadCron(home, t.id, "* * * * *", "wf-fail");
+  addThreadCron(home, t.id, "30 10 * * 1", "wf-fail");
   let calls = 0;
   const report = await fireDueThreadCrons(home, {
     now: MON_1030, workdir,
@@ -289,7 +291,7 @@ test("ThreadsTest.test_fire_mirrors_event_into_run", async () => {
   const store = new RunStore(join(home, "runs"));
   const state = store.create("线程 cron 任务", "sess-1", home, "auto", 10);
   const t = createThread(home, "事件镜像");
-  addThreadCron(home, t.id, "* * * * *", "wf-ev");
+  addThreadCron(home, t.id, "30 10 * * 1", "wf-ev");
   const report = await fireDueThreadCrons(home, {
     now: MON_1030, workdir,
     runFn: async () => ({ id: state.run_id }),
