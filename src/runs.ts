@@ -632,6 +632,13 @@ group_chat_started: ["room", "mode", "speakers"],
 group_chat_turn: ["room", "speaker", "turn"],
 group_chat_handoff: ["room", "from", "to"],
 group_chat_terminated: ["room", "reason", "turns"],
+// M2：Jev 式快速决策路由进证据链——房间、选中的成员、置信度、
+// 是否回落全员回答、回落原因。只记 id 与结论，不记消息全文。
+jev_routed: ["room", "member", "confidence", "fallback", "reason"],
+// M3：队伍包安装进证据链——队伍、版本、机器人（逗号分隔）、
+// 来源（本地路径或 https URL，不记文件内容）。
+team_pack_installed: ["team", "version", "bots", "source"],
+team_pack_install_failed: ["team", "version", "bots", "reason"],
 // 第 2 批 G-P1-3：团队租约 + 纪元进证据链——团队、lead、纪元。只记
 // 身份与纪元号，不记消息内容。
 team_lease_acquired: ["team_id", "lead", "epoch"],

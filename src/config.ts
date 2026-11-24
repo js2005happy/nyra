@@ -66,6 +66,12 @@ export const DEFAULT_CONFIG: Record<string, unknown> = {
   // 更新检查：默认关闭（隐私政策承诺不联网回报）。只有显式改成 true 后，
   // `nyra update-check` 才会联网查 GitHub Releases latest；关闭时绝不联网。
   update_check_enabled: false,
+  // M2：Jev 式快速决策路由（群聊没 @ 谁时，便宜模型先判该谁接）。
+  // 默认关闭（opt-in）；开了才分流，判不出来回落全员回答。
+  // jev_model 是路由用的便宜模型；jev_confidence_threshold 低于它就回落。
+  jev_router_enabled: false,
+  jev_model: "deepseek-flash",
+  jev_confidence_threshold: 0.6,
   // 缺口 17：对外 MCP 服务（Nyra 当 MCP 服务器，供别的 agent 调记忆与任务）。
   // 默认关闭；allow_writes 默认 false = 只读（search_memory / query_evidence），
   // 写操作（add_memory / forget_session / dispatch_task）须显式开 allow_writes，

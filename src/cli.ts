@@ -140,6 +140,7 @@ import { handleOrg } from "./orgCli.ts";
 import { handleSession } from "./session.ts";
 import { callLedgerMain } from "./callLedger.ts";
 import { budgetMain } from "./budgetCli.ts";
+import { usageMain } from "./usageCli.ts";
 import { aguiMain } from "./agui.ts";
 import { handleScreen } from "./botScreen.ts";
 import { handleScreenTakeover } from "./botTakeover.ts";
@@ -249,9 +250,10 @@ nyra sfu <create|rooms|status|join|leave|turn|record|close|reclaim|video>   群�
 nyra meeting <create|list|join|reconnect|transcript|minutes|record|dispatch>   进外部会议：Meet/Zoom 受控浏览器进会、听字幕出纪要；进会、录制、发言都要机主批（详见 docs/meeting.md）
 nyra rendezvous <register|nodes|route|status|remove|epoch>   Rendezvous 多节点路由：HRW 一致性哈希把任务 key 路由到节点（本机/局域网节点，详见 docs/mesh.md）
 nyra queue <enqueue|list|show|claim|complete|fail>   队列驱动底座：幂等键入队、节点认领 + 租约、纪元防旧指令重执行（详见 docs/mesh.md）
-nyra group <room|chat|plan>   群聊：房间与机器人、swarm 顺序发言（可组合终止条件）、群组计划引擎（步骤 worktree 隔离 + 独立验收，详见 docs/group-chat.md 与 docs/group-plan.md）
+nyra group <room|chat|plan|route>   群聊：房间与机器人、swarm 顺序发言（可组合终止条件）、群组计划引擎（步骤 worktree 隔离 + 独立验收）、Jev 路由干跑（详见 docs/group-chat.md 与 docs/group-plan.md）
 nyra call <ledger|show <通话 id>|summary>   通话成本与隐私仪表：每通电话三本账（传输 / 媒体 / token），录制默认关、须全体同意，纪要进证据链（详见 docs/call-ledger.md）
 nyra budget <list|show|reserve|settle|release|strict>   并发预算预留：模型调用前先预留额度、超上限不发请求；金额未知默认暂停等人工处理（详见 docs/budget.md）
+nyra usage [--agent <id>] [--json]   每 Bot 用量仪表：当日/当月已花多少、每 Bot 上限是多少、到 80% 了没有（详见 docs/budget.md）
 nyra agui <register|list|show|link|connect|disconnect|send|exec|accept-write|revoke-write|a2a|serve>   协议中立接入：接任意 AG-UI endpoint 当 Bot（只读先行，写操作须机主显式接受），A2A 复用名片 + 交接；serve 把 Nyra 对外暴露成 AG-UI endpoint（详见 docs/agui.md）
 nyra screen <watch|activity|status|takeover|handover> <电脑 id>   只读看屏（实时画面 + 活动列表，帧指纹不记帧内容）与接管（take the wheel，须确认；接管期间 Bot 暂停、交还后从挂起点继续，全程记审计）；画面里密码/验证码/卡号自动打码（详见 docs/bot-screen.md）
 nyra computer <status|grant|grants|blocklist|activity|display|require>   真机电脑操作守卫——禁碰窗口名单、可撤销授权、虚拟桌面 Xvfb、每一次动作留痕（详见 docs/computer-guard.md）
@@ -293,7 +295,7 @@ nyra judge <status|enable|disable|set-model|set-thresholds|check|verdicts>   意
 nyra verifier <status|enable|disable|set-model|rework-on|rework-off|add-rule|remove-rule|list-rules|check>   验收者：并行产出合入前先过验收门（确定性检查 + 便宜模型复核），未通过打回重做（详见 docs/verifier.md）
 nyra skills <status|enable|disable|draft|drafts|show|approve|reject|archive|sweep>   技能自沉淀：成功任务自动起草技能草稿，人工批准后才安装，低质自动归档（详见 docs/skill-sedimentation.md）
 nyra bughunt <install|status|scope|template|check>   授权漏洞挖掘技能包：范围卡 + 证伪验证 + 提交前七问 + 证据卫生，提交前核对（详见 docs/bughunt.md）
-nyra market <list|show|source|install|update|uninstall|installed|publish|template>   内置机器人市场：浏览、安装、更新、发布技能包、机器人配置与业务流程模板（静态策展仓库 + 本地客户端，详见 docs/marketplace.md）
+nyra market <list|show|source|install|install-team|update|uninstall|installed|publish|template>   内置机器人市场：浏览、安装、更新、发布技能包、机器人配置与业务流程模板、一个 Markdown 装一整队（静态策展仓库 + 本地客户端，详见 docs/marketplace.md）
 nyra account <status|login|logout|list|revoke|link|suspend|reactivate>   用户账号登录：Google / GitHub / 邮箱 / SSO，账号身份 + 会话（详见 docs/accounts.md）
 nyra cloud <status|connect|disconnect|sync|push|pull|pref|devices|set-url>   手机云端连接：账号登录后直连云端服务、跨端同步，不走局域网（详见 docs/mobile-cloud.md）
 nyra sso <provider|login|status|scim>   企业 SSO：OIDC 身份提供方注册与登录、SCIM 账号开通（详见 docs/sso.md）
@@ -411,9 +413,10 @@ nyra sfu <create|rooms|status|join|leave|turn|record|close|reclaim|video>   grou
 nyra meeting <create|list|join|reconnect|transcript|minutes|record|dispatch>   join external meetings: controlled-browser join for Meet/Zoom, listen to captions and build minutes; joining, recording and speaking all need the owner's approval (see docs/meeting.md)
 nyra rendezvous <register|nodes|route|status|remove|epoch>   Rendezvous multi-node routing: HRW consistent hashing routes a task key to a node (local/LAN nodes only, see docs/mesh.md)
 nyra queue <enqueue|list|show|claim|complete|fail>   queue-driven base: idempotent enqueue, node claim + lease, epoch guard against stale re-execution (see docs/mesh.md)
-nyra group <room|chat|plan>   group chat: rooms and bots, swarm turn-taking (composable stop conditions), group plan engine (per-step worktree isolation + independent acceptance, see docs/group-chat.md and docs/group-plan.md)
+nyra group <room|chat|plan|route>   group chat: rooms and bots, swarm turn-taking (composable stop conditions), group plan engine (per-step worktree isolation + independent acceptance), Jev route dry-run (see docs/group-chat.md and docs/group-plan.md)
 nyra call <ledger|show <call id>|summary>   call cost and privacy dashboard: three books per call (transport / media / tokens), recording off by default and needs everyone's consent, minutes go into the evidence chain (see docs/call-ledger.md)
 nyra budget <list|show|reserve|settle|release|strict>   concurrent budget reservation: reserve budget before a model call, over-limit calls are not sent; unknown amounts pause by default until a human handles them (see docs/budget.md)
+nyra usage [--agent <id>] [--json]   per-Bot usage dashboard: how much each Bot spent today / this month, its caps, and whether it hit the 80% warning (see docs/budget.md)
 nyra agui <register|list|show|link|connect|disconnect|send|exec|accept-write|revoke-write|a2a|serve>   protocol-neutral access: attach any AG-UI endpoint as a Bot (read-only first, writes need the owner's explicit acceptance), A2A reuses peer cards + handoff; serve exposes Nyra as an AG-UI endpoint (see docs/agui.md)
 nyra screen <watch|activity|status|takeover|handover> <computer id>   read-only screen watch (live frame + activity list, frame fingerprint without frame content) and takeover (take the wheel, needs confirmation; the Bot pauses during takeover and resumes from where it stopped, fully audited); passwords / verification codes / card numbers are masked automatically (see docs/bot-screen.md)
 nyra computer <status|grant|grants|blocklist|activity|display|require>   guard for real-computer operation — blocked-window list, revocable grants, Xvfb virtual display, every action audited (see docs/computer-guard.md)
@@ -458,7 +461,7 @@ nyra judge <status|enable|disable|set-model|set-thresholds|check|verdicts>   int
 nyra verifier <status|enable|disable|set-model|rework-on|rework-off|add-rule|remove-rule|list-rules|check>   verifier: parallel output passes an acceptance gate before merging (deterministic checks + cheap-model review); failures are sent back for rework (see docs/verifier.md)
 nyra skills <status|enable|disable|draft|drafts|show|approve|reject|archive|sweep>   skill sedimentation: successful runs auto-draft skill drafts, installed only after your approval, low-quality ones auto-archived (see docs/skill-sedimentation.md)
 nyra bughunt <install|status|scope|template|check>   authorized bug-hunting skill pack: scope card + falsification + pre-submit seven questions + evidence hygiene, pre-submit gate (see docs/bughunt.md)
-nyra market <list|show|source|install|update|uninstall|installed|publish|template>   built-in bot marketplace: browse, install, update and publish skill packs, bot configs and business process templates (static curated repo + local client, see docs/marketplace.md)
+nyra market <list|show|source|install|install-team|update|uninstall|installed|publish|template>   built-in bot marketplace: browse, install, update and publish skill packs, bot configs and business process templates, install a whole team from one Markdown file (static curated repo + local client, see docs/marketplace.md)
 nyra account <status|login|logout|list|revoke|link|suspend|reactivate>   user account login: Google / GitHub / email / SSO, account identity + sessions (see docs/accounts.md)
 nyra cloud <status|connect|disconnect|sync|push|pull|pref|devices|set-url>   mobile cloud link: after account login, connect straight to the cloud service and sync across devices, no local network needed (see docs/mobile-cloud.md)
 nyra sso <provider|login|status|scim>   enterprise SSO: OIDC identity provider registration and login, SCIM provisioning (see docs/sso.md)
@@ -2612,7 +2615,7 @@ async function handleQueue(argv: string[], home: string): Promise<number> {
 async function handleGroupChat(argv: string[], home: string, args: CliArgs): Promise<number> {
   const action = argv[0];
   if (!action) {
-    process.stdout.write("用法：nyra group <room|chat|plan> ...（nyra group room --help / nyra group chat --help / nyra group plan --help 看细分用法）\n");
+    process.stdout.write("用法：nyra group <room|chat|plan|route> ...（nyra group room --help / nyra group chat --help / nyra group plan --help 看细分用法；nyra group route --room <房间 id> --message <消息> 干跑 Jev 路由）\n");
     return 2;
   }
   const get = (flag: string): string | undefined => {
@@ -2727,6 +2730,31 @@ async function handleGroupChat(argv: string[], home: string, args: CliArgs): Pro
       }
       process.stderr.write("错误：用法：nyra group chat <run|send> ...\n");
       return 2;
+    }
+    if (action === "route") {
+      // M2：Jev 路由干跑——只判该谁接，不发消息、不跑 Bot。路由开关没开
+      // 也能干跑（用户显式要看分流结果）；decider 失败就报回落，不发消息。
+      const roomId = get("--room");
+      const message = get("--message");
+      if (!roomId || !message) {
+        process.stderr.write("错误：用法：nyra group route --room <房间 id> --message <消息> [--json]\n");
+        return 2;
+      }
+      const room = store.get(roomId);
+      const { createJevDecider, jevRouterConfig, routeMessage } = await import("./jevRouter.ts");
+      const cfg = jevRouterConfig(home);
+      const members = room.bots.map((b) => ({ id: b.id, name: b.name, role: b.role, instructions: b.instructions }));
+      const decision = await routeMessage(message, members, createJevDecider(home, { model: cfg.model }), { threshold: cfg.threshold });
+      if (argv.includes("--json")) {
+        process.stdout.write(JSON.stringify({ room: roomId, ...decision }, null, 2) + "\n");
+        return 0;
+      }
+      if (decision.member) {
+        process.stdout.write(`路由：${decision.member} 接（置信度 ${decision.confidence}，阈值 ${cfg.threshold}，模型 ${cfg.model}）\n`);
+      } else {
+        process.stdout.write(`路由回落全员回答：${decision.reason}\n`);
+      }
+      return 0;
     }
     if (action === "plan") {
       const sub = argv[1];
@@ -3514,7 +3542,7 @@ async function handleAccount(argv: string[], home: string): Promise<number> {
 async function handleMarket(argv: string[], home: string): Promise<number> {
   const action = argv[0];
   if (!action) {
-    process.stdout.write("用法：nyra market <list|show|source|install|update|uninstall|installed|publish|template> [选项]\n");
+    process.stdout.write("用法：nyra market <list|show|source|install|install-team|update|uninstall|installed|publish|template> [选项]\n");
     return 2;
   }
   try {
@@ -3621,6 +3649,41 @@ async function handleMarket(argv: string[], home: string): Promise<number> {
       }
       process.stdout.write("用法：nyra market source <list|add <本地目录|git 地址>|remove <源名>>\n");
       return 2;
+    }
+    if (action === "install-team") {
+      // M3：一个 Markdown 装一整队（本地文件或 https 的 .md 原始文件）。
+      // 每台 Bot 都过市场三道门；中途失败整队回滚，不留半队。
+      const input = argv[1];
+      if (!input) { process.stderr.write("错误：用法：nyra market install-team <队伍包文件|https 的 .md 链接> [--force]\n"); return 2; }
+      const force = argv.includes("--force");
+      const tp = await import("./teamPack.ts");
+      const { text, source } = await tp.fetchTeamPackText(input);
+      const pack = tp.parseTeamPack(text);
+      tp.validateTeamPack(home, pack, text);
+      process.stdout.write(`队伍包 ${pack.team} v${pack.version}（队长 ${pack.chief}）：\n`);
+      for (const b of pack.bots) {
+        process.stdout.write(`  - ${b.name}：${b.role}${b.model ? `（模型 ${b.model}）` : ""}${b.routines?.length ? `，routine ${b.routines.length} 个（到达即暂停，须手动启用）` : ""}\n`);
+      }
+      for (const c of pack.channels ?? []) {
+        process.stdout.write(`  频道 ${c.name}：${c.bots.join("、")}（装完建成群聊房）\n`);
+      }
+      if (argv.includes("--yes")) {
+        process.stdout.write("提示：队伍包安装确认不能用 --yes 跳过（市场内容是不受信任的第三方配置），仍需你确认。\n");
+      }
+      if (!await askConfirm("确认安装整队？(y/N) ")) {
+        process.stdout.write("已取消，未安装任何文件。\n");
+        return 0;
+      }
+      const { store, runId } = newRun(`team-pack install ${pack.team}`);
+      const result = await tp.installTeamPack(home, pack, { config, force, store, runId, sourceLabel: source });
+      process.stdout.write(`已安装队伍 ${result.team} v${result.version}：${result.installed.map((b) => b.name).join("、")}\n`);
+      for (const c of result.channels) {
+        process.stdout.write(c.created ? `频道 ${c.name} 已建成群聊房。\n` : `频道 ${c.name} 没建成（见提醒）。\n`);
+      }
+      process.stdout.write("机器人默认只读起步：写操作须在机器人自己的权限里显式放开；routine 不自动执行，须手动启用。\n");
+      if (result.warnings.length) for (const w of result.warnings) process.stdout.write(`提醒：${w}\n`);
+      process.stdout.write(`卸载整队：逐个 nyra market uninstall ${result.installed.map((b) => b.name).join(" / ")}\n`);
+      return 0;
     }
     if (action === "install") {
       const id = argv[1];
@@ -3740,7 +3803,7 @@ async function handleMarket(argv: string[], home: string): Promise<number> {
       process.stdout.write("用法：nyra market template <bot|index>\n");
       return 2;
     }
-    process.stdout.write("用法：nyra market <list|show|source|install|update|uninstall|installed|publish|template> [选项]\n");
+    process.stdout.write("用法：nyra market <list|show|source|install|install-team|update|uninstall|installed|publish|template> [选项]\n");
     return 2;
   } catch (err: unknown) {
     if (err instanceof Error && (err as { gate?: string }).gate) {
@@ -7421,6 +7484,7 @@ export async function main(argv: string[]): Promise<number> {
   if (args.subcommand === "editor") return handleEditor(args.subArgs ?? [], home);
   if (args.subcommand === "call") return callLedgerMain(args.subArgs ?? [], home);
   if (args.subcommand === "budget") return budgetMain(args.subArgs ?? [], home);
+  if (args.subcommand === "usage") return usageMain(args.subArgs ?? [], home);
   if (args.subcommand === "agui") return aguiMain(args.subArgs ?? [], home);
   if (args.subcommand === "screen") {
     const sub = args.subArgs ?? [];

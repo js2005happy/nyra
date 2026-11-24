@@ -114,7 +114,7 @@ export async function runDoctor(opts: DoctorOptions): Promise<{ checks: DoctorCh
   const levelText = sandboxLevelText(sandboxStatus.level);
   checks.push({
     name: "隔离级别", ok: true,
-    detail: `沙箱后端 ${sandboxStatus.backend}，模式 ${sandboxStatus.mode}，隔离级别 ${levelText}，可用后端：bwrap ${sandboxStatus.bwrapAvailable ? "可用" : "不可用"}、Seatbelt ${sandboxStatus.seatbeltAvailable ? "可用" : "不可用"}、Job Object ${sandboxStatus.jobObjectAvailable ? "可用" : "不可用"}——${sandboxStatus.detail}`,
+    detail: `沙箱后端 ${sandboxStatus.backend}，模式 ${sandboxStatus.mode}，隔离级别 ${levelText}，可用后端：bwrap ${sandboxStatus.bwrapAvailable ? "可用" : "不可用"}、Seatbelt ${sandboxStatus.seatbeltAvailable ? "可用" : "不可用"}、Job Object ${sandboxStatus.jobObjectAvailable ? "可用" : "不可用"}——${sandboxStatus.detail}；seccomp 拒单（M4，只 Linux x86-64）${sandboxStatus.seccompAvailable ? "可用" : "不可用"}，出口代理与凭证经纪人在代码里（默认不开，用时由调用方起）。`,
   });
 
   // 3）配置目录（loadConfig 已建好；这里只验存在与 0700）

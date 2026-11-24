@@ -554,6 +554,11 @@ export const TOOL_SCHEMAS: Record<string, unknown>[] = [
   // 直接告诉模型没快照，不编一个假快照；选区与诊断文本进上下文前过脱敏。
   schema("editor_context", "读用户当前编辑器的上下文：最近一次编辑器快照里的当前文件、光标位置、选区文本、打开的文件列表与诊断（错误/警告）。只读，不需审批；编辑器没连上（没装插件或没跑 serve）时直接说没快照，不编内容",
     { max_chars: { type: "integer", default: 4000, description: "最多返回几个字符（默认 4000）" } }),
+  // M1：每 Bot 用量自查（学 OMB 的 usage_limits）——Bot 自己查还剩多少
+  // 额度，不用问机主。只读，不需审批；数字来自用量账本与分层判定，
+  // 与 nyra usage 同一份数；agent 不给时查当前 Soul agent 的。
+  schema("usage", "查自己还剩多少用量：当日/当月已花多少、每 Bot 上限是多少、还剩多少、到 80% 了没有、是不是已超限停了。只读，不需审批；agent 不给时查当前机器人自己的；数字来自用量账本与分层判定，未归属/未计价的部分不摊到任何 Bot",
+    { agent: { type: "string", description: "要查的 Bot（agent id，如不填查当前机器人自己的）" } }),
   // 缺口 2：删除长期记忆（memory_forget 与 memory_delete 同义，两个名字都留着：
   // 别家 MCP 叫 forget_session，用户口语也常说“忘记这条”）。与 write_file
   // 同级审批；删错 owner 的不删、进行中会话的记忆拒绝删除；删除本身记进证据链。
@@ -2826,6 +2831,24 @@ async function toolEditorContext(ctx: ToolContext, args: Record<string, unknown>
   return body;
 }
 
+// M1：每 Bot 用量自查（学 OMB 的 usage_limits）。只读工具，不需审批；
+// 动态 import（usageMeter → costCaps → kanban → governance → marketplace
+// → creator → tools.ts，静态 import 会在 tools.ts 初始化完之前跑
+// creator 的顶层代码、直接炸掉 TOOL_SCHEMAS 的 TDZ，见 writeGate 教训）。
+async function toolUsage(ctx: ToolContext, args: Record<string, unknown>): Promise<string> {
+  const { buildUsageReport, formatUsageReport } = await import("./usageMeter.ts");
+  const home = ctx.home ?? resolveHome();
+  const agent = typeof args.agent === "string" && args.agent.trim()
+    ? args.agent.trim()
+    : (ctx.soulAgent ?? "default");
+  try {
+    const report = buildUsageReport(home, agent);
+    return formatUsageReport(report).join("\n");
+  } catch (err: unknown) {
+    return `错误：${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
 async function toolMemoryForget(ctx: ToolContext, toolName: string, args: Record<string, unknown>): Promise<string> {
   const ids = Array.isArray(args.ids)
     ? (args.ids as unknown[]).map((v) => String(v)).filter(Boolean)
@@ -3794,6 +3817,7 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
       case "knowledge_search": return await toolKnowledgeSearch(ctx, args);
       case "session_search": return await toolSessionSearch(ctx, args);
       case "editor_context": return await toolEditorContext(ctx, args);
+      case "usage": return await toolUsage(ctx, args);
       case "memory_forget": case "memory_delete": return await toolMemoryForget(ctx, name, args);
       case "gmail_search": return await toolGmailSearch(ctx, String(args.query), typeof args.limit === "number" ? args.limit : undefined, typeof args.page_token === "string" ? args.page_token : undefined);
       case "gmail_read": return await toolGmailRead(ctx, String(args.id));
@@ -3889,7 +3913,7 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
 /** 可安全直接重试的只读工具（无副作用）。截图类工具不在内：每次执行都会在本地多存一个截图文件。 */
 export const READONLY_TOOLS = new Set([
   "read_file", "list_dir", "grep_search", "git_status",
-  "web_fetch", "web_search", "read_skill", "memory_search", "knowledge_search", "session_search", "editor_context",
+  "web_fetch", "web_search", "read_skill", "memory_search", "knowledge_search", "session_search", "editor_context", "usage",
   "poppy_discover", "poppy_identity_check", "poppy_permission_check",
   "lsp_diagnostics", "lsp_symbols",
   // 缺口 16：describe_image 只读（不写文件、不改状态）；每次执行都是一次计费

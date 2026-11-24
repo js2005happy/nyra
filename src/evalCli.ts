@@ -7,6 +7,11 @@
 //   --benchmark / --probe），与正常 CLI 执行刻意分开。
 import { writeEvalJson } from "./eval/runner.ts";
 import {
+  SCRIPTED_TASKS,
+  defaultGoldenDir,
+  loadGoldenTrace,
+} from "./eval/scripted.ts";
+import {
   buildEvalManifest,
   EVAL_SCENARIOS,
   loadEvalReportForBench,
@@ -24,7 +29,7 @@ import {
 export class EvalCliError extends Error {}
 
 const USAGE =
-  "用法：nyra eval <scenarios|scorecard <报告.json>|benchmarks|import <文件> [--name <名>]|benchmark <名>|remove <名> --yes|probes|probe <名>|manifest <报告.json> [--out <文件>]> [--json]（详见 docs/eval.md）";
+  "用法：nyra eval <scenarios|scorecard <报告.json>|benchmarks|import <文件> [--name <名>]|benchmark <名>|remove <名> --yes|probes|probe <名>|manifest <报告.json> [--out <文件>]|scripted [--task <id>]> [--json]（详见 docs/eval.md）";
 
 function getFlag(args: string[], name: string): string | null {
   const i = args.indexOf(name);
@@ -184,6 +189,34 @@ export function handleEval(args: string[], home: string, _workdir: string): numb
     console.log(`仓内探针 ${set.name} v${set.version}（来源 ${set.source}，${set.tasks.length} 题）`);
     for (const t of set.tasks) {
       console.log(`  ${t.id} [${t.category}] ${t.checks.length} 个验收项`);
+    }
+    return 0;
+  }
+  if (sub === "scripted") {
+    // M5：只列脚本化任务与金标状态（只读）。跑评测走
+    // bun run scripts/eval.ts scripted --mode <record|replay> --out <报告.json>，
+    // 与真模型基线一样刻意与正常 CLI 执行分开。
+    const taskId = getFlag(rest, "--task");
+    const tasks = taskId ? SCRIPTED_TASKS.filter((t) => t.id === taskId) : SCRIPTED_TASKS;
+    if (taskId && !tasks.length) throw new EvalCliError(`没有这个脚本化任务：${taskId}`);
+    const rows = tasks.map((t) => {
+      let golden: { steps: number; recordedAt: string } | null = null;
+      try {
+        const g = loadGoldenTrace(defaultGoldenDir(), t.id);
+        golden = { steps: g.steps.length, recordedAt: g.recordedAt };
+      } catch {
+        golden = null;
+      }
+      return { id: t.id, description: t.description, steps: t.script?.length ?? 0, golden };
+    });
+    if (json) {
+      console.log(JSON.stringify(rows, null, 2));
+      return 0;
+    }
+    for (const r of rows) {
+      console.log(
+        `${r.id}（${r.description}）：${r.steps} 步——金标${r.golden ? `已录（${r.golden.steps} 步，${r.golden.recordedAt}）` : "未录，先跑 bun run scripts/eval.ts scripted --mode record --out <报告.json>"}`,
+      );
     }
     return 0;
   }

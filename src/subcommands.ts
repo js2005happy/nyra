@@ -12,7 +12,7 @@ export const SUBCOMMANDS: readonly string[] = [
   // 运行与结论
   "verdict", "guard", "redlines", "evidence", "restore", "timeline", "replay", "regression", "contract", "golden", "checkpoint", "interrupt", "intervention", "admission", "middleware", "delegate", "agent",
   // 成本与用量
-  "cost", "savings", "stats", "budget", "telemetry",
+  "cost", "savings", "stats", "budget", "telemetry", "usage",
   // 配置与开关
   "config", "features", "tools", "models", "reviewer", "judge", "verifier", "account", "cloud",
   // 记忆与复用
