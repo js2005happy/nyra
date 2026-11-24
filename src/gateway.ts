@@ -87,7 +87,7 @@ import { MANIFEST, CSP, solidPng } from "./webuiPage.ts";
 import { DESKTOP_HTML } from "./webuiDesktop.ts";
 import { keyStatus, setKey, removeKey, maskKey, validateKey, openVault, vaultState, migrateKeysToVault, keysPath } from "./keystore.ts";
 import { loadMcpServers } from "./mcp.ts";
-import { saveConfig, configPath } from "./config.ts";
+import { saveConfig, configPath, effectiveModelFor } from "./config.ts";
 import { listMarketplacePublic } from "./marketplace.ts";
 import { listDrafts } from "./skillDrafts.ts";
 import {
@@ -272,7 +272,7 @@ export class Gateway {
     const gwProfile = resolveProfile(opts.profile ?? null, this.config);
     const gwManual = manualWindowFromConfig(this.config);
     const gwWindow = resolveContextWindow({
-      model: opts.model ?? gwProfile.model ?? (this.config.model as string | null) ?? null,
+      model: opts.model ?? gwProfile.model ?? effectiveModelFor(this.config, opts.providerName ?? gwProfile.provider) ?? null,
       provider: opts.providerName ?? gwProfile.provider ?? (this.config.provider as string | null) ?? null,
       manual: gwManual.value, manualKey: gwManual.key,
       cache: loadModelCache(this.home),
@@ -1514,7 +1514,7 @@ export class Gateway {
       },
       model: {
         default_provider: typeof cfg.provider === "string" ? cfg.provider : null,
-        default_model: typeof cfg.model === "string" ? cfg.model : null,
+        default_model: effectiveModelFor(cfg, typeof cfg.provider === "string" ? cfg.provider : "deepseek"),
       },
       mcp: { enabled: Boolean(cfg.mcp_enabled), active: Boolean(this.mcpManager), mode_allows: this.mode === "full", servers },
       // P0-3：月度预算（设置页“通用”分区用）：上限、本月已花、是否已明确选定、下次重置日。

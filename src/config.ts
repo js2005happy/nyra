@@ -390,6 +390,40 @@ export function knownProviderNames(config?: Record<string, unknown> | null): Set
 
 export type KeySource = "env" | "vault" | "file" | "connector" | "none" | "local";
 
+/**
+ * 顶层 config.model 对某个 provider 是否生效：只有 config.provider 就是它、
+ * 且这个模型名不是“别家内置 provider 的模型”（比如首次启动写进 config.json
+ * 的默认 deepseek-flash）时才用。否则返回 null，由 provider 自己配置的
+ * default_model 生效——自定义 provider 不再必须在顶层再写一遍 model。
+ */
+export function configModelFor(
+  cfg: Record<string, unknown>,
+  providerName: string,
+  presets?: Record<string, ProviderPreset>,
+): string | null {
+  const model = typeof cfg.model === "string" ? cfg.model.trim() : "";
+  const cfgProvider = (typeof cfg.provider === "string" && cfg.provider) || "deepseek";
+  if (!model || cfgProvider !== providerName) return null;
+  let all: Record<string, ProviderPreset>;
+  try { all = presets ?? getProviderPresets(cfg); } catch { all = { ...PROVIDERS }; }
+  const own = all[providerName];
+  if (own && (own.models ?? []).includes(model)) return model;
+  if (own && own.defaultModel === model) return model;
+  for (const [other, preset] of Object.entries(PROVIDERS)) {
+    if (other === providerName) continue;
+    if ((preset.models ?? []).includes(model) || preset.defaultModel === model) return null;
+  }
+  return model;
+}
+
+/** 某个 provider 实际会用的模型名（显示用）：生效的顶层 model > provider 自己的默认模型。 */
+export function effectiveModelFor(cfg: Record<string, unknown>, providerName: string | null | undefined): string | null {
+  if (!providerName) return typeof cfg.model === "string" ? cfg.model : null;
+  let presets: Record<string, ProviderPreset>;
+  try { presets = getProviderPresets(cfg); } catch { return typeof cfg.model === "string" ? cfg.model : null; }
+  return configModelFor(cfg, providerName, presets) ?? presets[providerName]?.defaultModel ?? null;
+}
+
 export interface ResolvedProvider {
   name: string;
   baseUrl: string;
@@ -435,7 +469,7 @@ export function resolveProvider(opts: {
   }
   if (resolvedModel === undefined) resolvedModel = envVar("MODEL");
   if (resolvedModel === undefined) {
-    resolvedModel = cfg.provider === name && cfg.model ? (cfg.model as string) : preset.defaultModel ?? undefined;
+    resolvedModel = configModelFor(cfg, name, presets) ?? preset.defaultModel ?? undefined;
   }
 
   if (preset.auth === "cli") {
@@ -603,7 +637,9 @@ export function resolveProfile(
   const cfg = config ?? {};
   const base = {
     provider: (cfg.provider as string) || "deepseek",
-    model: (cfg.model as string | null) ?? null,
+    // 顶层 model 只在它属于当前 provider 时生效（见 configModelFor）：
+    // 自定义 provider 不再被首次启动写进去的默认 deepseek-flash 盖掉。
+    model: configModelFor(cfg, (cfg.provider as string) || "deepseek"),
     mode: (cfg.mode as string) || "auto",
   };
   const name = profileName || envVar("PROFILE") || (cfg.profile as string | undefined);
