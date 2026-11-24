@@ -21,6 +21,17 @@ name: Sign release artifacts
 on:
   release:
     types: [published]
+  # 注意：Release 是 CI 用默认 GITHUB_TOKEN 建的（node-binaries.yml 的
+  # softprops/action-gh-release），GitHub 不会因此触发 `release` 工作流
+  # ——用 GITHUB_TOKEN 触发的事件（除 workflow_dispatch /
+  # repository_dispatch 外）不会再触发新的 workflow run。所以只靠
+  # `release: published` 时签名工作流根本不会启动，这就是 v0.5.2 起
+  # SHA256SUMS 缺失的另一半根因（另一半是下面的 --jq -r 写法）。
+  # 改走 workflow_run：Node binaries 跑完（它负责建 Release）即触发，
+  # 等待循环再等桌面/手机产物挂齐；手动建的 Release 仍走 release 事件。
+  workflow_run:
+    workflows: ["Node binaries"]
+    types: [completed]
   workflow_dispatch:
     inputs:
       tag:
@@ -33,20 +44,27 @@ permissions:
   attestations: write   # 写 SLSA 来源证明
 
 concurrency:
-  group: release-sign-${{ github.event.release.tag_name || inputs.tag }}
+  group: release-sign-${{ github.event.release.tag_name || inputs.tag || github.event.workflow_run.head_branch }}
   cancel-in-progress: false
 
 jobs:
   sign:
     name: Sign + attest
+    # workflow_run 会在 Node binaries 每次跑完都触发（main 推送、PR 也
+    # 在内）：只有跑成功且是打 v* tag 的那次才签，其余直接跳过。
+    if: ${{ github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && startsWith(github.event.workflow_run.head_branch, 'v')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - name: Resolve tag
         id: tag
         run: |
-          TAG="${{ github.event.release.tag_name || inputs.tag }}"
+          TAG="${{ github.event.release.tag_name || inputs.tag || github.event.workflow_run.head_branch }}"
           if [ -z "$TAG" ]; then echo "缺少 tag"; exit 1; fi
+          case "$TAG" in
+            v*) ;;
+            *) echo "tag 须以 v 开头：$TAG"; exit 1 ;;
+          esac
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Checkout (for verify script)
@@ -71,7 +89,12 @@ jobs:
           # 等不到就按原样失败（fail-closed，不签不全的清单）。
           TAG="${{ steps.tag.outputs.tag }}"
           for i in $(seq 1 150); do
-            NAMES=$(gh release view "$TAG" --repo "${{ github.repository }}" --json assets --jq -r '.assets[].name')
+            # gh 的 --jq 只接受一个参数，绝不能再跟 -r：-r 会被当成 jq
+            # 表达式，真正的表达式变成多余位置参数，gh 报
+            # "accepts at most 1 arg(s), received 2" 直接退出；这一步在
+            # bash -e 下一失败整个 job 就红了，v0.5.2 起的签名就是这么
+            # 断的。|| true 让偶发的 gh 失败只算“这次没等到”，继续等。
+            NAMES=$(gh release view "$TAG" --repo "${{ github.repository }}" --json assets --jq '.assets[].name' || true)
             MISSING=0
             for b in nyra-linux-arm64 nyra-linux-x64 nyra-macos-arm64 nyra-macos-x64 nyra-windows-x64.exe; do
               echo "$NAMES" | grep -qx "$b" || MISSING=1
@@ -86,6 +109,12 @@ jobs:
             echo "等待产物挂到 Release（第 $i/150 次）：5 个 Node 二进制 + .dmg + .msi + -setup.exe + 安卓 APK ..."
             sleep 20
           done
+          # fail-closed：等满 50 分钟仍缺产物就直接失败，不签不全的清单。
+          # （以前这里没有出口，超时后会照常下载、签名一份不全的清单。）
+          if [ "$MISSING" != "0" ]; then
+            echo "::error::等了 50 分钟，Release $TAG 上仍缺产物（5 个 Node 二进制 + .dmg + .msi + -setup.exe + 安卓 APK），不签不全的清单"
+            exit 1
+          fi
           mkdir -p dist
           gh release download "$TAG" \
             --repo "${{ github.repository }}" --dir dist --clobber
