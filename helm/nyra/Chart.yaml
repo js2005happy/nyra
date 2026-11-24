@@ -1,0 +1,11 @@
+apiVersion: v2
+name: nyra
+description: Nyra — 跑在你自己机器上的开源 AI Agent（单机自托管版）
+type: application
+version: 0.1.0
+appVersion: "0.5.14"
+home: https://github.com/js2005happy/nyra
+sources:
+  - https://github.com/js2005happy/nyra
+maintainers:
+  - name: Nyra
