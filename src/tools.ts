@@ -26,6 +26,7 @@ import type { ProviderLike } from "./providers.ts";
 import { CDPBrowser } from "./cdpBrowser.ts";
 import { ComputerControl, computerErrorMessage } from "./computer.ts";
 import { runHooks } from "./hooks.ts";
+import { formatExecResult } from "./execDaemon.ts";
 import { reviewToolCall, reviewerConfig, type ReviewerLike } from "./reviewer.ts";
 import { redlineNeverBlock, appendBusinessRedlineAudit } from "./businessRedlines.ts";
 import { appendSoulAudit, resolveSoulAgentId, soulInvariantBlock } from "./soul.ts";
@@ -125,6 +126,15 @@ export interface DelegateOptions {
 
 export interface ToolContext {
   workdir: string;
+  /**
+   * 可选：把 shell 交给执行守护进程（见 docs/exec-daemon.md）。
+   * 不传 = 保持现状（同进程 spawn / 沙箱后端），所以这是**纯增量**开关。
+   */
+  execDaemon?: {
+    run: (command: string, opts?: { cwd?: string; timeoutMs?: number }) => Promise<{
+      exitCode: number | null; stdout: string; stderr: string; timedOut: boolean; error?: string;
+    }>;
+  } | null;
   mode: string;
   interactive: boolean;
   /**
@@ -1335,6 +1345,11 @@ async function toolShell(ctx: ToolContext, command: string, cwd?: string | null,
     // auto 回落到工具级：首次 shell 执行时给一次清楚提示（说明是工具级隔离、不是 OS 沙箱）。
     ctx.sandboxFallbackWarned = true;
     console.error(toolLevelFallbackNotice(sandbox));
+  }
+  // 守护进程分支：把 shell 交给独立进程（权限分离），流式/沙箱路径都不参与。
+  if (ctx.execDaemon) {
+    return ctx.execDaemon.run(command, { cwd: resolvedCwd, timeoutMs: timeout * 1000 })
+      .then((r) => formatExecResult(r, { timeoutSec: timeout }));
   }
   if (ctx.streamToolOutput && ctx.onEvent) {
     return runShellStreaming(ctx, command, resolvedCwd, timeout);
