@@ -16,6 +16,7 @@ import { resolveStrictUnknownAmount } from "./budget.ts";
 import { resolveTrustLadderSettings } from "./trustLadder.ts";
 import { resolveReconcilerSettings } from "./reconciler.ts";
 import { resolveWatchSettings } from "./watch.ts";
+import { DEFAULT_DENY_READ_GLOBS } from "./config.ts";
 
 export type ExplainSource = "cli" | "config" | "env" | "default" | "conflict";
 
@@ -172,15 +173,17 @@ export function explainAll(input: ExplainInput): CapabilityExplain[] {
     });
   }
 
-  // 7) 读侧禁读清单
+  // 7) 读侧禁读清单：未配 = 默认清单（.env / 私钥默认拒读，第四份审计 P0）；
+  // 只有显式配成 [] 才是放宽。
   {
-    const globs = Array.isArray(pick(cfg, "deny_read_globs")) ? (pick(cfg, "deny_read_globs") as string[]) : [];
+    const raw = pick(cfg, "deny_read_globs");
+    const globs = Array.isArray(raw) ? (raw as string[]) : [...DEFAULT_DENY_READ_GLOBS];
     out.push({
       capability: "deny_read_globs",
       effective: globs.length ? `${globs.length} 条规则` : "off",
-      source: globs.length ? "config" : "default",
+      source: Array.isArray(raw) ? "config" : "default",
       keys: ["deny_read_globs"],
-      note: globs.length ? `命中即拒读：${globs.slice(0, 3).join("、")}${globs.length > 3 ? "…" : ""}` : "未配置：敏感文件（.env / secrets）可被读取并发给模型",
+      note: globs.length ? `命中即拒读：${globs.slice(0, 3).join("、")}${globs.length > 3 ? "…" : ""}` : "已清空：敏感文件（.env / secrets）可被读取并发给模型",
     });
   }
 

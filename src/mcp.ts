@@ -14,6 +14,9 @@ import { DEFAULT_MCP_PRESETS, resolvePreset } from "./mcpPresets.ts";
 import { buildReviewerRunner, reviewToolCall, reviewerEnabled, resolveReviewerModel, type ReviewerLike, type ReviewVerdict } from "./reviewer.ts";
 import { RunStore } from "./runs.ts";
 import { buildBwrapArgv, resolveSandboxBackend, type SandboxMode } from "./sandbox.ts";
+// 子进程环境白名单（第四份审计 P0）：childEnv.ts 是叶模块，只引 node 内置。
+// 代理变量的凭据段剥离也从这里共用（mcp.ts 此前自带一份同款实现）。
+import { buildChildEnv } from "./childEnv.ts";
 import { buildSeatbeltProfile } from "./seatbelt.ts";
 import { addTask, buildProvider, runOne } from "./tasks.ts";
 
@@ -29,8 +32,6 @@ export const META_SERVER_INFO = "io.modelcontextprotocol/serverInfo";
 export const PROBE_TIMEOUT = 60.0;
 const CLIENT_VERSION = "0.3.0";
 const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
-// 代理环境变量里可能带凭据：绝不原样透传给 MCP 子进程（Python 同规则）。
-const PROXY_ENV_VARS = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"];
 
 export class MCPError extends Error {
   constructor(message: string) { super(message); this.name = "MCPError"; }
@@ -114,15 +115,6 @@ export class MCPServerConfig implements MCPServerConfigLike {
     }
     return new MCPServerConfig(name, command, [...(args as string[])], { ...(env as Record<string, string>) }, [...(inheritEnv as string[])], transport, url, { ...(headers as Record<string, string>) });
   }
-}
-
-function stripProxyCredentials(value: string): string {
-  // user:pass@host 形式的代理 URL：去掉凭据段，只留 host。
-  try {
-    const u = new URL(value);
-    if (u.username || u.password) { u.username = ""; u.password = ""; return u.toString(); }
-  } catch { /* 非 URL 原样返回 */ }
-  return value;
 }
 
 export interface McpTool { name: string; description: string; inputSchema: Record<string, unknown>; }
@@ -212,6 +204,7 @@ export function sandboxedMcpSpawnArgs(
   config: MCPServerConfig,
   resolved: { backend: string; mode: SandboxMode; allowNet: boolean },
   workdir: string,
+  env?: Record<string, string>,
 ): [string, string[]] {
   if (resolved.backend === "local") return [config.command, [...config.args]];
   if (resolved.backend === "bwrap") {
@@ -220,6 +213,7 @@ export function sandboxedMcpSpawnArgs(
       allowNet: resolved.allowNet,
       mode: resolved.mode,
       extraRoBinds: mcpServerRoBinds(config, workdir),
+      env,
     });
     return [argv[0], argv.slice(1)];
   }
@@ -322,11 +316,12 @@ export class MCPClient implements MCPTransportLike {
   }
 
   private subprocessEnv(): Record<string, string> {
+    // 白名单环境（第四份审计 P0）：只传 PATH/HOME/语言/代理等白名单变量，
+    // 密钥类一律不传。inherit_env 与 config.env 是配置里显式声明的变量，
+    // 原样放行——写配置的人自己对它负责。
     const env: Record<string, string> = {};
-    for (const [k, v] of Object.entries(process.env)) {
-      if (v === undefined) continue;
-      if (PROXY_ENV_VARS.includes(k)) { env[k] = stripProxyCredentials(v); continue; }
-      env[k] = v;
+    for (const [k, v] of Object.entries(buildChildEnv())) {
+      if (v !== undefined) env[k] = v;
     }
     for (const k of this.config.inherit_env) {
       if (process.env[k] !== undefined) env[k] = process.env[k]!;
@@ -337,19 +332,21 @@ export class MCPClient implements MCPTransportLike {
 
   start(): void {
     if (this.process) return;
+    // 子进程环境只算一次：spawn 与 bwrap --setenv 用同一份（白名单）。
+    const env = this.subprocessEnv();
     // 沙箱：按已解析配置算 spawn 参数；算不出来（后端不可用/不支持长驻进程）
     // 直接抛 MCPError，服务器不启动——绝不静默裸奔。
     let command = this.config.command;
     let args = [...this.config.args];
     if (this.sandbox) {
       try {
-        [command, args] = sandboxedMcpSpawnArgs(this.config, this.sandbox, this.sandbox.workdir);
+        [command, args] = sandboxedMcpSpawnArgs(this.config, this.sandbox, this.sandbox.workdir, env);
       } catch (err) {
         throw new MCPError(`MCP 服务器 ${this.config.name} 无法进沙箱，拒绝启动：${err instanceof Error ? err.message : String(err)}`);
       }
     }
     const child = spawn(command, args, {
-      stdio: ["pipe", "pipe", "pipe"], env: this.subprocessEnv(),
+      stdio: ["pipe", "pipe", "pipe"], env,
     });
     this.process = child;
     this.exitPromise = new Promise((resolve) => { child.on("exit", (code) => resolve(code)); });

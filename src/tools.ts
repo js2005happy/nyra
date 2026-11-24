@@ -52,6 +52,8 @@ import { checkScriptFastPath } from "./scriptPreauth.ts";
 // 会让 creator.ts 在 TOOL_SCHEMAS 初始化前求值，直接 ReferenceError。
 // checkApproval 是 async，团队门在运行时动态 import（模块已初始化完，不循环）。
 import { effectiveStringList, effectiveValue } from "./enforcedConfig.ts";
+// 子进程环境白名单（第四份审计 P0）：childEnv.ts 是叶模块，只引 node 内置。
+import { buildChildEnv } from "./childEnv.ts";
 /**
  * 统一取消信号（可靠性打磨第 1 项第一批）。cancel.ts 是叶子模块，
  * 不 import 任何 src 内模块，这里静态导入不会形成循环导入。
@@ -78,7 +80,7 @@ import { discoverPoppy, inspectPoppyIdentity, PermissionLedger } from "./poppy.t
 import { assertPublicUrl } from "./net.ts";
 import { isToolErrorResult } from "./repeatGuard.ts";
 import { t as tr } from "./i18n.ts";
-import { loadConfig, resolveHome } from "./config.ts";
+import { loadConfig, resolveHome, DEFAULT_DENY_READ_GLOBS } from "./config.ts";
 import { LspClient, resolveLspServers, formatDiagnostics, formatSymbols, formatLocations, formatHover, type LspDiagnostic, type LspSymbol, type LspLocation } from "./lsp.ts";
 import { DEFAULT_VISION_CONFIG, loadImageFile, type VisionConfig, type VisionImageInput } from "./vision.ts";
 import type { ContentLabel, TaskOrigin } from "./contentLabels.ts";
@@ -687,9 +689,10 @@ export function resolveBackendPath(ctx: ToolContext, path: string): string {
 // skills/*.md 都是它的指令来源，.git 是回滚与审计的底线。
 //
 // **覆盖范围（务必看清）**：这个守卫挂在 `workspaceWritePath` 上，因此只覆盖走这条
-// 路径的文件工具——write_file、edit_file、apply_patch、plan 等。**shell 工具不在覆盖
-// 范围内**：`echo x >> AGENTS.md` 依旧能写成功（即使进了 bwrap，AGENTS.md 也在工作
-// 目录内）。要真正封死必须靠权限规则层（S5）或把 shell 的写操作也接到同一守卫上。
+// 路径的文件工具——write_file、edit_file、apply_patch、plan 等。shell 工具的重定向
+// 写受保护路径由 `checkShellDenied` 拦（`echo x >> AGENTS.md` 会被拒绝）；
+// 但 shell 里其他写形态（例如 `cp x AGENTS.md`、`tee AGENTS.md`）仍不在覆盖范围内，
+// 要真正封死必须靠权限规则层（S5）或把 shell 的写操作也接到同一守卫上。
 //
 // 另外：判定按"工作目录内相对路径"做，顶层 commands/ 与 skills/ 会被整体拦掉。
 // 普通项目里若有同名目录（例如前端的 skills/ 组件目录），agent 将无法写入，需要
@@ -708,6 +711,19 @@ export function isProtectedWritePath(relPath: string): boolean {
   if (PROTECTED_WRITE_DIRS.includes(head)) return true;
   const base = segments[segments.length - 1]?.toLowerCase() ?? "";
   return segments.length === 1 && PROTECTED_WRITE_FILES.some((f) => f.toLowerCase() === base);
+}
+
+/**
+ * 目标（按调用方拼写 + 解析后的真实路径两边）是否受保护。
+ * 只比词法名字时，写指向 AGENTS.md 的软链能绕过守卫（第四份审计 P0）；
+ * 真实路径用 realpath 解析（含父目录的软链），不存在的目标往上找已存在祖先。
+ * 后端分支没有本地 realpath 可解，只用词法比对（见 workspaceWritePath）。
+ */
+export function isProtectedWriteTarget(workdir: string, path: string): boolean {
+  const root = resolve(workdir);
+  const target = resolve(root, path);
+  if (isProtectedWritePath(relative(root, target))) return true;
+  return isProtectedWritePath(relative(canonicalizePath(root), canonicalizePath(target)));
 }
 
 function assertWritableProtected(relPath: string): void {
@@ -758,6 +774,8 @@ export function workspaceWritePath(ctx: ToolContext, path: string): string {
     return target;
   }
   assertWritableProtected(relative(root, target));
+  // 软链绕过：指向 AGENTS.md 的软链按词法名字看是普通文件，必须再按真实路径比一次。
+  assertWritableProtected(relative(canonRoot, canonTarget));
   return target;
 }
 
@@ -794,16 +812,20 @@ function canonicalizePath(p: string): string {
 const denyReadCache = new Map<string, string[]>();
 
 function denyReadGlobsFor(home: string | undefined): string[] {
-  if (!home) return [];
+  if (!home) return [...DEFAULT_DENY_READ_GLOBS];
   const cached = denyReadCache.get(home);
   if (cached) return cached;
-  let globs: string[] = [];
+  // 未配 = 用默认清单（.env / 私钥默认拒读，第四份审计 P0）；
+  // 只有显式配成 [] 才是放宽——effectiveValue 能分清“键缺失”与“显式空数组”。
+  let globs: string[] = [...DEFAULT_DENY_READ_GLOBS];
   try {
     const raw = JSON.parse(readFileSync(join(home, "config.json"), "utf-8")) as Record<string, unknown>;
     // config.enforced 优先：锁了禁读清单就必须按锁定值来（否则"锁了"只是摆设）。
-    globs = effectiveStringList(raw, "deny_read_globs");
+    if (Array.isArray(effectiveValue(raw, "deny_read_globs"))) {
+      globs = effectiveStringList(raw, "deny_read_globs");
+    }
   } catch {
-    globs = [];
+    globs = [...DEFAULT_DENY_READ_GLOBS];
   }
   denyReadCache.set(home, globs);
   return globs;
@@ -818,13 +840,17 @@ export function resetDenyReadCache(): void {
 export function isDenyReadPath(ctx: ToolContext, absPath: string): string | null {
   const globs = denyReadGlobsFor(ctx.home);
   if (!globs.length) return null;
-  // 禁读清单按“被寻址的名字”匹配（相对路径与文件名），不用 realpath：
-  // 规范化会把软链指向的目标当成本体，一个名为 .env 的软链就绕过清单了。
-  // 调用方传进来的 absPath 与这里的 root 都是词法拼写，与修补前一致。
+  // 两边都比对：词法拼写（被寻址的名字）与解析后的真实路径（realpath）。
+  // 只比词法名字时，经软链读 .env 仍返回内容（第四份审计 P0）；
+  // 只比真实路径时，一个名为 .env 的软链本身会被放过。
   const root = resolve(ctx.workdir);
   const rel = (absPath.startsWith(root + sep) ? absPath.slice(root.length + 1) : absPath).replace(/\\/g, "/");
+  const canonRel = relative(canonicalizePath(root), canonicalizePath(absPath)).replace(/\\/g, "/");
   for (const glob of globs) {
-    if (matchPathGlob(glob, rel) || matchPathGlob(glob, rel.split("/").pop() ?? rel)) return glob;
+    if (
+      matchPathGlob(glob, rel) || matchPathGlob(glob, rel.split("/").pop() ?? rel) ||
+      matchPathGlob(glob, canonRel) || matchPathGlob(glob, canonRel.split("/").pop() ?? canonRel)
+    ) return glob;
   }
   return null;
 }
@@ -1186,7 +1212,17 @@ export async function checkApproval(
     throw new ToolError(`已被权限规则拒绝：${decision.rule.raw}`);
   }
   const preApproved = decision?.action === "allow";
-  if (preApproved && !escalated) {
+  // 受保护路径（AGENTS.md、配置、账本类）每次写都必须重新审批：
+  // 权限规则的 allow、网页端“始终允许”、终端“始终允许”三条记住的放行
+  // 在这里全部失效（第四份审计 P0）。注意幂等重试不在此列：重试是同一
+  // 次已批操作的再执行，人已经看过这一次写了。
+  const protectedFileTarget =
+    SESSION_FILE_TOOLS.has(toolName) && opts?.fileTarget !== undefined
+      ? ctx.backend
+        ? isProtectedWritePath(relative(resolve(ctx.workdir), resolve(String(opts.fileTarget))))
+        : isProtectedWriteTarget(ctx.workdir, String(opts.fileTarget))
+      : false;
+  if (preApproved && !escalated && !protectedFileTarget) {
     // 规则显式 allow：跳过弹窗，但仍然记录一次审批事件，便于审计。
     observeApproval(ctx, toolName, true);
     return;
@@ -1236,7 +1272,7 @@ export async function checkApproval(
     // 已记下的“允许并不再询问”规则：匹配时会重新做简单命令检查，
     // `; && | $() 反引号 换行` 一律匹配不上（见 approvalRules.prefixMatches）。
     const ruleHit = findApprovalRule(ctx, toolName, opts?.command);
-    if (ruleHit && !escalated) {
+    if (ruleHit && !escalated && !protectedFileTarget) {
       observeApproval(ctx, toolName, true);
       try { ctx.onEvent?.("approval_rule_applied", { tool: toolName, rule: ruleHit.label, scope: ruleHit.scope, id: ruleHit.id }); } catch { /* ignore */ }
       return;
@@ -1253,7 +1289,7 @@ export async function checkApproval(
 
     if (ctx.approveFn) {
       const grant = fileScope ?? shellScope;
-      if (grant !== null && ctx.approveFnGrants?.has(grant) && !escalated) return;
+      if (grant !== null && ctx.approveFnGrants?.has(grant) && !escalated && !protectedFileTarget) return;
       observeApproval(ctx, toolName, null);
       // 第 3 阶段 smart approvals 需要命令原文做静态规则与评审：
       // 把 opts 原样透传给 approveFn（旧调用方忽略第 3 个参数）。
@@ -1264,21 +1300,24 @@ export async function checkApproval(
       if (approved && typeof approved === "object") {
         observeApproval(ctx, toolName, Boolean(approved.approved));
         if (!approved.approved) throw new ToolError(rejectionMessage(approved.feedback));
-        if (approved.scope) rememberApprovalRule(ctx, toolName, opts?.command, approved.scope);
+        if (approved.scope && !protectedFileTarget) rememberApprovalRule(ctx, toolName, opts?.command, approved.scope);
         return;
       }
       observeApproval(ctx, toolName, Boolean(approved));
       if (!approved) throw new ToolError("用户拒绝执行");
-      if (approved === APPROVE_ALWAYS && grant !== null) ctx.approveFnGrants?.add(grant);
+      if (approved === APPROVE_ALWAYS && grant !== null && !protectedFileTarget) ctx.approveFnGrants?.add(grant);
       return;
     }
-    if (fileScope !== null && ctx.approvedFileTools?.has(fileScope) && !escalated) return;
+    if (fileScope !== null && ctx.approvedFileTools?.has(fileScope) && !escalated && !protectedFileTarget) return;
     if (shellScope !== null && ctx.approvedShellCommands?.has(shellScope) && !escalated) return;
 
     console.log(approvalSummary);
     observeApproval(ctx, toolName, null);
     let choice: string;
-    if (fileScope !== null) {
+    if (protectedFileTarget) {
+      // 受保护路径不提供“始终允许”：每次写都重新问（第四份审计 P0）。
+      choice = await askApproval(tr("approval.question"));
+    } else if (fileScope !== null) {
       choice = await askApproval(tr("approval.question"), true, tr("approval.alwaysFile"));
     } else if (shellScope !== null && suggestion !== null) {
       // 与网页/手机审批卡同一套规则：终端“始终允许”记一条本会话前缀规则。
@@ -1293,7 +1332,7 @@ export async function checkApproval(
     }
     observeApproval(ctx, toolName, choice === "yes" || choice === "always");
     if (choice === "yes") return;
-    if (choice === "always") {
+    if (choice === "always" && !protectedFileTarget) {
       if (fileScope !== null) { ctx.approvedFileTools?.add(fileScope); return; }
       if (shellScope !== null && suggestion !== null) { rememberApprovalRule(ctx, toolName, opts?.command, "session"); return; }
       if (shellScope !== null) { ctx.approvedShellCommands?.add(shellScope); return; }
@@ -1320,7 +1359,7 @@ export async function checkApproval(
 // 只认 `-rf`/`-fr` 的旧版漏了这些）；`dd … of=/dev/…` 与
 // `chmod 777 -R /` 两种参数顺序都拦；危险目标归一化
 // （`~/`、`$HOME/`、`${HOME}/`、`/*`、`.`、`..`）。
-export function checkShellDenied(command: string): string | null {
+export function checkShellDenied(command: string, workdir?: string): string | null {
   const tokenRe = /(?:[^\s;&|<>()"'\\]|\\.|"(?:\\.|[^"\\])*"|'[^']*')+|[;&|<>()]/g;
   const rawTokens = command.match(tokenRe) ?? [];
   const tokens = rawTokens.map((t) =>
@@ -1391,6 +1430,24 @@ export function checkShellDenied(command: string): string | null {
   ];
   for (const [pattern, reason] of rules) {
     if (pattern.test(command)) return reason;
+  }
+  // 重定向写受保护路径：`echo x >> AGENTS.md`、`> .nyra/config.json`。
+  // 词法名字与真实路径（realpath，含父目录软链）两边都比——
+  // `> notes.md`（notes.md 是指向 AGENTS.md 的软链）同样要拦。
+  // 没给 workdir 的调用方（smartApprovals 静态判定）不做这项检查。
+  if (workdir) {
+    for (let i = 0; i < tokens.length; i++) {
+      if (tokens[i] !== ">") continue;
+      let j = i + 1;
+      if (tokens[j] === ">") j++;
+      const target = tokens[j];
+      if (!target || separators.has(target) || target.startsWith("&")) continue;
+      // `~` 开头的目标由 shell 展开，工作目录相对判定做不了，跳过。
+      if (target.startsWith("~")) continue;
+      if (isProtectedWriteTarget(workdir, target)) {
+        return `禁止重定向写入受保护路径：${target}`;
+      }
+    }
   }
   return null;
 }
@@ -1743,7 +1800,7 @@ async function runShellStreaming(ctx: ToolContext, command: string, resolvedCwd:
   if (signal?.aborted) throw cancelErrorFromSignal(signal, "stop");
   const started = Date.now();
   return new Promise((resolvePromise, rejectPromise) => {
-    const child = spawn(wrapShellCommand(command), { shell: defaultShell(), cwd: resolvedCwd, detached: process.platform !== "win32" });
+    const child = spawn(wrapShellCommand(command), { shell: defaultShell(), cwd: resolvedCwd, detached: process.platform !== "win32", env: buildChildEnv() });
     const outLines: string[] = [];
     const errLines: string[] = [];
     let shown = 0;
@@ -1877,9 +1934,9 @@ function formatSandboxResult(result: { code: number; stdout: string; stderr: str
 }
 
 async function toolShell(ctx: ToolContext, command: string, cwd?: string | null, timeout = 60): Promise<string> {
-  const denied = checkShellDenied(command);
-  if (denied) return `错误：${denied}`;
   const resolvedCwd = workspaceShellCwd(ctx, cwd);
+  const denied = checkShellDenied(command, String(resolvedCwd));
+  if (denied) return `错误：${denied}`;
   await checkApproval(ctx, "shell", tr("sum.shell", { cmd: command, cwd: String(resolvedCwd), timeout }), { command, cwd: String(resolvedCwd), timeout });
   if (ctx.backend?.runCommand) {
     return truncate(ctx.backend.runCommand(command, String(resolvedCwd), timeout)) || "（无输出）";
@@ -2015,7 +2072,7 @@ async function toolShell(ctx: ToolContext, command: string, cwd?: string | null,
       rejectPromise(cancelErrorFromSignal(ctx.cancelSignal, "stop"));
       return;
     }
-    const child = spawn(wrapShellCommand(command), { shell: defaultShell(), cwd: resolvedCwd, detached: process.platform !== "win32" });
+    const child = spawn(wrapShellCommand(command), { shell: defaultShell(), cwd: resolvedCwd, detached: process.platform !== "win32", env: buildChildEnv() });
     let stdout = "";
     let stderr = "";
     let timedOut = false;
@@ -2438,7 +2495,7 @@ async function toolComputerClick(ctx: ToolContext, x: number, y: number, button 
 }
 
 async function toolComputerType(ctx: ToolContext, text: string): Promise<string> {
-  await checkApproval(ctx, "computer_type", tr("sum.type", { text: text.slice(0, 60) }));
+  await checkApproval(ctx, "computer_type", tr("sum.type", { text }));
   const decision = await guardComputerAction(ctx, "computer_type", { textLen: text.length });
   const computer = getComputer(ctx);
   try { await computer.typeText(text); }
@@ -2909,6 +2966,9 @@ async function toolGmailSend(ctx: ToolContext, args: Record<string, unknown>): P
     to: to.join(", "),
     subject,
     thread: threadId ? "（回复原串）" : "",
+    cc: cc.length ? cc.join(", ") : "（无）",
+    bcc: bcc.length ? bcc.join(", ") : "（无）",
+    body,
   });
   await checkApproval(ctx, "gmail_send", summary);
   let result: { id: string; threadId?: string };
@@ -3072,7 +3132,7 @@ async function toolSlackSend(ctx: ToolContext, args: Record<string, unknown>): P
   // 发消息与 gmail_send 同级审批：auto 非交互 / readonly / 权限规则 deny 都
   // 在这里拦住；send_message 是缺口 51 永远须人批档，收紧到永远禁做时
   // checkApproval 里的红线拦截先拦住（与 gmail_send 同款门）。
-  const summary = tr("sum.slackSend", { channel: channelId, text: text.slice(0, 120) });
+  const summary = tr("sum.slackSend", { channel: channelId, text });
   await checkApproval(ctx, "slack_send", summary);
   try {
     const result = await client.postMessage(channelId, text);
@@ -3316,7 +3376,7 @@ async function toolGitStatus(ctx: ToolContext, path = "."): Promise<string> {
 }
 
 async function toolHttpPost(ctx: ToolContext, url: string, body = "", contentType = "application/json"): Promise<string> {
-  await checkApproval(ctx, "http_post", tr("sum.post", { url }));
+  await checkApproval(ctx, "http_post", tr("sum.post", { url, contentType, body }));
   try {
     const res = await fetchChecked(url, {
       method: "POST",

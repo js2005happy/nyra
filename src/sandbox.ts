@@ -14,6 +14,8 @@ import { delimiter, join } from "node:path";
  * 不 import 任何 src 内模块，这里静态导入不会形成循环导入。
  */
 import { cancelErrorFromSignal } from "./cancel.ts";
+// 子进程环境白名单（第四份审计 P0）：childEnv.ts 是叶模块，只引 node 内置。
+import { buildChildEnv } from "./childEnv.ts";
 
 // 调研报告第 9 项：OS 级分级沙箱（学 Codex CLI）——三档模式。
 // read-only：只读，任何写/执行/联网都要审批；
@@ -302,7 +304,7 @@ export function getSandboxStatus(
  * 系统目录只读挂载、/proc /dev /tmp、工作目录按模式绑定。
  * extraRoBinds：工作区外的目录（只读追加，调用方保证是已存在的目录）。
  */
-function bwrapBaseArgs(opts: { workdir: string; allowNet: boolean; mode: SandboxMode; extraRoBinds?: string[] }): string[] {
+function bwrapBaseArgs(opts: { workdir: string; allowNet: boolean; mode: SandboxMode; extraRoBinds?: string[]; env?: Record<string, string> }): string[] {
   if (opts.mode === "danger-full-access") {
     throw new Error("danger-full-access 与沙箱互斥：该模式要求无限制执行，不能进 bwrap；如需无限制请用 --sandbox local 并自行承担风险");
   }
@@ -315,6 +317,12 @@ function bwrapBaseArgs(opts: { workdir: string; allowNet: boolean; mode: Sandbox
     args.push("--unshare-net");
   }
   args.push("--die-with-parent");
+  // 环境白名单（第四份审计 P0）：传了 env 就先清空再逐个放行，不再透传
+  // 整份 process.env；没传 env 的调用方（eval 的 buildBwrapArgv）保持原样。
+  if (opts.env) {
+    args.push("--clearenv");
+    for (const [key, value] of Object.entries(opts.env)) args.push("--setenv", key, value);
+  }
   // 只读挂载系统目录：只挂真实存在的，不存在的跳过。
   for (const dir of ["/usr", "/lib", "/lib64", "/bin", "/etc"]) {
     if (existsSync(dir)) args.push("--ro-bind", dir, dir);
@@ -331,7 +339,7 @@ function bwrapBaseArgs(opts: { workdir: string; allowNet: boolean; mode: Sandbox
 
 export function buildBwrapArgs(
   command: string,
-  opts: { workdir: string; allowNet: boolean; mode: SandboxMode },
+  opts: { workdir: string; allowNet: boolean; mode: SandboxMode; env?: Record<string, string> },
 ): string[] {
   return [...bwrapBaseArgs(opts), "--", "/bin/sh", "-c", command];
 }
@@ -345,7 +353,7 @@ export function buildBwrapArgs(
 export function buildBwrapArgv(
   command: string,
   args: string[],
-  opts: { workdir: string; allowNet: boolean; mode: SandboxMode; extraRoBinds?: string[] },
+  opts: { workdir: string; allowNet: boolean; mode: SandboxMode; extraRoBinds?: string[]; env?: Record<string, string> },
 ): string[] {
   return [...bwrapBaseArgs(opts), "--", command, ...args];
 }
@@ -359,9 +367,9 @@ export interface RunSandboxedOptions {
   /** 流式回显：每收到一块输出就回调（stream 为 stdout/stderr）。 */
   onStream?: (stream: "stdout" | "stderr", text: string) => void;
   /**
-   * 额外环境变量（缺口 42 第二批：电脑 Vault 代填凭证用）。只做浅合并覆盖
-   * process.env——bwrap 默认透传环境变量（不加 --clearenv），所以填进去
-   * 的变量能进沙箱里的 /bin/sh；不传时行为与原来完全一致。
+   * 额外环境变量（缺口 42 第二批：电脑 Vault 代填凭证用）。只做显式声明的
+   * 变量——与白名单合并后传进沙箱（bwrap 加 --clearenv，不再透传整份
+   * process.env）；不传时只传白名单变量。
    */
   env?: Record<string, string>;
   /**
@@ -387,7 +395,11 @@ export async function runSandboxed(
   if (!detectBwrap()) {
     throw new SandboxUnavailableError(`bwrap 不可用，无法进入 OS 沙箱。${BWRAP_INSTALL_HINT}`);
   }
-  const args = buildBwrapArgs(command, opts);
+  // 子进程环境走白名单（第四份审计 P0）：PATH/HOME/语言/代理 + 调用方
+  // 显式声明的变量；密钥类一律不传。bwrap 侧同样用这份 env 做
+  // --clearenv + --setenv，spawn 侧也用它（两边一致）。
+  const childEnv = buildChildEnv(opts.env);
+  const args = buildBwrapArgs(command, { ...opts, env: childEnv });
   const timeoutMs = (opts.timeout ?? 60) * 1000;
   // 可靠性打磨第 1 项第一批：信号已 abort 时不启动，直接以 CancelError
   // 拒绝（调用方认得出“这是取消”，不记成沙箱失败）。
@@ -396,7 +408,7 @@ export async function runSandboxed(
     const child = spawn("bwrap", args.slice(1), {
       cwd: opts.workdir,
       detached: process.platform !== "win32",
-      env: opts.env ? { ...process.env, ...opts.env } : process.env,
+      env: childEnv,
     });
     let stdout = "";
     let stderr = "";

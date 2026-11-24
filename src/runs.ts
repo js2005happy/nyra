@@ -908,9 +908,9 @@ timeout?: boolean;
 }
 
 export async function runVerifyCommand(ctx: ToolContext, command: string, timeout: number): Promise<VerifyResult> {
-  const denied = checkShellDenied(command);
-  if (denied) return { exit_code: null, passed: false, output: denied, denied: true };
   const cwd = workspaceShellCwd(ctx, null);
+  const denied = checkShellDenied(command, String(cwd));
+  if (denied) return { exit_code: null, passed: false, output: denied, denied: true };
   try {
     await checkApproval(ctx, "shell", tr("sum.verify", { cmd: command, cwd: String(cwd), timeout }), { command, cwd: String(cwd), timeout });
   } catch (err: unknown) {

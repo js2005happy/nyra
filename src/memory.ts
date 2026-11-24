@@ -13,7 +13,7 @@ import { listSoulAgents, loadSoul, type SoulTenet, type TenetKind } from "./soul
 
 export function resolveNyraHome(homeOverride?: string): string {
   if (homeOverride) return homeOverride;
-  return process.env.NYRA_HOME ?? process.env.ANGEL_HOME ?? join(process.env.HOME ?? "", ".nyra");
+  return process.env.NYRA_HOME ?? join(process.env.HOME ?? "", ".nyra");
 }
 
 export function loadMemorySummary(maxLines = 40, path?: string, home?: string): string {

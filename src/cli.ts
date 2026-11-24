@@ -119,7 +119,7 @@ import { resolveActiveBackend } from "./commandBackends.ts";
 import { runExampleTask } from "./exampleTask.ts";
 import { printNoKeyAndExitCode } from "./noKey.ts";
 import { defaultExampleFile, runWizard } from "./wizard.ts";
-import { ensureNyraHome } from "./migration.ts";
+import { ensureNyraHome, isAngelAlias } from "./migration.ts";
 import { ApprovalRequired, TOOL_SCHEMAS } from "./tools.ts";
 import { Vault, vaultUsage, VaultError } from "./vault.ts";
 import { runCreator, verifyStagedPlugin, installStagedPlugin, describePlannedChanges, CreatorError } from "./creator.ts";
@@ -7229,6 +7229,10 @@ function handleReplay(sub: string[], home: string): number {
 
 // ---- 主入口 ----
 export async function main(argv: string[]): Promise<number> {
+  // angel 是旧命令名，已改名 nyra：用旧名进来时只提示一次，不改行为。
+  if (isAngelAlias(process.argv[1] ?? "")) {
+    process.stderr.write("提示：angel 已改名 nyra，请改用 nyra 命令。\n");
+  }
   // spec 07：首次运行做原子迁移（~/.angel → ~/.nyra），只读 ~/.nyra。
   ensureNyraHome();
   // 界面语言：--lang > NYRA_LANG > config.language > 系统语言 > en（首次启动不询问）。

@@ -2,7 +2,7 @@
 // 14 个 OpenAI 兼容 HTTP provider + Codex CLI provider + 兜底链 + 多 Key 轮换。
 // 安全线：401/403 兜底不切换（换模型修不好认证）；多 Key 轮换时 401/403 也轮换，
 // 且报错绝不带 Key 值（两层 redact）；Codex 直接构造拒绝、定时任务禁用。
-import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,6 +11,8 @@ import { plaintextHttpError, resolveProvider, type ResolvedProvider } from "./co
 import { cancelErrorFromSignal, combineSignals } from "./cancel.ts";
 import { buildQuotaHandoff, type QuotaHandoff } from "./quotaHandoff.ts";
 import { filterHealthyChain, markDegraded } from "./modelHealth.ts";
+// 子进程环境白名单（第四份审计 P0）：childEnv.ts 是叶模块，只引 node 内置。
+import { buildChildEnv } from "./childEnv.ts";
 
 export const RECOVERABLE_KINDS = ["quota", "rate_limit", "server", "timeout", "network"] as const;
 export type ProviderErrorKind =
@@ -483,6 +485,9 @@ export function findCodexBinary(binaryOverride?: string): string {
     return codexBinaryCache;
   }
   codexBinaryChecked = true;
+  // 只接受显式路径（固定候选路径或调用方传的 override）：不再去 PATH 里
+  // which codex——PATH 里的同名程序可能是别人放的（第四份审计 P0）。
+  // 没配路径又不在候选位置就报错，而不是静默用一个来路不明的二进制。
   const candidates = binaryOverride ? [binaryOverride] : CODEX_BINARY_CANDIDATES;
   for (const candidate of candidates) {
     if (candidate && existsSync(candidate)) {
@@ -490,13 +495,6 @@ export function findCodexBinary(binaryOverride?: string): string {
       return candidate;
     }
   }
-  try {
-    const found = execFileSync("which", ["codex"], { encoding: "utf-8", timeout: 5000 }).trim();
-    if (found) {
-      codexBinaryCache = found;
-      return found;
-    }
-  } catch { /* fall through */ }
   throw new ProviderError("未找到 Codex CLI，请先安装 Codex 后重试", { kind: "config" });
 }
 
@@ -619,9 +617,11 @@ export function usageFromJsonl(text: string): Record<string, number> | null {
 }
 
 export function codexChildEnv(): Record<string, string> {
+  // 白名单环境（第四份审计 P0）：只传 PATH/HOME/语言/代理等白名单变量。
+  // 旧版只去 *_API_KEY，GITHUB_TOKEN 等仍会漏进 Codex 子进程。
   const env: Record<string, string> = {};
-  for (const [k, v] of Object.entries(process.env)) {
-    if (v !== undefined && !k.endsWith("_API_KEY")) env[k] = v;
+  for (const [k, v] of Object.entries(buildChildEnv())) {
+    if (v !== undefined) env[k] = v;
   }
   return env;
 }

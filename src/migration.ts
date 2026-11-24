@@ -1,10 +1,10 @@
 // src/migration.ts — spec 07 改名迁移（angel → nyra），在 Node 版里一次做完。
 // ①原子迁移：先复制到 ~/.nyra.migrating，全部完成后再改名成 ~/.nyra；
-// ②迁移时未用掉的批准状态全部作废；③ANGEL_* 回退（无警告，任务书定——
-//    与 spec 07 第 3 条“打印一条警告”不同，以任务书为准）；④angel 命令别名；
+// ②迁移时未用掉的批准状态全部作废；③ANGEL_* 回退只在 config.ts 的
+//    envVar 里保留，用到时印一次废弃提示；④angel 命令别名；
 // ⑥.migrating 临时目录；⑦~/.nyra 0700，会话/日志 0600，不跟随符号链接；
 // ⑧X-Angel-Token 兼容（同时带时以 X-Nyra-Token 为准，token 本身不变）。
-import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, basename } from "node:path";
 
 export const LEGACY_HOME_NAME = ".angel";
@@ -12,8 +12,10 @@ export const NYRA_HOME_NAME = ".nyra";
 export const MIGRATING_SUFFIX = ".migrating";
 
 // 迁移时作废的批准状态文件（批准只在本次会话内有效，改名后重新批准）。
+// 批准规则与 Bot 授权也算批准类文件：不继承，见第四份审计 P0。
 const APPROVAL_STATE_FILES = new Set([
   "approvals.json", "approved.json", "approval_state.json",
+  "approval_rules.json", "bot-approvals.json",
 ]);
 
 export interface MigrationResult {
@@ -64,10 +66,22 @@ export function migrateLegacyHome(homeDir: string = process.env.HOME ?? ""): Mig
     const p = join(staging, name);
     if (existsSync(p)) { rmSync(p, { force: true }); voided.push(name); }
   }
-  // 宽松设置不自动生效：full 模式与受信任的验证命令在迁移后不继承。
-  // （config 层默认 mode 为 auto；verify_command 只认本次显式传入。）
+  // 宽松设置不自动生效：full 模式改回 auto，受信任的 verify_command 删除
+  // （runs.ts 会从 config 读它，光靠注释挡不住）。config.json 本身保留
+  // （provider / model / 语言等偏好可以迁）。
+  const stagedConfig = join(staging, "config.json");
+  try {
+    if (existsSync(stagedConfig)) {
+      const cfg = JSON.parse(readFileSync(stagedConfig, "utf-8")) as Record<string, unknown>;
+      if (cfg.mode === "full") cfg.mode = "auto";
+      delete cfg.verify_command;
+      writeFileSync(stagedConfig, JSON.stringify(cfg, null, 2) + "\n", { mode: 0o600 });
+    }
+  } catch { /* 暂存配置损坏不阻塞迁移，loadConfig 会用默认值兜底 */ }
   try { chmodSync(staging, 0o700); } catch { /* ignore */ }
   renameSync(staging, target);
+  // 迁移成功后删掉旧目录，不留双份 home，也不再原地用 ~/.angel。
+  rmSync(legacy, { recursive: true, force: true });
   try { chmodSync(target, 0o700); } catch { /* ignore */ }
   return { migrated: true, skippedSymlinks: skipped, voidedApprovals: voided };
 }

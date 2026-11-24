@@ -40,10 +40,17 @@ export const PROVIDERS: Record<string, ProviderPreset> = {
   custom: { baseUrl: null, defaultModel: null, envKey: "NYRA_API_KEY", connector: null, allowedHosts: [], models: [] },
 };
 
+// 读侧禁读清单的默认值：全新 home 下 .env 与私钥默认拒读（第四份审计 P0）。
+// 放在 config.ts 供 DEFAULT_CONFIG、tools.ts、configExplain.ts 共用。
+export const DEFAULT_DENY_READ_GLOBS = ["**/.env", "**/.ssh/id_*", "**/*.pem", "**/*.key"];
+
 export const DEFAULT_CONFIG: Record<string, unknown> = {
   provider: "deepseek",
   model: "deepseek-flash",
   mode: "auto",
+  // 读侧禁读清单的默认值：全新 home 下 .env 与私钥默认拒读（第四份审计 P0）。
+  // 用户显式把 deny_read_globs 改成 [] 可以放宽，配置项本身保留。
+  deny_read_globs: [...DEFAULT_DENY_READ_GLOBS],
   max_turns: 20,
   context_window_tokens: null,
   auto_compact_enabled: false,
@@ -253,23 +260,36 @@ export function lookupPreset(config: Record<string, unknown>, name: string): Pro
   return PROVIDERS[name];
 }
 
-/** 读 NYRA_<name>，旧 ANGEL_<name> 作回退（spec 07 第 3 条：回退无警告）。 */
+// ANGEL_* 环境变量已废弃：只作回退，用到时印一次废弃提示（第四份审计 P0）。
+// 废弃提示只印一次，避免每轮调用都刷屏。
+const warnedAngelEnv = new Set<string>();
+
+/** 读 NYRA_<name>，旧 ANGEL_<name> 作回退；用到回退时印一次废弃提示。 */
 export function envVar(name: string): string | undefined {
-  return process.env["NYRA_" + name] || process.env["ANGEL_" + name] || undefined;
+  const fresh = process.env["NYRA_" + name];
+  if (fresh) return fresh;
+  const legacy = process.env["ANGEL_" + name];
+  if (legacy) {
+    if (!warnedAngelEnv.has(name)) {
+      warnedAngelEnv.add(name);
+      process.stderr.write(`提示：ANGEL_${name} 已废弃，请改用 NYRA_${name}。\n`);
+    }
+    return legacy;
+  }
+  return undefined;
 }
 
 /**
- * Nyra 数据目录：NYRA_HOME（ANGEL_HOME 回退）> ~/.nyra；
- * 旧 ~/.angel 只有在 ~/.nyra 不存在时才复用（与 Python 版 _default_home 一致）。
+ * Nyra 数据目录：NYRA_HOME > ~/.nyra。
+ * 旧 ~/.angel 不再原地复用（第四份审计 P0）：ANGEL_HOME 设了也不再绕过，
+ * 迁移时旧目录由 migration.ts 显式处理（只迁非批准类文件，旧目录随后删除）。
  */
 export function resolveHome(homeOverride?: string): string {
-  const fromEnv = homeOverride || envVar("HOME");
+  // 只认 NYRA_HOME：ANGEL_HOME 不再绕过（第四份审计 P0）。envVar("HOME")
+  // 的 ANGEL_ 回退只供其他调用方读，数据目录的决定不走它。
+  const fromEnv = homeOverride || process.env.NYRA_HOME;
   if (fromEnv) return fromEnv;
-  const home = homedir();
-  const fresh = join(home, ".nyra");
-  const legacy = join(home, ".angel");
-  if (!existsSync(fresh) && existsSync(legacy)) return legacy;
-  return fresh;
+  return join(homedir(), ".nyra");
 }
 
 export function configPath(home: string): string {

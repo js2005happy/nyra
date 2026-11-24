@@ -2430,7 +2430,10 @@ export class Agent {
             // G-P2-4：function 层链包住 MCP 执行（审批仍在里面先跑，链不改审批语义）。
             result = await this.runFunctionMiddleware(fnName, args, async () => {
               try {
-                await checkApproval(this.ctx, "mcp", `调用外部 MCP 工具：${fnName}（可能产生外部副作用）`);
+                // 审批卡要盖住真正发出的参数：只写工具名，人批的时候看不到
+                // 到底发了什么（第四份审计 P0）。参数全文进摘要，超长时由
+                // 审批 UI 折叠显示，但必须能展开看到全文。
+                await checkApproval(this.ctx, "mcp", `调用外部 MCP 工具：${fnName}（可能产生外部副作用）\n参数：\n${JSON.stringify(args, null, 2)}`);
                 return await mcp.execute(fnName, args);
               } catch (err: unknown) {
                 return `错误：${err instanceof Error ? err.message : String(err)}`;
