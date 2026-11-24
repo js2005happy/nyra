@@ -16,7 +16,7 @@
 | macOS（Apple 芯片 / Intel） | `Nyra-macos-universal.dmg` | 打开 dmg，把 Nyra 拖进「应用程序」。安装包**没有公证**，第一次打开要在「应用程序」里右键 Nyra → 打开，再确认一次。 |
 | Linux x64 | `Nyra-linux-x86_64.AppImage` 或 `Nyra-linux-amd64.deb` | AppImage：`chmod +x` 后直接运行；deb：`sudo apt install ./Nyra-linux-amd64.deb`。 |
 | 只要命令行 | `nyra-windows-x64.exe` / `nyra-macos-arm64` / `nyra-macos-x64` / `nyra-linux-x64` / `nyra-linux-arm64` | 单文件，不用装 Node 或 Python。也可以用一键脚本（见下）。 |
-| 安卓 | `nyra-android.apk` | 手机上的「启动器」，用来连你家里的电脑（见第 3 节）。从 0.5.13 起 APK 支持固定签名，**换成正式签名的那个版本**需要先卸载旧版再装一次，之后就能直接覆盖升级。 |
+| 安卓 | `nyra-android.apk` | 手机上的「启动器」，用来连你家里的电脑（见第 3 节）。从 0.5.14 起 APK 正式签名（签名者 CN=Nyra），从 0.5.13 及更早的临时签名版升级**需要先卸载一次**，之后就能直接覆盖升级。 |
 | iPhone | 没有安装包 | 用 Safari 打开电脑上的手机网页（见第 3 节），可「添加到主屏幕」。 |
 
 一键安装命令行版：

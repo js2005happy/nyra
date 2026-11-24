@@ -31,7 +31,7 @@ Hand it a task and it reads the project, edits code, runs commands and checks th
 
 <a href="https://github.com/js2005happy/nyra/releases/latest/download/nyra-android.apk"><img src="https://img.shields.io/github/v/release/js2005happy/nyra?style=for-the-badge&label=%E2%AC%87%EF%B8%8F%20Download%20for%20Android&labelColor=070707&color=3DDC84" alt="Download Nyra for Android (nyra-android.apk)" height="36"></a>
 
-<sub>[latest release](https://github.com/js2005happy/nyra/releases/latest) &nbsp;·&nbsp; Windows x64 installer: **not code-signed** yet (SmartScreen: More info → Run anyway) &nbsp;·&nbsp; macOS universal `.dmg` (Apple silicon & Intel): ad-hoc signed, **not notarized** (right-click → Open the first time) &nbsp;·&nbsp; Linux x64: AppImage or `.deb` &nbsp;·&nbsp; Android APK: **temporarily debug-signed**; the release that switches to the final signing key needs one uninstall and reinstall &nbsp;·&nbsp; [all releases](https://github.com/js2005happy/nyra/releases) &nbsp;·&nbsp; [中文](README.md)</sub>
+<sub>[latest release](https://github.com/js2005happy/nyra/releases/latest) &nbsp;·&nbsp; Windows x64 installer: **not code-signed** yet (SmartScreen: More info → Run anyway) &nbsp;·&nbsp; macOS universal `.dmg` (Apple silicon & Intel): ad-hoc signed, **not notarized** (right-click → Open the first time) &nbsp;·&nbsp; Linux x64: AppImage or `.deb` &nbsp;·&nbsp; Android APK: **release-signed** (signer CN=Nyra); upgrading from an older debug-signed build needs one uninstall, later updates install over it &nbsp;·&nbsp; [all releases](https://github.com/js2005happy/nyra/releases) &nbsp;·&nbsp; [中文](README.md)</sub>
 
 <br>
 

@@ -31,7 +31,7 @@ Nyra 是一个**开源**、**跑在你自己电脑上**的 AI Agent：**桌面�
 
 <a href="https://github.com/js2005happy/nyra/releases/latest/download/nyra-android.apk"><img src="https://img.shields.io/github/v/release/js2005happy/nyra?style=for-the-badge&label=%E2%AC%87%EF%B8%8F%20%E4%B8%8B%E8%BD%BD%20Android%20%E7%89%88&labelColor=070707&color=3DDC84" alt="下载 Nyra Android 版（nyra-android.apk）" height="36"></a>
 
-<sub>[最新版本](https://github.com/js2005happy/nyra/releases/latest) &nbsp;·&nbsp; Windows x64 安装包：**未做代码签名**，首次运行会有 SmartScreen 提示（「更多信息 → 仍要运行」） &nbsp;·&nbsp; macOS 通用版 `.dmg`（Apple 芯片与 Intel）：只有 ad-hoc 签名、**未经 Apple 公证**，首次打开需右键「打开」 &nbsp;·&nbsp; Linux x64：AppImage 或 `.deb` &nbsp;·&nbsp; Android APK：目前是**临时（debug）签名**，切换正式签名的那一版需要先卸载旧版再装一次 &nbsp;·&nbsp; [全部版本](https://github.com/js2005happy/nyra/releases) &nbsp;·&nbsp; [English](README.en.md)</sub>
+<sub>[最新版本](https://github.com/js2005happy/nyra/releases/latest) &nbsp;·&nbsp; Windows x64 安装包：**未做代码签名**，首次运行会有 SmartScreen 提示（「更多信息 → 仍要运行」） &nbsp;·&nbsp; macOS 通用版 `.dmg`（Apple 芯片与 Intel）：只有 ad-hoc 签名、**未经 Apple 公证**，首次打开需右键「打开」 &nbsp;·&nbsp; Linux x64：AppImage 或 `.deb` &nbsp;·&nbsp; Android APK：**正式签名**（签名者 CN=Nyra）；从旧的临时签名版升级需先卸载一次，之后可直接覆盖升级 &nbsp;·&nbsp; [全部版本](https://github.com/js2005happy/nyra/releases) &nbsp;·&nbsp; [English](README.en.md)</sub>
 
 <br>
 
@@ -136,7 +136,7 @@ Nyra 是一个**开源**、**跑在你自己电脑上**的 AI Agent：**桌面�
 
 **也已经有：** 先计划后执行（`--plan` 只读写出 `plan.md`，按 SHA-256 批准那一版再执行）· 检查点与 `/rewind` · 项目记忆（`AGENTS.md`、`MEMORY.md`，都是普通文件）· 联网查证并存证据 · 月度花费上限 · 本地密码箱存 Key · 十几个模型预设与本地模型。
 
-**即将推出：** 手机端用账号登录（不在同一 Wi-Fi 也能连电脑；App 里的按钮已在，目前点了只提示「即将推出」）· 安卓 APK 正式签名 · Windows / macOS 代码签名与公证。
+**即将推出：** 手机端用账号登录（不在同一 Wi-Fi 也能连电脑；App 里的按钮已在，目前点了只提示「即将推出」）· Windows / macOS 代码签名与公证。
 
 <sub>截图均为真实运行界面，演示对话为脚本数据（本地假模型按剧本回复）。</sub>
 
@@ -194,7 +194,7 @@ flowchart LR
 | **Windows**（x64） | [Nyra-windows-x64-setup.exe](https://github.com/js2005happy/nyra/releases/latest/download/Nyra-windows-x64-setup.exe) · [.msi](https://github.com/js2005happy/nyra/releases/latest/download/Nyra-windows-x64.msi) | 双击安装，按用户安装不需要管理员。未做代码签名：SmartScreen 提示时点「更多信息 → 仍要运行」。 |
 | **macOS**（Apple 芯片与 Intel） | [Nyra-macos-universal.dmg](https://github.com/js2005happy/nyra/releases/latest/download/Nyra-macos-universal.dmg) | 拖进「应用程序」。未经公证：第一次右键点 Nyra 选「打开」。 |
 | **Linux**（x64） | [Nyra-linux-x86_64.AppImage](https://github.com/js2005happy/nyra/releases/latest/download/Nyra-linux-x86_64.AppImage) · [Nyra-linux-amd64.deb](https://github.com/js2005happy/nyra/releases/latest/download/Nyra-linux-amd64.deb) | AppImage：`chmod +x` 后运行；Debian/Ubuntu：`sudo apt install ./Nyra-linux-amd64.deb`。 |
-| **Android** | [nyra-android.apk](https://github.com/js2005happy/nyra/releases/latest/download/nyra-android.apk) | 允许安装未知来源后安装；打开后填电脑地址与配对码。目前是临时签名，正式签名那一版需要先卸载旧版。 |
+| **Android** | [nyra-android.apk](https://github.com/js2005happy/nyra/releases/latest/download/nyra-android.apk) | 允许安装未知来源后安装；打开后填电脑地址与配对码。正式签名；从旧的临时签名版升级需先卸载一次，之后可直接覆盖升级。 |
 | **iPhone** | 手机网页 | 电脑上 `nyra ui --pair`，Safari 扫码打开后「添加到主屏幕」（没有 IPA）。 |
 
 桌面安装包自带同版本的 `nyra` 命令行。只想要命令行：
@@ -261,13 +261,13 @@ bash scripts/build-binaries.sh --only linux-x64   # 编单文件二进制到 dis
 | 定时任务 | ✅ | ✅ | ✅（可装 systemd 常驻） | 查看结果 | 查看结果 |
 | 命令沙箱 | 工具级；进程级 Job Object 需显式开 | Seatbelt（自动） | bwrap（装了就用） | — | — |
 | 账号登录（不在同一 Wi-Fi） | — | — | — | 即将推出 | 即将推出 |
-| 安装包签名 | 未签名 | ad-hoc，未公证 | — | 临时签名，正式签名即将切换 | — |
+| 安装包签名 | 未签名 | ad-hoc，未公证 | — | 正式签名（CN=Nyra） | — |
 
 <sub>✅ 表示功能已实现并有自动化测试。Windows 桌面版在 CI 的 Windows 虚拟机里实际跑过（上面的截图即来自那里）；macOS 与安卓尚未在真机上验证。</sub>
 
 ## 状态
 
-0.5.x，可以日常试用，仍在快速迭代。已知的边界：安装包还没有正式签名；macOS 与安卓没有在真机上验证过；本机网关在局域网里走明文 HTTP（配对 token 已加密交换，整条连接的 HTTPS 还没做）；手机账号登录即将推出。问题和建议请提 [issue](https://github.com/js2005happy/nyra/issues)，内测说明见 [docs/beta.md](docs/beta.md)。
+0.5.x，可以日常试用，仍在快速迭代。已知的边界：桌面安装包还没有正式代码签名（安卓 APK 已正式签名）；macOS 与安卓没有在真机上验证过；本机网关在局域网里走明文 HTTP（配对 token 已加密交换，整条连接的 HTTPS 还没做）；手机账号登录即将推出。问题和建议请提 [issue](https://github.com/js2005happy/nyra/issues)，内测说明见 [docs/beta.md](docs/beta.md)。
 
 ## 隐私
 

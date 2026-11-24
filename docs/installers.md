@@ -36,7 +36,7 @@ v0.5.2–v0.5.11 的 Release 都没有（根因另有 `gh --jq -r` 写法错误�
 
 三份安装脚本（`scripts/install-node.sh`、`scripts/install-node-macos.sh`、
 `scripts/install-node.ps1`）默认不再是无校验的 `latest`，而是钉住
-`DEFAULT_VERSION`（当前 `v0.5.13`，写在每份脚本头部显眼处）。下载后先对同一
+`DEFAULT_VERSION`（当前 `v0.5.14`，写在每份脚本头部显眼处）。下载后先对同一
 Release 的 `SHA256SUMS` 校验再安装：哈希对不上、清单里没有这个文件、
 下载不到 `SHA256SUMS`，一律拒绝安装（fail-closed）。`--version latest`
 仍可显式传，但同样要校验；`--from-file` 从本地文件装，不联网、不校验。
@@ -89,6 +89,8 @@ v0.5.11 的 `SHA256SUMS` 与签名是 2026-11-24 手动跑签名工作流补上�
   “没有 SHA256SUMS”并退出码 1，不指向不存在的文件。
 - 安装包本身的**代码签名**是另一回事，见 `docs/SIGNING.md`：证书没买，
   Windows `.msi` / `.exe` 与 macOS `.dmg` 目前未签名、未公证；安卓 APK
-  从 0.5.13 起接好了正式签名：仓库配了 `ANDROID_KEYSTORE_*` secrets 时出正式签名的
-  release APK，没配时仍退回 debug 签名并在构建里给警告（见 `docs/SIGNING.md` 第 4 层）；
+  从 0.5.14 起正式签名（签名者 CN=Nyra，证书 SHA-256 以 `D3:CD:8C:92` 开头），
+  发版 tag 构建缺 `ANDROID_KEYSTORE_*` secrets 时直接失败、不退回 debug 签名，
+  验签不通过也失败（见 `docs/SIGNING.md` 第 4 层）。从 0.5.13 及更早的临时签名版
+  升级需先卸载一次，之后可直接覆盖升级；
   iOS 没有安装包（要 Apple Developer 账号与证书，与桌面签名同一笔待办）。
