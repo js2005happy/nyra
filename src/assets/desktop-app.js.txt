@@ -2,20 +2,24 @@
 // 桌面端（nyra ui 的 /）前端：侧栏（新对话 / 搜索 / 自动化 / 技能 / MCP / 项目分组的对话列表 / 设置）、
 // 新对话空状态（含项目记忆卡）、会话常驻左侧 + 右侧抽屉面板（概览 / 改动 / 计划 / 证据 / 终端）、
 // 工作中一行实时状态、每轮收尾交代与用时 / token、新审批卡（设计稿 v8）、状态栏、设置、首次引导。
-// 版式按 nyra-design v2 desktop.py；文案来自 src/i18n.ts 的 d.* / m.* 键，语言跟随系统，认不出回落 en。
+// 版式按 nyra-design v2 desktop.py；文案来自 src/i18n.ts 的 d.* / m.* 键，语言按设置（未设时跟随系统，认不出回落 en）。
 // 页面不含秘密：owner token 来自启动链接的 ?token=（另存一份在 sessionStorage），每次 API 调用带 X-Nyra-Token 头。
 // API Key 只在首次引导 / 设置里输入（password 框），提交后立刻清空；接口只回掩码。
 const $ = (id) => document.getElementById(id);
-const LANG = (() => { const l = String((navigator.languages && navigator.languages[0]) || navigator.language || '').toLowerCase(); return l.startsWith('zh') ? 'zh' : 'en'; })();
-const MSG = (window.NYRA_I18N && (window.NYRA_I18N[LANG] || window.NYRA_I18N.en)) || {};
+// 语言：先按系统语言，启动时再按设置里保存的语言覆盖（没保存才跟随系统）；
+// 设置里改语言后立即换文案并保持（见 boot 与 secGeneral 的语言选择）。
+function sysLang(){ const l = String((navigator.languages && navigator.languages[0]) || navigator.language || '').toLowerCase(); return l.startsWith('zh') ? 'zh' : 'en'; }
+let LANG = sysLang();
+let MSG = (window.NYRA_I18N && (window.NYRA_I18N[LANG] || window.NYRA_I18N.en)) || {};
+function applyLang(lang){ if (lang !== 'zh' && lang !== 'en') return; LANG = lang; MSG = (window.NYRA_I18N && (window.NYRA_I18N[LANG] || window.NYRA_I18N.en)) || {}; document.documentElement.lang = LANG === 'zh' ? 'zh-CN' : 'en'; }
 function t(key, vars){ let s = MSG[key] != null ? MSG[key] : key; if (vars) s = s.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? String(vars[k]) : m)); return s; }
-document.documentElement.lang = LANG === 'zh' ? 'zh-CN' : 'en';
+applyLang(LANG);
 const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
 const EDIT_TOOLS = ['write_file', 'edit_file', 'apply_patch'];
 const S = {
   view: 'home', session: null, info: null, sessions: null, approvals: [], sv: null, schedule: null,
   review: { open: false, tab: null, file: null }, reviewKey: '', card: {}, collapsed: {}, pending: '', planFirst: false,
-  feedKey: '', setSec: 'model', keyEdit: null, setup: { provider: null, tested: null, busy: false },
+  feedKey: '', setSec: 'model', keyEdit: null, setup: { provider: null, tested: null, busy: false }, pillsKey: '',
 };
 
 // ---------------------------------------------------------------- 基础 ---
@@ -178,6 +182,14 @@ function renderPills(){
     if (where === 'home') {
       const pf = el('button', 'pk' + (S.planFirst ? ' on' : '')); pf.id = 'plan-first'; pf.appendChild(icon('list')); pf.appendChild(document.createTextNode(t('d.planFirst')));
       pf.title = t('d.planFirstHint'); pf.onclick = () => { S.planFirst = !S.planFirst; renderPills(); }; row.appendChild(pf);
+    }
+    if (where === 'thread') {
+      // P0-3：运行中放停止按钮（调 /stop），空闲且有消息时放撤销上一轮（等价于终端 /undo）。
+      if (S.sv && S.sv.status === 'running') {
+        const stop = el('button', 'pk warn'); stop.id = 'thread-stop'; stop.appendChild(icon('x')); stop.appendChild(document.createTextNode(t('d.stop'))); stop.title = t('d.stop'); stop.onclick = stopSession; row.appendChild(stop);
+      } else if (S.sv && Array.isArray(S.sv.messages) && S.sv.messages.length) {
+        const un = el('button', 'pk'); un.id = 'thread-undo'; un.appendChild(icon('undo')); un.appendChild(document.createTextNode(t('d.undoLast'))); un.title = t('d.undoLast'); un.onclick = undoLastTurn; row.appendChild(un);
+      }
     }
     const send = el('button', 'send'); send.id = where + '-send'; send.setAttribute('aria-label', t('d.send')); send.appendChild($('ic-up').content.firstElementChild.cloneNode(true));
     send.onclick = () => (where === 'home' ? sendHome() : sendMsg()); row.appendChild(send);
@@ -512,7 +524,7 @@ function renderFeed(v){
   const card = pend ? S.card[pend.id] || {} : {};
   const evTurns = eventTurns(v);
   const curTool = v.status === 'running' && evTurns.length ? (evTurns[evTurns.length - 1].tool || {}).name || '' : '';
-  const key = [msgs.length, msgs.length ? textOf(msgs[msgs.length - 1]).length : 0, v.status, v.next || 0, pend ? pend.id + (card.open || '') + (card.scope || '') : '', S.pending, S.review.open ? 1 : 0, curTool, (S.info && S.info.mode) || ''].join(':');
+  const key = [msgs.length, msgs.length ? textOf(msgs[msgs.length - 1]).length : 0, v.status, v.next || 0, pend ? pend.id + (card.open || '') + (card.scope || '') + ':' + Math.floor(Date.now() / 10000) : '', S.pending, S.review.open ? 1 : 0, curTool, (S.info && S.info.mode) || ''].join(':');
   const fu = msgs.find(m => m.role === 'user'); const newTitle = fu ? textOf(fu) : (S.pending || '');
   if (newTitle && newTitle !== S.title) { S.title = newTitle; renderTop(); renderThreads(); }
   if (key === S.feedKey) { tickLive(); return; }
@@ -586,6 +598,9 @@ function renderFeed(v){
   if (running && !turns.length && !S.pending) col.appendChild(liveLine(null));
   if (!running) S.pending = '';
   if (v.status === 'error' && v.error) col.appendChild(el('div', 'err-line', t('d.errorPrefix', { msg: v.error })));
+  // P0-3：审批超时自动拒绝与被打断的轮次，在对话里留一条可见记录（只看本轮事件流，不编造）。
+  (v.events || []).forEach(e => { if (e.type === 'approval_result' && e.data && e.data.timeout) col.appendChild(el('div', 'note-line', t('d.appr.timeoutNote', { tool: String(e.data.tool || '') }))); });
+  if (v.interrupted) col.appendChild(el('div', 'note-line', t('d.stoppedNote')));
   if (!msgs.length && !running) col.appendChild(el('div', 'empty', t('d.threadEmpty')));
   if (nearBottom || pend) feedEl.scrollTop = feedEl.scrollHeight;
 }
@@ -624,6 +639,26 @@ async function sendMsg(){
   try { await post('/api/sessions/' + encodeURIComponent(S.session) + '/messages', { text }); }
   catch (e) { toast(e.message); ta.value = text; }
   await tick();
+}
+// P0-3：窗口停止按钮——发取消信号就返回，界面先显示“正在停止”，底层落定后轮询看到已停止；不在跑时是空操作。
+async function stopSession(){
+  if (!S.session) return;
+  try { const r = await post('/api/sessions/' + encodeURIComponent(S.session) + '/stop', {}); toast(r && r.ok ? t('d.stopping') : t('d.stopped')); }
+  catch (e) { toast(t('d.failed', { msg: e.message })); }
+  S.feedKey = ''; await tick();
+}
+// P0-3：窗口撤销上一轮——等价于终端 /undo（回退到最后一条 user 消息），成功/失败都用 toast 说清。
+async function undoLastTurn(){
+  if (!S.session) return;
+  if (S.sv && S.sv.status === 'running') { toast(t('d.undoBusy')); return; }
+  let rows; try { rows = await api('/api/sessions/' + encodeURIComponent(S.session) + '/history'); } catch (e) { toast(t('d.failed', { msg: e.message })); return; }
+  const msgs = (rows && rows.messages) || [];
+  let idx = -1; for (let i = msgs.length - 1; i >= 0; i--) if (msgs[i].role === 'user') { idx = i; break; }
+  if (idx < 0) { toast(t('d.undoEmpty')); return; }
+  try {
+    await post('/api/sessions/' + encodeURIComponent(S.session) + '/rewind', { message_id: msgs[idx].id, action: 'truncate' });
+    toast(t('d.undone')); S.feedKey = ''; await tick();
+  } catch (e) { toast(t('d.undoFailed', { msg: e.message })); }
 }
 
 // ---------------------------------------------------------------- 审批卡 ---
@@ -675,7 +710,8 @@ function scopeBox(info){
   });
   return box;
 }
-function waitChip(){ const c = el('span', 'wchip'); c.appendChild(icon('undo')); c.lastChild.classList.add('rot'); c.appendChild(document.createTextNode(t('d.appr.waiting'))); return c; }
+// 审批卡等候 chip：等你确认 + 倒计时（约 10 分钟内不处理自动拒绝，见网关 APPROVAL_TIMEOUT 与 expires_at）。
+function waitChip(a){ const c = el('span', 'wchip'); c.appendChild(icon('undo')); c.lastChild.classList.add('rot'); let label = t('d.appr.waiting'); if (a && a.expires_at) { const remain = Math.max(0, Math.round((new Date(a.expires_at).getTime() - Date.now()) / 1000)); label += ' · ' + t('d.appr.expiresIn', { t: Math.floor(remain / 60) + ':' + String(remain % 60).padStart(2, '0') }); } c.appendChild(document.createTextNode(label)); return c; }
 function moreMenu(anchor, a, info){
   closeMenus();
   const st = S.card[a.id] || (S.card[a.id] = { open: null, scope: 'session' });
@@ -760,7 +796,9 @@ function apprMore(a, info, fbText){
 function approvalCard(a, fbText, compact){
   const info = apprInfo(a);
   const box = el('div', 'appr glass' + (compact ? ' compact' : '')); box.dataset.id = a.id; box.dataset.tool = a.tool;
-  const hd = el('div', 'ah'); hd.appendChild(el('b', '', info.sentence)); hd.appendChild(waitChip()); box.appendChild(hd);
+  const hd = el('div', 'ah'); hd.appendChild(el('b', '', info.sentence)); hd.appendChild(waitChip(a)); box.appendChild(hd);
+  // P0-3：卡上必须写明约 10 分钟内不处理自动拒绝（秒数取网关给的 timeout_seconds，默认 600）。
+  box.appendChild(el('div', 'cl', t('d.appr.timeout', { sec: Math.round((a.timeout_seconds || 600) / 60) })));
   if (compact) {
     box.appendChild(el('div', 'cl', t('d.scope.compact', { what: info.compact })));
     box.appendChild(apprActs(a, info, 'compact'));
@@ -845,7 +883,7 @@ function renderReview(){
       }
       const fh = el('div', 'fh'); fh.appendChild(el('span', '', show.path || show.head));
       fh.appendChild(el('span', 'add', '+' + show.add)); fh.appendChild(el('span', 'del', '−' + show.del));
-      if (pendDiff) { fh.appendChild(el('span', 'sp')); fh.appendChild(waitChip()); }
+      if (pendDiff) { fh.appendChild(el('span', 'sp')); fh.appendChild(waitChip(pend)); }
       body.appendChild(fh);
       if (pendDiff) body.appendChild(el('div', 'rsent', pendInfo.sentence));
       const code = el('div', 'code');
@@ -889,7 +927,7 @@ function renderReview(){
 function overviewTab(v, pend, files, evN, runs, failed){
   const box = el('div', 'ov');
   const row = (k, valueNode) => { const r = el('div', 'or'); r.appendChild(el('span', 'k', k)); const vv = el('div', 'v'); if (typeof valueNode === 'string') vv.textContent = valueNode; else vv.appendChild(valueNode); r.appendChild(vv); box.appendChild(r); return r; };
-  const stKey = pend ? 'd.ov.waiting' : v.status === 'running' ? 'd.ov.running' : v.status === 'error' ? 'd.ov.error' : 'd.ov.idle';
+  const stKey = pend ? 'd.ov.waiting' : v.status === 'running' ? (v.stopping ? 'd.stopping' : 'd.ov.running') : v.interrupted ? 'd.ov.stopped' : v.status === 'error' ? 'd.ov.error' : 'd.ov.idle';
   const stv = el('span', 'stv'); stv.appendChild(avatar(pend ? 'wait-s' : v.status === 'running' ? 'work-s' : 'idle-s')); stv.appendChild(document.createTextNode(t(stKey))); row(t('d.ov.status'), stv);
   // 这一轮：步数 + 收尾交代（真实工具调用）
   // 等批准的那一步还没执行，不算进步数；收尾交代只在这一轮结束后才写（进行中不说“改了”）。
@@ -926,11 +964,19 @@ function renderStatus(){
   const u = v && v.usage;
   if (u && u.last_prompt_tokens && u.context_window_tokens) add('pie', t('d.context', { n: Math.round(100 * u.last_prompt_tokens / u.context_window_tokens) }));
   if (u && (u.prompt_tokens || u.completion_tokens)) add('', t('d.tokens', { i: fmtK(u.prompt_tokens || 0), o: fmtK(u.completion_tokens || 0) }));
+  // P0-3：花钱前见上限——本次金额、金额未知、月度上限状态都写在状态栏里；警告项点一下进设置。
+  const b = (v && v.budget) || (S.info && S.info.budget) || null;
+  if (b && !b.monthly_cost_limit_decided) { const c = add('', t('d.budgetUndecided'), 'warn'); c.style.cursor = 'pointer'; c.title = t('d.budget.undecided'); c.onclick = () => openSettings('general'); }
+  if (v && v.cost && v.cost.status === 'priced' && typeof v.cost.spent_usd === 'number') add('', t('d.cost', { n: fmtUsd(v.cost.spent_usd) }));
+  else if (v && v.cost && (v.cost.status === 'unpriced' || v.cost.status === 'missing') && (v.events || []).some(e => e.type === 'budget_paused')) add('', t('d.costUnknown'), 'warn');
+  // 触顶：预留失败文案里只有月度层被绑住时才带“月度支出上限”这句，按它认，不猜。
+  if (v && v.status === 'error' && typeof v.error === 'string' && v.error.includes('月度支出上限')) { const c = add('', t('d.budgetHit'), 'warn'); c.style.cursor = 'pointer'; c.title = t('d.budgetHit'); c.onclick = () => openSettings('general'); }
   if (v && Array.isArray(v.messages) && v.messages.length) add('undo', t('d.rewindTip'));
   const n = S.info.mcp_tools || 0;
   const right = el('span', 'r'); right.appendChild(el('span', 'dot ' + (n ? 'ok' : 'off'))); right.appendChild(document.createTextNode(n ? t('d.mcpOn', { n }) : t('d.mcpOff'))); st.appendChild(right);
 }
 function fmtK(n){ return n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 1 : 2).replace(/\.?0+$/, '') + 'k' : String(n); }
+function fmtUsd(n){ return '$' + Number(n).toFixed(4).replace(/\.?0+$/, ''); }
 
 // ---------------------------------------------------------------- 轮询 ---
 let ticking = false;
@@ -942,6 +988,9 @@ async function tick(){
       const sid = S.session;
       const v = await api('/api/sessions/' + encodeURIComponent(sid));
       if (sid === S.session) { S.sv = v; renderFeed(v); renderReview(); renderStatus(); }
+      // P0-3：运行状态变了才重画输入行（停止/撤销按钮跟着状态走），平时不动，避免每秒重建 DOM。
+      const pk = (S.sv && S.sv.status === 'running' ? 'run' : 'idle') + ':' + (S.sv && S.sv.messages && S.sv.messages.length ? 'msg' : 'nomsg');
+      if (pk !== S.pillsKey) { S.pillsKey = pk; renderPills(); }
     }
     renderThreads();
   } catch (e) { /* 网关重启或断网：下一轮再试 */ }
@@ -1033,8 +1082,8 @@ function srow(title, small, control){
 function sw(on, onChange, id){ const b = el('button', 'sw' + (on ? ' on' : '')); if (id) b.id = id; b.setAttribute('role', 'switch'); b.setAttribute('aria-checked', String(!!on)); b.onclick = () => onChange(!on); return b; }
 async function saveSettings(patch){
   try { await post('/api/settings', patch); toast(t('d.saved')); await loadInfo(); }
-  catch (e) { toast(t('d.failed', { msg: e.message })); }
-  renderSettings();
+  catch (e) { toast(t('d.failed', { msg: e.message })); renderSettings(); return false; }
+  renderSettings(); return true;
 }
 function sourceLabel(p){
   const m = { env: t('d.key.env', { env: p.env_key }), env_generic: t('d.key.env', { env: 'NYRA_API_KEY' }), vault: t('d.key.vault'), file: t('d.key.file'), missing: t('d.key.missing'), none_needed: t('d.key.none') };
@@ -1167,8 +1216,41 @@ async function secGeneral(sec){
   re.onchange = () => saveSettings({ reasoning_effort: re.value || null });
   sec.appendChild(srow(t('d.gen.effort'), t('d.gen.effortHint'), re));
   const lg = el('select', 'fld'); [['', t('d.gen.langSystem')], ['zh', '中文'], ['en', 'English']].forEach(([v, l]) => { const o = el('option', '', l); o.value = v; if ((g.language || '') === v) o.selected = true; lg.appendChild(o); });
-  lg.onchange = () => saveSettings({ language: lg.value || null });
+  // P0-3：改完立即换文案（不刷新页面），刷新后仍保持（boot 时按保存的语言渲染）。
+  lg.onchange = async () => {
+    const v = lg.value || null;
+    const ok = await saveSettings({ language: v });
+    if (!ok) return;
+    applyLang(v || sysLang());
+    applyI18n(document); S.feedKey = ''; S.reviewKey = ''; S.pillsKey = '';
+    renderTop(); renderThreads(); tick();
+  };
   sec.appendChild(srow(t('d.gen.lang'), t('d.gen.langHint'), lg));
+  // P0-3：月度上限——必须明确选一个（数字或不设上限），没选时这里亮着“还没选”，保存才放行。
+  sec.appendChild(el('h3', '', t('d.budget.title')));
+  const b = st.budget || {};
+  const bstat = el('p', 'hint2');
+  if (b.monthly_spent_usd == null) bstat.textContent = t('d.budget.spentUnknown');
+  else if (typeof b.monthly_cost_limit_usd === 'number') bstat.textContent = t(b.monthly_spent_incomplete ? 'd.budget.spentPartial' : 'd.budget.spent', { spent: fmtUsd(b.monthly_spent_usd), limit: fmtUsd(b.monthly_cost_limit_usd), reset: String(b.monthly_reset_at || '') });
+  else bstat.textContent = t('d.budget.spentNoCap', { spent: fmtUsd(b.monthly_spent_usd) }) + (b.monthly_spent_incomplete ? t('d.budget.partialNote') : '');
+  sec.appendChild(bstat);
+  const brow = el('div', 'srow');
+  const bk = el('div', 'k'); bk.appendChild(el('b', '', t('d.budget.title'))); bk.appendChild(el('small', '', t('d.budget.hint'))); brow.appendChild(bk);
+  const ctl = el('div'); ctl.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap';
+  const capIn = el('input', 'fld'); capIn.type = 'number'; capIn.min = '0'; capIn.step = 'any'; capIn.style.width = '110px';
+  if (typeof b.monthly_cost_limit_usd === 'number') capIn.value = String(b.monthly_cost_limit_usd);
+  const noCap = el('label', ''); const noCapCb = document.createElement('input'); noCapCb.type = 'checkbox'; noCapCb.checked = !!b.monthly_cost_limit_decided && b.monthly_cost_limit_usd == null; noCap.appendChild(noCapCb); noCap.appendChild(document.createTextNode(' ' + t('d.budget.noCap')));
+  const saveCap = el('button', 'tbtn p', t('d.budget.save'));
+  const syncCap = () => { capIn.disabled = noCapCb.checked; };
+  noCapCb.onchange = syncCap; syncCap();
+  saveCap.onclick = async () => {
+    if (noCapCb.checked) { await saveSettings({ monthly_cost_limit_usd: null }); return; }
+    const n = Number(capIn.value);
+    if (capIn.value.trim() === '' || !Number.isFinite(n) || n < 0) { toast(t('d.budget.needNumber')); return; }
+    await saveSettings({ monthly_cost_limit_usd: n });
+  };
+  ctl.appendChild(capIn); ctl.appendChild(noCap); ctl.appendChild(saveCap); brow.appendChild(ctl); sec.appendChild(brow);
+  if (!b.monthly_cost_limit_decided) sec.appendChild(el('p', 'bad-t', t('d.budget.undecided')));
   sec.appendChild(el('h3', '', t('d.gen.context')));
   sec.appendChild(srow(t('d.gen.autoCompact'), t('d.gen.autoCompactHint', { n: Math.round(c.auto_compact_threshold * 100) }), sw(c.auto_compact_enabled, v => saveSettings({ auto_compact_enabled: v }), 'sw-compact')));
   const th = el('select', 'fld'); [0.6, 0.7, 0.8, 0.9].forEach(v => { const o = el('option', '', Math.round(v * 100) + '%'); o.value = v; if (Math.abs(c.auto_compact_threshold - v) < 0.001) o.selected = true; th.appendChild(o); });
@@ -1316,6 +1398,8 @@ async function boot(){
   applyI18n(); bind(); loadFonts();
   if (!TOKEN) { document.body.innerHTML = ''; document.body.appendChild(el('p', 'empty', t('d.noToken'))); return; }
   let info = null; try { info = await loadInfo(); } catch (e) { /* 下面照常渲染，轮询会重试 */ }
+  // 设置里保存的语言优先于系统语言（P0-3：设置改语言要真换文案）；没保存才跟随系统。
+  if (info && (info.language === 'zh' || info.language === 'en') && info.language !== LANG) { applyLang(info.language); applyI18n(); }
   const splash = info && info.shell === 'desktop' ? playSplash() : Promise.resolve();
   try { await loadSessions(); } catch (e) {}
   await loadSchedule();

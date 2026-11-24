@@ -69,6 +69,8 @@ input,textarea,select{font:inherit;color:var(--fg)}
 button.fr:hover{background:var(--hover)}
 .add{color:var(--add)}.del{color:var(--rm)}
 .err-line{color:var(--rm);font-size:12.5px}
+.note-line{color:var(--mu);font-size:12.5px}
+.status span.warn{color:var(--warn)}
 .working{color:var(--mu);display:flex;align-items:center;gap:8px;font-size:13px}
 /* 审批卡（对话流里） */
 .appr{border:1px solid var(--line2);border-radius:10px;overflow:hidden;background:var(--bg)}
