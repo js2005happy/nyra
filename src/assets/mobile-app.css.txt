@@ -321,7 +321,7 @@ code{background:rgba(255,255,255,.06);padding:1px 5px;border-radius:5px;color:va
 .md hr{border:0;border-top:1px solid var(--md-line,rgba(127,127,127,.25));margin:.8em 0}
 .md a{color:inherit;text-decoration:underline;text-underline-offset:2px}
 .md pre{margin:.4em 0 .7em;padding:10px 12px;border-radius:8px;background:var(--md-code,rgba(127,127,127,.12));overflow-x:auto;white-space:pre;-webkit-overflow-scrolling:touch}
-.md pre code{background:none;padding:0;font-size:12.5px;white-space:pre}
+.md pre code{background:none;padding:0;font-size:var(--f-s);white-space:pre}
 .md code{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:.88em;background:var(--md-code,rgba(127,127,127,.14));padding:1px 5px;border-radius:5px;word-break:break-word}
 .md .md-table{max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;margin:.4em 0 .7em}
 .md table{border-collapse:collapse;min-width:100%;font-size:.94em}
