@@ -1,5 +1,7 @@
 # Nyra 变更记录
 
+> Changelog is in Chinese; see [Release notes](https://github.com/js2005happy/nyra/releases) for English summaries.
+
 ## 0.5.14（2026-11-25）
 
 - 安卓 APK 首次切换为正式签名（2026-11-25）：从本版起 `nyra-android.apk` 用固定的 Nyra 发布证书签名（签名者 CN=Nyra，证书 SHA-256 以 `D3:CD:8C:92` 开头）。**从旧的临时签名版（0.5.13 及更早，debug 签名）升级需要先卸载一次旧版再安装**；之后的版本用同一把密钥签名，可以直接覆盖升级。**发版 CI**：`mobile.yml` 的签名步骤加 `set -euo pipefail`，`apksigner verify` 先单独取退出码再打印（以前经 `tee` 管道，验签失败也会被吞掉），验签后断言签名者为 CN=Nyra、证书 SHA-256 以 `d3cd8c92` 开头；发版 tag 构建缺签名 secrets 时直接失败，不再退回 debug 签名，只有手动触发的测试构建允许 debug 签名；keystore 在步骤结束时（含失败路径）删除。**Windows CI**：B1–B7 的两项 git URL 安装测试在 Windows 上恢复通过（原因与修法见下一条）。诚实边界：安卓正式签名包未在真机上验证安装与覆盖升级。
