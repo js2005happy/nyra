@@ -41,6 +41,7 @@ import { summarizeModelSavings, formatModelSavings } from "./modelSavings.ts";
 import { toSavingsJson } from "./savingsSummary.ts";
 import { buildVerdict, buildRunVerdict, buildTrendVerdict, formatVerdict, toVerdictJson, guardExitCode, formatGuardLine, type Verdict as VerdictShape } from "./verdict.ts";
 import { subcommandSet } from "./subcommands.ts";
+import { suggestSubcommand, findUnknownFlag, SUBCOMMAND_FLAGS } from "./cliTypos.ts";
 import { checkDocs } from "./docCheck.ts";
 import type { RedlineResult } from "./redlines.ts";
 import { measureToolBudget, filterSchemas, summarizeSavings, formatToolBudget } from "./toolBudget.ts";
@@ -7252,6 +7253,24 @@ export async function main(argv: string[]): Promise<number> {
   }
   if (args.help) { process.stdout.write(usageText() + "\n"); return 0; }
   if (args.version) { process.stdout.write(`nyra ${VERSION} (node runtime)\n`); return 0; }
+  // 打错字拦截：子命令后的未知选项直接报错；单个词像打错的子命令时提示并退出，
+  // 不把它当任务发给模型（不花钱）。见 src/cliTypos.ts。
+  if (args.subcommand && SUBCOMMAND_FLAGS[args.subcommand]) {
+    const spec = SUBCOMMAND_FLAGS[args.subcommand];
+    const bad = findUnknownFlag(args.subArgs ?? [], spec.value, spec.bool);
+    if (bad) {
+      const hint = bad.suggestion ? t("err.didYouMeanOption", { suggest: bad.suggestion }) : "";
+      process.stderr.write(t("err.unknownSubOption", { sub: args.subcommand, opt: bad.flag, hint }) + "\n");
+      return 2;
+    }
+  }
+  if (args.task !== undefined && !args.example) {
+    const suggest = suggestSubcommand(args.task, subcommandSet());
+    if (suggest) {
+      process.stderr.write(t("err.didYouMean", { cmd: args.task, suggest }) + "\n");
+      return 2;
+    }
+  }
 
   const home = resolveHome();
 
