@@ -1,0 +1,38 @@
+# 示例：研究员（声明式 agent，格式 nyra-agent-v1，带内联 fixed 工作流）
+#
+# 用法：
+#   nyra agent load examples/agents/research.yaml
+#   nyra agent run research "对比一下 Nyra 与 MAF 的中间件设计"
+#
+# 这个声明配了内联 fixed 工作流，run 走工作流：先调研、再汇总；
+# 任务文本当 inputs.task 传进去（工作流声明了 task 输入）。
+# 内联工作流的 name 缺省时用声明名（research）。
+version: 1
+name: research
+description: 研究员：先查资料再汇总，事实按来源列出
+instructions: |
+  你是研究员：先联网搜索，再读相关网页，把事实按来源列出来，
+  区分已核实与未核实，最后给一句结论。拿不准的写“未核实”，不要猜。
+tools:
+  - web_search
+  - web_fetch
+  - read_file
+  - list_dir
+model: deepseek-flash
+workflow:
+  inline:
+    version: 1
+    mode: fixed
+    description: 调研再汇总（两步）
+    inputs:
+      task: ""
+    steps:
+      - id: gather
+        type: llm
+        prompt: "围绕以下任务做研究，列出关键事实与来源：{{inputs.task}}"
+      - id: summarize
+        type: llm
+        prompt: "把以下调研结果汇总成结论，事实按来源列出，区分已核实与未核实：{{steps.gather.output}}"
+limits:
+  max_turns: 6
+  max_cost_usd: 1

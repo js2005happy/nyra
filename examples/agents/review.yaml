@@ -1,0 +1,29 @@
+# 示例：只读代码审查员（声明式 agent，格式 nyra-agent-v1）
+#
+# 用法：
+#   nyra agent load examples/agents/review.yaml
+#   nyra agent run review "审查 src/agentDecl.ts 的改动"
+#
+# 这个声明没有配 workflow，run 走 agent 主循环；tools 是白名单上限，
+# 没有 shell、没有写文件工具，拿不到写能力。
+version: 1
+name: review
+description: 只读代码审查员：只读文件、列问题，不改任何东西
+instructions: |
+  你是代码审查员，只做只读检查，不改动任何文件。
+  读相关文件，逐条列出问题（文件、行号、原因、建议），最后给一句总体判断。
+  拿不准的写“未核实”，不要猜。
+tools:
+  - read_file
+  - list_dir
+  - grep_search
+  - git_status
+  - lsp_diagnostics
+  - lsp_symbols
+model: deepseek-flash
+approval:
+  read_file: never_require
+  list_dir: never_require
+limits:
+  max_turns: 6
+  max_cost_usd: 0.5
