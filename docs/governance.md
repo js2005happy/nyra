@@ -373,6 +373,42 @@ nyra governance audit deployment [--all] [--json]
 还没接调用方传值——CLI 人工运行记 `person`，队列/定时任务经 CLI
 跑的也记 `person`（调用方后续传值后才分得清）。
 
+## 网关逐回合记客户端（H1，Hermes 借鉴）
+
+- 网关每次经 HTTP 发起的会话/群聊回合，都记一笔：`~/.nyra/gateway-audit.jsonl`
+  （append-only，0600；含时间、actor、type=round、session_id、kind、channel、
+  12 位哈希，不记名字、不记邮箱、不记绝对路径）+ 最近客户端账本
+  `~/.nyra/gateway-clients.json`（0600、原子写，按 last_seen 倒序、上限 200 条）。
+  写失败不抛错、不破坏回合本身。
+- 只记 id：机主记 `owner`；配对设备记 `device:<设备 id>`；账号记
+  `account:<账号 id>`（user 角色账号在鉴权层已被折成字符串 `account`，只记
+  一个桶——机主账号的回合都记 `owner`，陌生账号要登录才能发消息）。
+- 查法：`nyra gw clients`（只限机主，配对设备查 → 403）；网关
+  `GET /api/clients`（只限机主）；会话列表每条带 `last_client`（本网关进程
+  启动以来最后一回合的客户端）；审计行进 SIEM 导出（第 12 个来源，
+  `gateway-audit.jsonl`）。
+- 团队分派 `dispatchTeam()` 不走 HTTP 鉴权上下文，暂不记（调用方没有可归属的
+  客户端身份）。
+
+## 凭证类型纪律（H5，Hermes 借鉴）
+
+- 模型流量只用一种认证头：`Authorization: Bearer <API Key>`。本树没有
+  Anthropic/Google 原生 provider，所有预置都是 OpenAI 兼容 base，所以不存在
+  “某家该用 x-api-key、某家该用 x-goog-api-key”的分叉，也就没有发错头的余地。
+- API Key 只从 `resolveProvider` 来：env 变量（preset.envKey 点名）、`API_KEY`、
+  密码箱/keys.json 里与 preset.envKey 同名的条目。OAuth token 各有各的家
+  （GitHub access token 在账号会话库里、Gmail token 在密码箱 `gmail-oauth`
+  条目下、OAuth 客户端在 `oauth-github-client` / `gmail-oauth-client` 条目下），
+  异名条目永远不会被当成模型 Key 读出来。
+- 入口处 `validateProviderKey` 直接拦住 OAuth 形状的串（`gho_`、`ghp_`、`github_pat_`、
+  `ya29.`、`1//`、`xoxb-`、`xoxp-`、`xoxa-`、`xoxr-`），报错写明“这看起来像
+  OAuth token，不能当 API Key 用”。网关测 Key 与界面保存 Key 都走这个入口。
+  注意作用域：这道拦只放在模型 Key 的两个入口——通用的 `validateKey`/`setKey`
+  不拦，Bot 电脑凭证存的就是任意账号 secret，GitHub PAT（`ghp_…`）是合法的
+  电脑凭证。
+- 以后要接原生 Anthropic/Google 时，先在 `src/providers.ts` 的 `applyAuth`
+  上加“按 provider 选头”的唯一映射表 + 测试，不许在调用处各写各的头。
+
 ## 审计与事件
 
 - 审计链 `~/.nyra/governance-audit.jsonl`（append-only，0600）：策略发布、

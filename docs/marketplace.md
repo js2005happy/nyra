@@ -85,6 +85,13 @@ nyra market update <机器人名>
   `installed_at` 保留），卸载历史不断；事件记 `marketplace_updated`。
 - **花名册**：已登记的声明按新版重同步（你改过的声明不动，只警告）。
 - **墓碑**：已卸载的条目更新不会复活（删了就是删了，想用请重新安装）。
+  插件层同款纪律（H6，Hermes 借鉴）：`nyra plugin uninstall` 后锁文件里
+  不再有这条记录，但留一条墓碑（名字 + 卸载时间 + 删了哪些文件）；
+  重装/升级撞见墓碑时拒绝，须 `nyra plugin install <来源> --force` 显式重装
+  （清掉墓碑）；停用的插件重装/升级保持停用，不悄悄打开；市场安装是显式重装，
+  带 force（市场账本另有墓碑），市场更新不带 force（更新不许复活已卸载条目）。
+  信任圈同款：删圈写墓碑，同名重建清墓碑并记 `circle_recreated`（见
+  `docs/circles.md`）。
 
 技能包与模板没有更新流程：改了就用 `nyra market install <条目 id>
 --force` 重装（你改过的文件同样保留）。

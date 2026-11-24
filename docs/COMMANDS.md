@@ -74,7 +74,7 @@
 | 命令 | 作用 |
 |---|---|
 | `nyra ui` | 启动 gateway 网页界面（含手机 PWA） |
-| `nyra gw <sessions\|send\|view\|approve\|rewind\|info\|schedule\|mode-requests\|mode-confirm>` | 连正在跑的 gateway 当客户端（mode-requests / mode-confirm：在电脑上看/确认手机的完全模式请求） |
+| `nyra gw <sessions\|send\|view\|approve\|rewind\|info\|clients\|schedule\|mode-requests\|mode-confirm>` | 连正在跑的 gateway 当客户端（mode-requests / mode-confirm：在电脑上看/确认手机的完全模式请求；clients：最近用过哪些客户端，只限机主） |
 | `nyra schedule <list\|add\|remove\|run\|daemon>` | 定时任务（`add` 可加 `--agent <名字>`，让任务跑在该 Bot 的电脑里） |
 | `nyra events <list\|add\|remove\|enable\|disable\|test\|poll>` | 事件触发任务：webhook 与新邮件触发进任务队列（详见 `docs/event-triggers.md`） |
 | `nyra thread <create\|list\|search\|show\|copy\|prune\|state\|history\|runs\|cron-add\|cron-remove\|crons\|archive\|unarchive\|remove>` | 远端线程操作 API：建线程、搜线程、复制接着跑、剪历史、读写状态、给线程绑 cron（详见 `docs/threads.md`） |
@@ -139,7 +139,7 @@
 
 | 命令 | 作用 |
 |---|---|
-| `nyra plugin <list\|search\|install\|enable…>` | 插件市场（只装带来源、可审计的技能包） |
+| `nyra plugin <list\|search\|install\|enable…>` | 插件市场（只装带来源、可审计的技能包；`install` 撞见卸载墓碑时须加 `--force` 显式重装，`list` 末尾列出已卸载的墓碑） |
 | `nyra creator "<一句话需求>"` | 创造模式：一句话搓出插件（先验证、经确认才安装） |
 | `nyra kb <create\|list\|add\|search\|ask\|remove\|test>` | 本地知识库：外部文档（文本/Markdown/PDF/网页）收录、parent-child 分块、BM25 检索 + 确定性 rerank（`--no-rerank` 只按 BM25）+ 检索测试台，中文 PDF（带 ToUnicode）可读（详见 `docs/knowledge.md`） |
 | `nyra knowledge test <库名> --file <问题文件>` | 检索测试台：批量典型问题看召回片段与分数，调参对比（`--no-rerank` 对比 BM25 原序，详见 `docs/knowledge.md`） |

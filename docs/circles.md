@@ -142,8 +142,12 @@ Nyra 不再向该身份提供新的上下文（历史证据与审计不删）。
   ```
 
   绑定里的 `identity` 是好友名或字面 `"owner"`（机主）。
-- 引入/撤销/建圈/删圈/绑定都进证据链：5 个新运行事件已注册进
-  EVENT_FIELDS（`circle_created` / `circle_deleted` /
+- 删圈写墓碑（H6，Hermes 借鉴）：`circles.json` 里加 `deleted` 列表（名字 +
+  删除时间 + 谁删的），删掉的圈只留这一条；建同名圈是用户显式决定——清掉墓碑
+  继续建，并记 `circle_recreated` 审计与运行事件；任何重扫/同步都不许悄悄把
+  删掉的圈建回来。
+- 引入/撤销/建圈/删圈/重建/绑定都进证据链：6 个运行事件已注册进
+  EVENT_FIELDS（`circle_created` / `circle_deleted` / `circle_recreated` /
   `circle_invited` / `circle_revoked` / `circle_binding_set`，
   `src/timeline.ts` 加渲染），每次操作单独建一条只记 circle_*
   事件的证据运行（缺口 38 的 `recordFriendEvent` 同款做法）；审计
