@@ -160,7 +160,7 @@ import { buildNotifierFromConfig, handleBot, type BotNotifier } from "./bot/inde
 import { handleChannels } from "./channels/cli.ts";
 import { resolveAgentWorkdir } from "./bot/binding.ts";
 import {
-  PluginError, installPlugin, uninstallPlugin, listPlugins, verifyPlugin,
+  PluginError, installPlugin, uninstallPlugin, listPlugins, listPluginTombstones, verifyPlugin,
   setPluginStatus, setPluginPinned, pluginSkillDirs, auditPlugins, searchRegistry,
   STALE_AFTER_DAYS,
 } from "./plugins.ts";
@@ -187,7 +187,7 @@ nyra --list-sessions           列出历史会话
 nyra --list-mcp                列出已配置的 MCP 服务器与预置
 nyra ui [--host 127.0.0.1] [--port 8765] [--pair] [--open]   启动 gateway 网页界面
 nyra ui --print-url-json --exit-on-stdin-close   桌面外壳模式：stdout 首行一行 JSON，stdin 关闭即退出
-nyra gw <sessions|send|view|approve|rewind|info|schedule|mode-requests|mode-confirm>   连正在跑的 gateway 当客户端
+nyra gw <sessions|send|view|approve|rewind|info|clients|schedule|mode-requests|mode-confirm>   连正在跑的 gateway 当客户端（clients：最近用过哪些客户端）
 nyra update-check   手动检查一次新版本（默认关闭：须先在设置里开启更新检查，否则不联网）
 nyra --compact <会话 ID>       压缩指定会话后退出
 REPL：/context 查看上下文占用；/compact focus <关键词> 按重点压缩会话（详见 docs/context.md）
@@ -356,7 +356,7 @@ nyra --list-sessions           list past sessions
 nyra --list-mcp                list configured MCP servers and presets
 nyra ui [--host 127.0.0.1] [--port 8765] [--pair] [--open]   start the gateway web UI
 nyra ui --print-url-json --exit-on-stdin-close   desktop shell mode: one JSON line on stdout, exits when stdin closes
-nyra gw <sessions|send|view|approve|rewind|info|schedule|mode-requests|mode-confirm>   talk to a running gateway as a client
+nyra gw <sessions|send|view|approve|rewind|info|clients|schedule|mode-requests|mode-confirm>   talk to a running gateway as a client (clients: which clients recently sent rounds)
 nyra update-check   check for a new version once (off by default: enable update checks in settings first, otherwise no network)
 nyra --compact <session id>    compact a session and exit
 REPL: /context shows context usage; /compact focus <keyword> compacts around a topic (see docs/context.md)
@@ -1242,6 +1242,13 @@ async function handleGw(argv: string[]): Promise<number> {
       process.stdout.write(`Nyra ${info.version} · 模式 ${info.mode} · ${info.provider} / ${info.model}\n`);
       return 0;
     }
+    if (action === "clients") {
+      // H1：最近用过哪些客户端（只限机主；陌生客户端出现时这里第一眼能看见）。
+      const data = await client.clients();
+      if (!data.clients.length) process.stdout.write("还没有客户端发过回合\n");
+      else for (const c of data.clients) process.stdout.write(`- ${c.client}（${c.kind}，${c.rounds} 回合，最近 ${c.last_seen}）\n`);
+      return 0;
+    }
     if (action === "schedule") {
       const data = await client.schedule() as { tasks: { name: string; enabled?: boolean }[] };
       if (!data.tasks.length) process.stdout.write("暂无定时任务\n");
@@ -1263,7 +1270,7 @@ async function handleGw(argv: string[]): Promise<number> {
       else process.stdout.write(`已批准 ${id}，模式：${out.mode ?? "full"}\n`);
       return 0;
     }
-    process.stderr.write("用法：nyra gw <sessions|send|view|approve|rewind|info|schedule|mode-requests|mode-confirm>\n");
+    process.stderr.write("用法：nyra gw <sessions|send|view|approve|rewind|info|clients|schedule|mode-requests|mode-confirm>\n");
     return 2;
   } catch (err) {
     process.stderr.write(`gateway 调用失败：${err instanceof Error ? err.message : String(err)}\n`);
@@ -3835,7 +3842,7 @@ async function handleMarket(argv: string[], home: string): Promise<number> {
 const PLUGIN_USAGE = `用法：
   nyra plugin list                    列出已安装插件
 nyra plugin search [关键词]         在登记表里找插件
-nyra plugin install <本地目录|git URL>  安装插件（只装显式指定的来源）
+nyra plugin install <本地目录|git URL> [--force]  安装插件（只装显式指定的来源；撞见卸载墓碑时须 --force 显式重装）
 nyra plugin uninstall <名字>        卸载插件（用户改过的文件保留并报告）
 nyra plugin enable <名字>           启用插件
 nyra plugin disable <名字>          停用插件
@@ -3849,9 +3856,14 @@ const [cmd, arg] = argv;
 try {
   if (cmd === "list" || cmd === undefined) {
     const plugins = listPlugins(home);
-    if (!plugins.length) { process.stdout.write("未安装插件\n"); return 0; }
-    for (const p of plugins) {
+    if (!plugins.length) { process.stdout.write("未安装插件\n"); }
+    else for (const p of plugins) {
       process.stdout.write(`- ${p.name} ${p.version}（${p.status}${p.pinned ? "，pinned" : ""}，来源：${p.source}）\n`);
+    }
+    // H6：已卸载的墓碑也列出来——删过的东西有迹可查，重装须显式 --force。
+    const tombs = listPluginTombstones(home);
+    for (const t of tombs) {
+      process.stdout.write(`- ${t.name}（已卸载，${t.uninstalled_at}，重装请加 --force）\n`);
     }
     return 0;
   }
@@ -3865,7 +3877,8 @@ try {
   }
   if (cmd === "install") {
     if (!arg) { process.stderr.write("缺少来源：nyra plugin install <本地目录|git URL>\n"); return 2; }
-    const res = installPlugin(home, arg);
+    // H6：撞见卸载墓碑时 installPlugin 会拒绝；--force 是显式重装（清掉墓碑）。
+    const res = installPlugin(home, arg, { force: argv.includes("--force") });
     process.stdout.write(`已安装 ${res.name} ${res.version}${res.upgraded ? "（升级）" : ""}\n`);
     if (res.keptModified.length) {
       process.stdout.write(`以下文件你改过，已保留未覆盖：${res.keptModified.join("、")}\n`);

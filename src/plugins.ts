@@ -71,6 +71,13 @@ export interface PluginRecord {
 export interface PluginLock {
   version: 1;
   plugins: Record<string, PluginRecord>;
+  /**
+   * H6：卸载墓碑——删掉的插件只留这一条（名字 + 卸载时间 + 删了哪些文件），
+   * 锁定文件里不再有它的记录。重装/升级/缓存回写都不许悄悄复活它：
+   * installPlugin 撞见墓碑时除非显式 --force 否则拒绝；setPluginStatus
+   * 撞见墓碑时直接报错。显式重装是用户自己的决定，清掉墓碑继续装。
+   */
+  tombstones?: Record<string, { uninstalled_at: string; files_removed: string[] }>;
 }
 
 export interface RegistryEntry {
@@ -108,6 +115,20 @@ export function loadLock(home: string): PluginLock {
         const norm: Record<string, string> = {};
         for (const [k, v] of Object.entries(rec.files ?? {})) norm[k.split(/[\\/]/).join("/")] = v;
         rec.files = norm;
+      }
+      // H6：墓碑只认形状对的条目（坏行丢掉，不让它拖垮整个锁定文件）。
+      if (data.tombstones && typeof data.tombstones === "object" && !Array.isArray(data.tombstones)) {
+        const tombs: Record<string, { uninstalled_at: string; files_removed: string[] }> = {};
+        for (const [name, t] of Object.entries(data.tombstones)) {
+          if (!t || typeof t !== "object") continue;
+          const ts = (t as { uninstalled_at?: unknown }).uninstalled_at;
+          const files = (t as { files_removed?: unknown }).files_removed;
+          if (typeof ts !== "string" || !Array.isArray(files)) continue;
+          tombs[name] = { uninstalled_at: ts, files_removed: files.filter((f): f is string => typeof f === "string") };
+        }
+        data.tombstones = tombs;
+      } else {
+        delete (data as { tombstones?: unknown }).tombstones;
       }
       return data;
     }
@@ -265,13 +286,20 @@ export interface InstallResult {
   files: string[];
 }
 
-export function installPlugin(home: string, source: string): InstallResult {
+export function installPlugin(home: string, source: string, opts?: { force?: boolean }): InstallResult {
   const resolved = resolveSource(source);
   try {
     const manifest = readManifest(resolved.dir);
     validateSkillFiles(resolved.dir, manifest);
     const lock = loadLock(home);
     const existing = lock.plugins[manifest.name];
+    // H6：撞见卸载墓碑时拒绝重装——删了的东西不许被重装/升级悄悄复活。
+    // 显式重装（--force / nyra market install）是用户自己的决定：清掉
+    // 墓碑继续装。市场安装走同一入口，见 marketplace.ts 的调用处。
+    const tomb = lock.tombstones?.[manifest.name];
+    if (tomb && !opts?.force) {
+      throw new PluginError(`插件 ${manifest.name} 已于 ${tomb.uninstalled_at} 卸载（墓碑）：重装请加 --force（显式重装会清掉墓碑）`);
+    }
     // 跨插件技能名冲突：不顶替、不合并。
     for (const [otherName, rec] of Object.entries(lock.plugins)) {
       if (otherName === manifest.name) continue;
@@ -340,11 +368,18 @@ export function installPlugin(home: string, source: string): InstallResult {
       source,
       commit,
       installed_at: new Date().toISOString(),
-      status: "active",
+      // H6：停用的插件重装/升级也不许悄悄打开（Hermes：已关闭的插件在
+      // 安装程序中保持关闭）。stale/archived 不是用户意图，显式重装回 active。
+      status: existing?.status === "disabled" ? "disabled" : "active",
       pinned: existing?.pinned ?? false,
       files,
       ...(held.size ? { held_modified: [...held] } : {}),
     };
+    // H6：显式重装清掉墓碑（墓碑只拦悄悄复活，不拦用户自己的决定）。
+    if (tomb) {
+      delete lock.tombstones![manifest.name];
+      if (!Object.keys(lock.tombstones!).length) delete lock.tombstones;
+    }
     saveLock(home, lock);
     return {
       name: manifest.name,
@@ -395,14 +430,27 @@ export function uninstallPlugin(home: string, name: string): UninstallResult {
     }
   } catch { /* ignore */ }
   delete lock.plugins[name];
+  // H6：卸载写墓碑——锁定文件里不再有这条记录，但“删过”这个事实留下来。
+  // 重装/升级/缓存回写撞见墓碑时拒绝（除非显式 --force）；setPluginStatus
+  // 撞见墓碑时也拒绝。用户改过而保留的文件不进墓碑（还在磁盘上，不算删了）。
+  if (!lock.tombstones) lock.tombstones = {};
+  lock.tombstones[name] = { uninstalled_at: new Date().toISOString(), files_removed: removed };
   saveLock(home, lock);
   return { name, removed, keptModified, missing };
+}
+
+/** 已卸载的插件墓碑（名字 → 卸载时间 + 删了哪些文件），供 list 与测试查。 */
+export function listPluginTombstones(home: string): { name: string; uninstalled_at: string; files_removed: string[] }[] {
+  const lock = loadLock(home);
+  return Object.entries(lock.tombstones ?? {}).map(([name, t]) => ({ name, uninstalled_at: t.uninstalled_at, files_removed: t.files_removed }));
 }
 
 export function setPluginStatus(home: string, name: string, status: PluginStatus): PluginRecord {
   checkPluginName(name);
   const lock = loadLock(home);
   const rec = lock.plugins[name];
+  // H6：已卸载的插件改状态也没有意义——墓碑在，先重装再说。
+  if (!rec && lock.tombstones?.[name]) throw new PluginError(`插件 ${name} 已卸载（墓碑 ${lock.tombstones[name].uninstalled_at}）：先重装再改状态`);
   if (!rec) throw new PluginError(`未安装插件：${name}`);
   rec.status = status;
   saveLock(home, lock);

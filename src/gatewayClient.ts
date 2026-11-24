@@ -59,5 +59,9 @@ export class GatewayClient {
     });
   }
   info(): Promise<unknown> { return this.call("/api/info"); }
+  /** H1：最近用过哪些客户端（机主在电脑上查；半夜多一个陌生客户端立刻能看见）。 */
+  clients(): Promise<{ clients: { client: string; kind: string; first_seen: string; last_seen: string; rounds: number }[] }> {
+    return this.call("/api/clients") as Promise<{ clients: { client: string; kind: string; first_seen: string; last_seen: string; rounds: number }[] }>;
+  }
   schedule(): Promise<unknown> { return this.call("/api/schedule"); }
 }

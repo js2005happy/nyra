@@ -912,6 +912,8 @@ export const AUDIT_SOURCES: AuditSource[] = [
   { file: "handover-contract-audit.jsonl", label: "handover_contract" },
   // O1：策略网关审计（规则增删、命中拒绝/要求人工/演练）进同一份 SIEM 导出。
   { file: "policy-audit.jsonl", label: "policy" },
+  // H1：网关逐回合客户端审计（哪条会话、哪个客户端、哪一回合）进同一份 SIEM 导出。
+  { file: "gateway-audit.jsonl", label: "gateway" },
 ];
 
 /** 稳定序列化（键排序，递归）：同一条记录在任何机器上算出的哈希都一样。 */

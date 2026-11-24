@@ -388,6 +388,9 @@ friend_code_regenerated: ["code_hash"],
 // 只记圈名、身份名、引入者与渠道，不记发件人 id 以外的任何消息内容。
 circle_created: ["circle", "by"],
 circle_deleted: ["circle", "by"],
+// H6：删圈墓碑被显式重建清掉时记一条（与 circle_created 是两件事：
+// 前者是新建，后者是删过的圈又建回来了，审计里要分得清）。
+circle_recreated: ["circle", "by"],
 circle_invited: ["circle", "peer", "by", "channel"],
 circle_revoked: ["circle", "peer", "by"],
 circle_binding_set: ["channel", "sender", "identity"],

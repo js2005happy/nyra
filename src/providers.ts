@@ -319,6 +319,22 @@ export class Provider implements ProviderLike {
     return out;
   }
 
+  /**
+   * H5：凭证类型纪律——模型流量只用这一种认证头：`Authorization: Bearer <API Key>`。
+   * 本树没有 Anthropic/Google 原生 provider，所有预置都是 OpenAI 兼容 base，
+   * 所以不存在“某家该用 x-api-key、某家该用 x-goog-api-key”的分叉，也就没有
+   * 发错头的余地（Hermes 的 Gemini/Anthropic 探针 bug 就是分叉发错头）。
+   * 凭据只从 resolveProvider 来：env 变量（preset.envKey 点名）、API_KEY、
+   * 密码箱/keys.json 里与 preset.envKey 同名的条目——OAuth token 各有各的
+   * 家（GitHub access token 在账号会话库里、Gmail token 在密码箱 gmail-oauth
+   * 条目下、OAuth 客户端在 oauth-github-client / gmail-oauth-client 条目下），
+   * 异名条目永远不会被当成模型 Key 读出来；模型 Key 的两个入口（网关测
+   * Key、界面保存 Key）用 validateProviderKey 拦住 OAuth 形状的串（见
+   * keystore.ts）。注意：通用的 setKey 不拦——Bot 电脑凭证存的就是任意
+   * 账号 secret，GitHub PAT（ghp_…）是合法的电脑凭证。
+   * 以后要接原生 Anthropic/Google 时，先在这里加“按 provider 选头”的
+   * 唯一映射表 + 测试，不许在调用处各写各的头。
+   */
   private applyAuth(headers: Record<string, string>): void {
     if (this.auth === "env") {
       if (this.apiKey === null) {

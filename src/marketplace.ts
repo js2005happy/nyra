@@ -1574,7 +1574,9 @@ export function executeMarketplaceInstall(
       if (!report.ok) {
         throw new MarketplaceError(`插件验证未通过，拒绝安装：\n${report.errors.map((e) => `- ${e}`).join("\n")}`);
       }
-      const install = installPlugin(home, staged.dir);
+      // H6：市场安装是用户显式重装（墓碑由市场账本另管，update 仍拒绝
+      // 复活已卸载条目），所以这里带 force；插件自身的墓碑由这次安装清掉。
+      const install = installPlugin(home, staged.dir, { force: true });
       keptModified = install.keptModified;
       files.push(...install.files);
       // bot.json 与 routines.json 不在插件锁定文件里：随插件目录一起装，
