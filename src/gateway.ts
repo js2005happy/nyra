@@ -2067,7 +2067,7 @@ export class Gateway {
       return;
     }
     const reviewGetMatch = /^\/api\/review\/([0-9a-f]{16})$/.exec(path);
-    // 缺口 6：连接器状态（供桌面端连接管理页消费；页面本身在 desktop/，归 Hark）。
+    // 缺口 6：连接器状态（供桌面端连接管理页消费；页面本身在 desktop/）。
     // 只返回状态与账号邮箱，不返回任何 token / client_secret。
     if (method === "GET" && path === "/api/connectors") {
       const gmail = getGmailStatus(this.home, this.config);

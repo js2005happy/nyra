@@ -114,7 +114,7 @@ nyra responsibility brief --show
 - `responsibility_escalated`：巡查命中用户写明的升级条件（责任 id/名、命中的条件、审阅队列项 id）。
 - `briefing_generated`：简报生成（日期、进展/待决策/异常各几条、无事安静时 quiet 为真）。
 - 生命周期事件没有运行上下文时走 `evidence/responsibility/` 下的证据文件（与审阅队列的证据回落同款口径），不静默丢审计。
-- 网关 `GET /api/responsibilities`：只返回元数据（名、节奏、汇报条件、上次巡查），不含责任目标——桌面端管理页在 `desktop/`（Hark）。
+- 网关 `GET /api/responsibilities`：只返回元数据（名、节奏、汇报条件、上次巡查），不含责任目标——桌面端管理页在 `desktop/`。
 
 ## 诚实边界
 

@@ -94,4 +94,4 @@ nyra mail-inbox poll # 强制轮询一次（需 Gmail 已启用+已授权）
 - 只做 Gmail（Slack/WhatsApp 按同一模式扩展在后）；
 - 不处理附件、不改标签、不删邮件、不标已读；
 - `mail-inbox poll` 与守护进程轮询共用同一状态文件，并发跑时后写者覆盖前者（单机单守护进程场景无影响；去重靠入队账本，不受影响）；
-- 桌面端管理页在 `desktop/`（Hark）。
+- 桌面端管理页在 `desktop/`。

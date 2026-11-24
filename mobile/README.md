@@ -21,8 +21,8 @@ Wi-Fi 下，填电脑地址 + 端口（默认 8765）+ 电脑上 `nyra ui --pair
 - **TWA 不做**：Trusted Web Activity 要一个公开 HTTPS 源来托管 PWA，
   Nyra 的手机页只在用户自己的局域网里（`http://<电脑 IP>:8765/m`），
   没有公开源，包不起来。
-- **Tauri Mobile 不做**：那会在 `desktop/` 里再开一套移动端目标（Hark 的
-  领地），而桌面壳现在的做法是启动已安装的 `nyra` 二进制——手机上没有
+- **Tauri Mobile 不做**：那会在 `desktop/` 里再开一套移动端目标，
+  而桌面壳现在的做法是启动已安装的 `nyra` 二进制——手机上没有
   这个二进制，整条路要重做，不是一批能跑通的量。
 - **Capacitor**：只包启动器页 + 图标 + 独立窗口，改动面最小（`mobile/` 一个
   新目录，不碰 `desktop/`、不碰 `src/`），安卓 debug APK 在 CI 里能直接

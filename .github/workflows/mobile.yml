@@ -10,7 +10,7 @@
 # Why Capacitor, why Android-only for now: the phone UI is the PWA served by
 # `nyra ui` (/m); the phone still talks to the computer. A TWA would need a
 # public HTTPS origin (there is none), and Tauri Mobile would put a second
-# mobile target inside desktop/ (Hark's area) for a shell that still shells
+# mobile target inside desktop/ for a shell that still shells
 # out to a `nyra` binary that doesn't exist on phones. Capacitor wraps the
 # launcher page (mobile/www/) into a real APK with an icon and a standalone
 # window; iOS needs an Apple Developer account + certificates, same as the

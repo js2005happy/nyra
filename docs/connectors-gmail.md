@@ -107,7 +107,7 @@ nyra gmail revoke [--yes]                      吊销授权并删除本地 token
 ## 网关
 
 `GET /api/connectors`（需鉴权）：列出连接器状态，供桌面端连接管理页消费——
-页面本身在 `desktop/`（Hark）。只返回 id、名字、启用与否、授权与否、账号邮箱
+页面本身在 `desktop/`。只返回 id、名字、启用与否、授权与否、账号邮箱
 与 scope，不返回任何 token / client_secret。
 
 ## 定时任务里发信
@@ -122,7 +122,7 @@ nyra gmail revoke [--yes]                      吊销授权并删除本地 token
 - 只做 Gmail：Slack / WhatsApp 等后续按同一模式扩展，不在本批。
 - 附件只读下载（缺口 44 第三批已落地）；不发送附件；不永久删除邮件（只进回收站）；不转发给外部、不改他人标签。
 - 没有应用事件源（缺口 7：新邮件触发任务）与邮件即任务入口（缺口 22：读到邮件直接建任务），那是下一批。
-- Web UI 连接管理页在 `desktop/`，归 Hark；本批只给了网关 `GET /api/connectors` 状态接口。
+- Web UI 连接管理页在 `desktop/`（桌面端）；本批只给了网关 `GET /api/connectors` 状态接口。
 - 发信不做收件人格式校验：地址写错时 Gmail API 会直接报错，错误原样返回。
 - 回环回调只在能打开浏览器的本机上能用；无头服务器上授权要另想办法（下一批评估）。
 - 刷新后 token 回写密码箱需要 `NYRA_VAULT_PASSWORD`；没配时只内存生效（见上）。

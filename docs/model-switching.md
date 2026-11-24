@@ -16,7 +16,7 @@ Nyra 的模型面比别家广（15 个 provider + 本地 Ollama + Codex 登录�
   Nyra 自己不开。
 - **只切允许列表内服务商**：允许列表就是 `fallback_providers`。未知名字
   与 CLI provider（Codex）进不了链；手动换模型也只允许切到列表里的。
-- **网页端切换须页面显示**：Web UI 的模型卡是 Hark 的 desktop/ 范围，
+- **网页端切换须页面显示**：Web UI 的模型卡属于桌面端 desktop/ 范围，
   本批只做 CLI + 配置 + 后端；网关的切换照样写进会话事件流。
 - **队列/定时任务里不切换**：调度任务与任务队列只用单个 provider
   （`tasks.ts` 的 `buildProvider` 与网关的 `primaryProvider()`），
@@ -253,7 +253,7 @@ REPL 里：
 - 备用链切换后，新模型的上下文窗口按 `nyra models` 的内置表 / 刷新缓存
   解析；表里没有的模型窗口未知时不编数字，自动压缩阈值按未知处理。
 - 网关（`nyra ui`）的自动切换沿用全局配置；每会话在网页端单独开关
-  兜底、以及 Web UI 模型卡，属于 desktop/（Hark），不在本批范围。
+  兜底、以及 Web UI 模型卡，属于桌面端 desktop/，不在本批范围。
 - 群聊机器人中途换模型（`room.json` 改 bot 的 provider/model 后）下次
   发言生效，正在跑的那轮不换。
 
