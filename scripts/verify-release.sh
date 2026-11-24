@@ -18,50 +18,55 @@
 
 set -euo pipefail
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=release-verify-lib.sh
+. "$ROOT/release-verify-lib.sh"
+
 REPO="${NYRA_REPO:-js2005happy/nyra}"
 TAG="${1:-}"
 WORKDIR="$(mktemp -d)"
 
-need() { command -v "$1" >/dev/null 2>&1 || { echo "缺少依赖：$1" >&2; exit 1; }; }
-need cosign
+need() {
+  if [ -f "$1" ] || command -v "$1" >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "缺少依赖：$1" >&2
+  exit 1
+}
+need "${NYRA_COSIGN:-cosign}"
 
 if [[ -n "$TAG" ]]; then
   need gh
-  echo "==> 下载 $REPO 的 Release $TAG 到 $WORKDIR"
-  gh release download "$TAG" --repo "$REPO" --dir "$WORKDIR" --clobber
+  # latest 只解析一次，随后整份 Release 都从那个不可变 tag 下载。
+  RESOLVED="$(nyra_resolve_release_tag "$TAG")"
+  echo "==> 下载 $REPO 的 Release $RESOLVED 到 $WORKDIR"
+  gh release download "$RESOLVED" --repo "$REPO" --dir "$WORKDIR" --clobber
   cd "$WORKDIR"
 else
   echo "==> 使用当前目录：$PWD"
 fi
 
-[[ -s SHA256SUMS ]] || { echo "没有 SHA256SUMS：当前目录里没有可用的哈希清单（文件不存在或是空的），无法校验；该 Release 可能没有附带 SHA256SUMS" >&2; exit 1; }
-
-# 1) 验证签名本身（keyless：校验签发身份 = 本仓库的 release-sign.yml）
-echo "==> 验证 SHA256SUMS 的 sigstore 签名"
-if [[ -f SHA256SUMS.bundle ]]; then
-  cosign verify-blob SHA256SUMS.bundle \
-    --certificate-identity-regexp "^https://github\.com/${REPO}/\.github/workflows/release-sign\.yml@refs/" \
-    --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-    SHA256SUMS
-elif [[ -f SHA256SUMS.sig && -f SHA256SUMS.pem ]]; then
-  cosign verify-blob \
-    --signature SHA256SUMS.sig \
-    --certificate SHA256SUMS.pem \
-    --certificate-identity-regexp "^https://github\.com/${REPO}/\.github/workflows/release-sign\.yml@refs/" \
-    --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-    SHA256SUMS
-else
-  echo "找不到 SHA256SUMS.bundle 或 .sig/.pem，无法验证" >&2
+# 1) 签名（发布者）然后 2) 清单里每一个文件的哈希（完整性）。
+# 哈希对上不能代替这一步签名。
+echo "==> 验证 SHA256SUMS 的 sigstore 签名，并核对清单覆盖的产物"
+if [[ ! -s SHA256SUMS ]]; then
+  echo "没有 SHA256SUMS：当前目录里没有可用的哈希清单（文件不存在或是空的），无法校验；该 Release 可能没有附带 SHA256SUMS" >&2
   exit 1
 fi
-
-# 2) 校验产物哈希
-echo "==> 校验产物哈希"
-if command -v sha256sum >/dev/null 2>&1; then
-  sha256sum -c SHA256SUMS
-else
-  shasum -a 256 -c SHA256SUMS
-fi
+nyra_verify_sums_signature "$PWD"
+NORM="$(mktemp)"
+nyra_normalize_sums SHA256SUMS > "$NORM"
+while IFS=$'\t' read -r name expected; do
+  [ -n "${name:-}" ] || continue
+  actual="$(nyra_file_sha256 "$PWD/$name")"
+  if [[ "$actual" != "$expected" ]]; then
+    echo "哈希不匹配：$name 的 sha256 与已验签的 SHA256SUMS 不符" >&2
+    rm -f "$NORM"
+    exit 1
+  fi
+  echo "  哈希通过：$name"
+done < "$NORM"
+rm -f "$NORM"
 
 # 3) 校验 SLSA 来源证明（可选，需要 gh + 该产物有 .intoto.jsonl）
 echo "==> 校验来源证明（若存在）"

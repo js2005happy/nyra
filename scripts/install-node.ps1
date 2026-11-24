@@ -11,8 +11,10 @@
 #
 # 默认版本钉在下面 param 的 $Version = "v0.5.12"（发版时改这一处，
 # 同时改 install-node.sh、install-node-macos.sh 与 docs/installers.md）；
-# 不再默认 latest。下载后先对同一 Release 的 SHA256SUMS 校验再安装：
-# 下不到 SHA256SUMS、清单里没有这个文件、哈希对不上，一律拒绝安装。
+# 不再默认 latest。latest 只解析一次，产物、SHA256SUMS 和签名都从
+# 这一个 tag 下载。先用 cosign 验清单签名（发布者），再核对哈希（完整性）。
+# 签名缺失、验签失败、清单格式不对、哈希不符，一律拒绝，并且不运行
+# 下载到的 exe。哈希对上不能代替签名。
 # -FromFile 从本地文件装，不联网、不校验（日志里会写明未校验）。
 # 注意：v0.5.12 尚未正式发版（本批不打 tag、不发 Release），在它发版
 # 之前默认安装会因下载不到而拒绝——这是有意的 fail-closed，不是 bug。
@@ -37,45 +39,92 @@ $Asset = "nyra-windows-x64.exe"
 function Write-Info($msg) { Write-Host "nyra-install: $msg" }
 function Write-ErrAndExit($msg) { Write-Host "nyra-install: 错误：$msg" -ForegroundColor Red; exit 1 }
 
-# 校验下载好的 exe：先下同一 Release 的 SHA256SUMS，对上哈希才装。
-# 下不到 SHA256SUMS、清单是空的、清单里没有这个文件、哈希对不上，
-# 一律删掉已下载的 exe 再拒绝安装（fail-closed）。
-function Test-Sha256 {
-    param([string]$Asset, [string]$File)
-    if ($Version -eq "latest") {
-        $SumsUrl = "https://github.com/$Repo/releases/latest/download/SHA256SUMS"
-    } else {
-        $SumsUrl = "https://github.com/$Repo/releases/download/$Version/SHA256SUMS"
-    }
-    $SumsFile = Join-Path $env:TEMP ("SHA256SUMS-" + [Guid]::NewGuid().ToString("N"))
-    try {
-        Invoke-WebRequest -Uri $SumsUrl -OutFile $SumsFile -UseBasicParsing
-    } catch {
-        Remove-Item $File -Force -ErrorAction SilentlyContinue
-        Write-ErrAndExit "没有 SHA256SUMS：下载不到 $SumsUrl，拒绝安装（该 Release 可能没有附带哈希清单）。下载失败：$($_.Exception.Message)"
-    }
-    if (-not (Test-Path $SumsFile) -or (Get-Item $SumsFile).Length -eq 0) {
-        Remove-Item $SumsFile -Force -ErrorAction SilentlyContinue
-        Remove-Item $File -Force -ErrorAction SilentlyContinue
-        Write-ErrAndExit "没有 SHA256SUMS：$SumsUrl 下载到的清单是空的，拒绝安装"
-    }
-    $Expected = $null
-    foreach ($line in Get-Content $SumsFile) {
-        if ($line -match '^\s*([0-9a-fA-F]{64})\s+\*?(\S+)\s*$') {
-            if ($Matches[2] -eq $Asset) { $Expected = $Matches[1].ToLower(); break }
+function Resolve-NyraReleaseTag {
+    param([string]$Version, [string]$RepoName)
+    $v = $Version.Trim()
+    if ($v -eq "" -or $v -eq "latest") {
+        if ($env:NYRA_LATEST_JSON_FILE) {
+            $obj = Get-Content -Raw -Path $env:NYRA_LATEST_JSON_FILE | ConvertFrom-Json
+        } else {
+            $obj = Invoke-RestMethod -Headers @{ Accept = "application/vnd.github+json" } -Uri "https://api.github.com/repos/$RepoName/releases/latest"
         }
+        $tag = [string]$obj.tag_name
+        if ($tag -notmatch '^v') { throw "解析 latest 失败：没有以 v 开头的 tag_name" }
+        return $tag
     }
-    Remove-Item $SumsFile -Force -ErrorAction SilentlyContinue
-    if (-not $Expected) {
-        Remove-Item $File -Force -ErrorAction SilentlyContinue
-        Write-ErrAndExit "没有 SHA256SUMS：清单里没有 $Asset，拒绝安装"
+    if ($v -notmatch '^v') { return "v$v" }
+    return $v
+}
+
+function Get-NyraDownloadUrl {
+    param([string]$RepoName, [string]$Tag, [string]$Name)
+    if ($Tag -notmatch '^v') { throw "拒绝：版本必须是已解析的 tag（以 v 开头），不能是 latest：$Tag" }
+    if ($Name -notmatch '^[A-Za-z0-9._+-]+$') { throw "拒绝：产物名非法：$Name" }
+    return "https://github.com/$RepoName/releases/download/$Tag/$Name"
+}
+
+function Get-NyraPublisherIdentity {
+    param([string]$RepoName)
+    return "^https://github\.com/$RepoName/\.github/workflows/release-sign\.yml@refs/"
+}
+
+# 先验签再核对哈希。失败抛错，不运行产物。NYRA_COSIGN 可指向测试替身。
+function Test-NyraReleaseMaterial {
+    param([string]$Dir, [string]$AssetName, [string]$File, [string]$RepoName)
+    $sums = Join-Path $Dir "SHA256SUMS"
+    if (-not (Test-Path $sums) -or (Get-Item $sums).Length -eq 0) {
+        throw "没有 SHA256SUMS：哈希清单不存在或是空的，拒绝继续"
     }
-    $Actual = (Get-FileHash -Path $File -Algorithm SHA256).Hash.ToLower()
-    if ($Actual -ne $Expected) {
-        Remove-Item $File -Force -ErrorAction SilentlyContinue
-        Write-ErrAndExit "哈希不匹配：$Asset 的 SHA256 与 SHA256SUMS 不符，拒绝安装（文件可能被篡改）"
+    $cosign = if ($env:NYRA_COSIGN) { $env:NYRA_COSIGN } else { "cosign" }
+    if (-not (Get-Command $cosign -ErrorAction SilentlyContinue)) {
+        throw "无法验证发布者：没有可用的 cosign。SHA256 对上只说明文件和清单一致，不能证明清单来自 $RepoName 的 release-sign 工作流。"
     }
-    Write-Info "哈希校验通过：$Asset"
+    $ident = Get-NyraPublisherIdentity $RepoName
+    $bundle = Join-Path $Dir "SHA256SUMS.bundle"
+    $sig = Join-Path $Dir "SHA256SUMS.sig"
+    $pem = Join-Path $Dir "SHA256SUMS.pem"
+    if (Test-Path $bundle) {
+        & $cosign verify-blob --bundle $bundle --certificate-identity-regexp $ident --certificate-oidc-issuer "https://token.actions.githubusercontent.com" $sums
+        if ($LASTEXITCODE -ne 0) { throw "签名验证失败：SHA256SUMS 的 sigstore bundle 未通过。拒绝继续。" }
+    } elseif ((Test-Path $sig) -and (Test-Path $pem)) {
+        & $cosign verify-blob --signature $sig --certificate $pem --certificate-identity-regexp $ident --certificate-oidc-issuer "https://token.actions.githubusercontent.com" $sums
+        if ($LASTEXITCODE -ne 0) { throw "签名验证失败：SHA256SUMS 的 sig/pem 未通过。拒绝继续。" }
+    } else {
+        throw "缺少签名材料：没有 SHA256SUMS.bundle，也没有成对的 SHA256SUMS.sig 与 SHA256SUMS.pem。哈希清单未被认证，拒绝继续。只核对哈希不能证明发布者。"
+    }
+    $seen = @{}
+    $expected = $null
+    foreach ($raw in Get-Content $sums) {
+        $line = $raw.TrimEnd("`r").Trim()
+        if ($line -eq "" -or $line.StartsWith("#")) { continue }
+        if ($line -notmatch '^([0-9a-fA-F]{64})\s+\*?([^\s/\\]+)\s*$') {
+            throw "SHA256SUMS 格式不对：$line"
+        }
+        $hash = $Matches[1].ToLower()
+        $name = $Matches[2]
+        if ($name.Contains("..")) { throw "SHA256SUMS 文件名非法：$name" }
+        if ($seen.ContainsKey($name)) { throw "SHA256SUMS 里 $name 出现了两次" }
+        $seen[$name] = $true
+        if ($name -eq $AssetName) { $expected = $hash }
+    }
+    if (-not $expected) { throw "SHA256SUMS 里没有 $AssetName" }
+    $actual = (Get-FileHash -Path $File -Algorithm SHA256).Hash.ToLower()
+    if ($actual -ne $expected) {
+        throw "哈希不匹配：$AssetName 的 sha256 与已验签的 SHA256SUMS 不符，拒绝继续（文件可能被篡改）。"
+    }
+}
+
+function Save-NyraOptional {
+    param([string]$Url, [string]$Dest)
+    try {
+        Invoke-WebRequest -Uri $Url -OutFile $Dest -UseBasicParsing
+    } catch {
+        Remove-Item $Dest -Force -ErrorAction SilentlyContinue
+    }
+}
+
+if ($env:NYRA_INSTALL_SKIP_MAIN -eq "1") {
+    return
 }
 
 if ($Uninstall) {
@@ -97,10 +146,11 @@ if ($Uninstall) {
     exit 0
 }
 
-if ($Version -eq "latest") {
-    $Url = "https://github.com/$Repo/releases/latest/download/$Asset"
-} else {
-    $Url = "https://github.com/$Repo/releases/download/$Version/$Asset"
+try {
+    $Tag = Resolve-NyraReleaseTag -Version $Version -RepoName $Repo
+    $Url = Get-NyraDownloadUrl -RepoName $Repo -Tag $Tag -Name $Asset
+} catch {
+    Write-ErrAndExit $_.Exception.Message
 }
 
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
@@ -108,16 +158,28 @@ $Exe = Join-Path $InstallDir "nyra.exe"
 
 if ($FromFile -ne "") {
     if (-not (Test-Path $FromFile)) { Write-ErrAndExit "找不到本地二进制：$FromFile（先在 CI 或 Linux 上编好）" }
-    Write-Info "从本地文件安装：$FromFile（本地文件，不联网、不做哈希校验）"
+    Write-Info "从本地文件安装：$FromFile（本地文件，不联网、不验签、不核对哈希）"
     Copy-Item $FromFile $Exe -Force
 } else {
-    Write-Info "下载 $Url"
+    $Stage = Join-Path $env:TEMP ("nyra-install-" + [Guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Force -Path $Stage | Out-Null
+    $StagedExe = Join-Path $Stage $Asset
     try {
-        Invoke-WebRequest -Uri $Url -OutFile $Exe -UseBasicParsing
+        Write-Info "安装 Release $Tag（产物、清单和签名都来自这个 tag，只解析一次）"
+        Write-Info "下载 $Url"
+        Invoke-WebRequest -Uri $Url -OutFile $StagedExe -UseBasicParsing
+        Invoke-WebRequest -Uri (Get-NyraDownloadUrl $Repo $Tag "SHA256SUMS") -OutFile (Join-Path $Stage "SHA256SUMS") -UseBasicParsing
+        Save-NyraOptional (Get-NyraDownloadUrl $Repo $Tag "SHA256SUMS.bundle") (Join-Path $Stage "SHA256SUMS.bundle")
+        Save-NyraOptional (Get-NyraDownloadUrl $Repo $Tag "SHA256SUMS.sig") (Join-Path $Stage "SHA256SUMS.sig")
+        Save-NyraOptional (Get-NyraDownloadUrl $Repo $Tag "SHA256SUMS.pem") (Join-Path $Stage "SHA256SUMS.pem")
+        Test-NyraReleaseMaterial -Dir $Stage -AssetName $Asset -File $StagedExe -RepoName $Repo
+        Copy-Item $StagedExe $Exe -Force
+        Write-Info "签名与哈希都已通过：$Asset（哈希只证明和已验签的清单一致）"
     } catch {
-        Write-ErrAndExit "下载失败：$($_.Exception.Message)。检查网络，或到 https://github.com/$Repo/releases 手动下载 $Asset。"
+        Remove-Item $Stage -Recurse -Force -ErrorAction SilentlyContinue
+        Write-ErrAndExit "$($_.Exception.Message) 已删除本次下载的文件，未安装、未运行。"
     }
-    Test-Sha256 -Asset $Asset -File $Exe
+    Remove-Item $Stage -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 # ~/.nyra（0700 语义：Windows 没有 POSIX 权限位，只保证目录存在）

@@ -34,7 +34,7 @@ git tag v0.5.0 && git push origin v0.5.0
 2. **签名工作流根本没启动**：Release 是 CI 用默认 `GITHUB_TOKEN` 建的（`node-binaries.yml` 的 softprops/action-gh-release），GitHub 不会因此触发 `release: published` 工作流——用 `GITHUB_TOKEN` 触发的事件（除 workflow_dispatch / repository_dispatch 外）不会再触发新的 workflow run。所以只靠 `release: published` 时，tag 推送建 Release 根本不会启动签名。已改走 `workflow_run`：Node binaries 跑完（它负责建 Release）即触发，等待循环再等桌面/手机产物挂齐；手动建的 Release 仍走 `release` 事件，手动重跑仍走 `workflow_dispatch`。
 3. **等待循环没有 fail-closed 出口**：以前等满 50 分钟仍缺产物时，脚本会照常下载、签名一份不全的清单。已补：等不到就直接失败，不签不全的清单。
 
-`SHA256SUMS` 从 0.5.12 起恢复；v0.5.2–v0.5.11 的 Release 不回头补（没法对已发版的产物事后证明“构建时”状态）。安装脚本默认钉住 v0.5.12 并强制校验：下载后先对同一 Release 的 `SHA256SUMS` 校验，哈希对不上、清单里没有、下载不到 `SHA256SUMS`，一律拒绝安装；`verify-release.sh` 在没有 `SHA256SUMS` 时直接报“没有 SHA256SUMS”并退出码 1。
+`SHA256SUMS` 从 0.5.12 起恢复；v0.5.2–v0.5.11 的 Release 不回头补（没法对已发版的产物事后证明“构建时”状态）。安装脚本默认钉住 v0.5.12。`latest` 若显式传入，只向 GitHub API 解析一次 tag，之后二进制、`SHA256SUMS` 和签名都从 `releases/download/<tag>/` 下载。安装前先用 cosign 验证清单的 sigstore 签名（和 `release-sign.yml` 里自检用的是同一条 `verify-blob --bundle`），再核对哈希。没有 cosign、没有 bundle（或成对的 `.sig`+`.pem`）、验签失败、清单格式不对、哈希不符，都拒绝安装，并且不运行下载到的文件。**哈希对上只说明文件和清单一致，不是发布者证明。** 已发布的版本里只有 v0.5.1 同时有清单和 sigstore 材料；v0.5.2–v0.5.11 会被拒绝。v0.5.12 还没有 Release，默认安装在它发出并带上签名清单之前也会被拒绝。`verify-release.sh` 同样先验签再对清单里的每个文件核对哈希。
 
 Release 页面会多出这些文件：
 

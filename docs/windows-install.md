@@ -55,8 +55,13 @@ irm https://raw.githubusercontent.com/js2005happy/nyra/main/scripts/install-node
 
 脚本会做这些事：
 
-- 从 GitHub Releases 下载 `nyra-windows-x64.exe` 到 `~\nyra`（默认
-  最新版，可用 `-Version v0.5.2` 指定）；
+- 从 GitHub Releases 下载 `nyra-windows-x64.exe` 到 `~\nyra`。默认
+  版本钉住 `v0.5.12`；`-Version v0.5.1` 指定版本；`-Version latest`
+  只解析一次 tag，exe、清单和签名都从那个 tag 下载；
+- 本机需要 cosign。先验证 `SHA256SUMS` 的 sigstore 签名，再核对 exe
+  哈希。签名或哈希不通过就不安装、不运行。哈希对上不能代替签名。
+  已发布的 v0.5.2–v0.5.11 没有清单和签名，会被拒绝；v0.5.1 有。
+  默认的 v0.5.12 还没有 Release；
 - 把安装目录加进用户 PATH（新开终端生效）；
 - 在桌面建两个快捷方式：**Nyra 终端**（`nyra.exe`）与
   **Nyra 网页界面**（`nyra.exe ui --open`），图标用安装目录里的
