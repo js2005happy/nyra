@@ -47,7 +47,7 @@ test("向导无 Key 全默认：三步跑通，config 只有 provider/model，�
     expect(saved.provider).toBe("deepseek");
     expect(JSON.stringify(saved)).not.toMatch("sk-");
   } finally {
-    process.env.HOME = origHome;
+    if (origHome === undefined) delete process.env.HOME; else process.env.HOME = origHome;
   }
 });
 
@@ -73,7 +73,7 @@ test("向导填 Key 后拒绝写 rc：Key 不进 config.json，也不进 shell r
     expect(readFileSync(join(home, "config.json"), "utf-8")).not.toMatch("sk-test-fake-key-999");
     expect(readFileSync(rc, "utf-8")).not.toMatch("sk-test-fake-key-999");
   } finally {
-    process.env.HOME = origHome;
+    if (origHome === undefined) delete process.env.HOME; else process.env.HOME = origHome;
   }
 });
 
@@ -110,7 +110,7 @@ test("detectShellRc：SHELL=zsh 时优先 .zshrc", () => {
     expect(detectShellRc()).toBe(join(home, ".zshrc"));
   } finally {
     process.env.SHELL = origShell;
-    process.env.HOME = origHome;
+    if (origHome === undefined) delete process.env.HOME; else process.env.HOME = origHome;
   }
 });
 
@@ -176,7 +176,7 @@ test("Wizard041Test.test_wizard_append_rc_chmod_600", async () => {
       expectPerms(rc, 0o600);
     }
   } finally {
-    process.env.HOME = origHome;
+    if (origHome === undefined) delete process.env.HOME; else process.env.HOME = origHome;
     if (origKey !== undefined) process.env.DEEPSEEK_API_KEY = origKey;
   }
 });
@@ -210,7 +210,7 @@ test("Wizard041Test.test_wizard_migrates_rc_key_into_vault", async () => {
     expect(getCredential("DEEPSEEK_API_KEY", home)).toBe("sk-rc-key-777");
     expect(readFileSync(rc, "utf-8")).not.toContain("sk-rc-key-777");
   } finally {
-    process.env.HOME = origHome;
+    if (origHome === undefined) delete process.env.HOME; else process.env.HOME = origHome;
     if (origKey !== undefined) process.env.DEEPSEEK_API_KEY = origKey;
     if (origPw === undefined) delete process.env.NYRA_VAULT_PASSWORD;
     else process.env.NYRA_VAULT_PASSWORD = origPw;
@@ -247,7 +247,7 @@ test("Wizard041Test.test_wizard_stores_new_key_in_vault_by_default", async () =>
     expect(readFileSync(rc, "utf-8")).not.toContain("sk-new-key-888");
     expect(readFileSync(join(home, "config.json"), "utf-8")).not.toContain("sk-new-key-888");
   } finally {
-    process.env.HOME = origHome;
+    if (origHome === undefined) delete process.env.HOME; else process.env.HOME = origHome;
     if (origKey !== undefined) process.env.DEEPSEEK_API_KEY = origKey;
     if (origPw === undefined) delete process.env.NYRA_VAULT_PASSWORD;
     else process.env.NYRA_VAULT_PASSWORD = origPw;

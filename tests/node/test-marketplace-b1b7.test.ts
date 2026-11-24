@@ -8,6 +8,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   addMarketSource,
   parseBotManifest,
@@ -17,7 +18,7 @@ import {
   listInstalled, findInstalled,
   compareVersions, mergeRoutines, mergeBotMode,
   formatRoutinesForDisplay,
-  marketBotTemplate, isMarketGitUrl,
+  marketBotTemplate, isMarketGitUrl, normalizeMarketGitUrl,
   type BotRoutine,
 } from "../../src/marketplace.ts";
 import { RunStore } from "../../src/runs.ts";
@@ -120,9 +121,16 @@ function runCli(home: string, args: string[], input?: string) {
 }
 
 /** B5 测试用的工作区外暂存（不在 /tmp 上：全量套件跑到后面会把 512M 的 /tmp 写满，
- * 这两项要建 git 仓库 + 跑 git clone + spawn CLI，/tmp 满了就装不上；用完 finally 清掉）。 */
+ * 这两项要建 git 仓库 + 跑 git clone + spawn CLI，/tmp 满了就装不上；用完 finally 清掉）。
+ * 根因修复（Windows CI #792 实败）：不能直接用 process.env.HOME——Windows 运行器上
+ * HOME 未设置，别家测试的 finally 里 `process.env.HOME = origHome` 会把 undefined
+ * 写成字符串 "undefined"（Node/Bun 的 process.env 赋值语义），拼出
+ * `undefined\workspace\...` 的假路径，git clone 拿它当主机名。只认真实存在的
+ * 目录，否则回落 tmpdir()（Windows 的 tmpdir 不在 512M 的 /tmp 上）。 */
 function scratchHome(prefix: string): string {
-  const base = join(process.env.HOME ?? tmpdir(), "workspace", "nyra-market-b1b7-test-scratch");
+  const homeEnv = process.env.HOME;
+  const homeDir = homeEnv && homeEnv !== "undefined" && existsSync(homeEnv) ? homeEnv : tmpdir();
+  const base = join(homeDir, "workspace", "nyra-market-b1b7-test-scratch");
   mkdirSync(base, { recursive: true });
   return mkdtempSync(join(base, prefix));
 }
@@ -138,7 +146,9 @@ function seedGitBotRepo(manifest: Record<string, unknown> = baseManifest()): { d
   expect(init.status).toBe(0);
   expect(git("add", "-A").status).toBe(0);
   expect(git("commit", "-m", "init").status).toBe(0);
-  return { dir, url: `file://${dir}` };
+  // file URL 用 pathToFileURL 生成：手拼 `file://${dir}` 在 Windows 上会出
+  // `file://D:\...`（反斜杠、盘符没三斜杠），git 不认（CI #792 实败）。
+  return { dir, url: pathToFileURL(dir).href };
 }
 
 // ---- B2/B3/B7：bot.json 新字段的解析校验 ----
@@ -307,6 +317,17 @@ expect(isMarketGitUrl("https://example.com/bot.zip")).toBe(false);
 expect(isMarketGitUrl("http://example.com/bot.git")).toBe(false);
 expect(isMarketGitUrl("")).toBe(false);
 expect(isMarketGitUrl("demo-bot")).toBe(false);
+});
+
+test("MarketplaceB1B7Test.test_normalize_market_git_url", () => {
+// 非 file:// 原样返回；前后空白去掉。
+expect(normalizeMarketGitUrl("https://github.com/x/y.git")).toBe("https://github.com/x/y.git");
+expect(normalizeMarketGitUrl("  file:///tmp/some-bot  ")).toBe("file:///tmp/some-bot");
+// Windows 手写地址：反斜杠换斜杠、盘符补三斜杠。
+expect(normalizeMarketGitUrl("file://C:\\repos\\bot")).toBe("file:///C:/repos/bot");
+expect(normalizeMarketGitUrl("file://D:/repos/bot")).toBe("file:///D:/repos/bot");
+// 主机名形式不动，交给 git 去报错。
+expect(normalizeMarketGitUrl("file://server/share/bot")).toBe("file://server/share/bot");
 });
 
 test("MarketplaceB1B7Test.test_install_from_git_url", async () => {

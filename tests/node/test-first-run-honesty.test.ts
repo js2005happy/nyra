@@ -46,7 +46,7 @@ test("FirstRunHonesty.test_wizard_closing_is_honest", async () => {
     expect(text).toContain("本地示例任务");
   } finally {
     console.log = origLog;
-    process.env.HOME = origHome;
+    if (origHome === undefined) delete process.env.HOME; else process.env.HOME = origHome;
     if (origKey !== undefined) process.env.DEEPSEEK_API_KEY = origKey;
   }
 });
