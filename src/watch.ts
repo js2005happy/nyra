@@ -50,7 +50,6 @@ import { realpathSync } from "node:fs";
 import { loadConfig, resolveHome, saveConfig } from "./config.ts";
 import { RunStore } from "./runs.ts";
 import { addTask, appendInbox } from "./tasks.ts";
-import { pythonJsonDump } from "./pyjson.ts";
 
 export class WatchError extends Error {
   constructor(message: string) {
@@ -204,7 +203,7 @@ export function appendWatchAudit(home: string, event: string, fields: Record<str
     const entry = { at: nowIso(), event, ...fields };
     const fd = openSync(path, "a", 0o600);
     try {
-      writeSync(fd, pythonJsonDump(entry) + "\n", null, "utf-8");
+      writeSync(fd, JSON.stringify(entry) + "\n", null, "utf-8");
       fsyncSync(fd);
     } finally { closeSync(fd); }
   } catch { /* 审计写不上不破坏监测 */ }

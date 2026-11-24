@@ -10,7 +10,6 @@ readdirSync, renameSync, rmSync, statSync, writeFileSync, writeSync, fsyncSync,
 import { hostname} from "node:os";
 import { join, resolve, dirname, sep, basename } from "node:path";
 import { enforcedOnly } from "./enforcedConfig.ts";
-import { pythonJsonDump} from "./pyjson.ts";
 import { ApprovalRequired} from "./tools.ts";
 import { checkApproval, checkShellDenied, defaultShell, wrapShellCommand, workspaceShellCwd, idempotencyKey, RESUME_IDEMPOTENT_TOOLS, type ToolContext} from "./tools.ts";
 import { loadSession, saveSession} from "./memory.ts";
@@ -1092,7 +1091,7 @@ const tmp = join(join(path, ".."), `.state-${process.pid}-${randomBytes(4).toStr
 try {
 const fd = openSync(tmp, "w", 0o600);
 try {
-writeSync(fd, pythonJsonDump(state), null, "utf-8");
+writeSync(fd, JSON.stringify(state), null, "utf-8");
 fsyncSync(fd);
 } finally {
 closeSync(fd);
@@ -1206,7 +1205,7 @@ const path = this.filePath(runId, "events.jsonl");
 const fd = openSync(path, "a", 0o600);
 try {
 privateChmod(path, 0o600);
-writeSync(fd, pythonJsonDump(event) + "\n", null, "utf-8");
+writeSync(fd, JSON.stringify(event) + "\n", null, "utf-8");
 fsyncSync(fd);
 } finally {
 closeSync(fd);

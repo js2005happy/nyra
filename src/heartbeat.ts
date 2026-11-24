@@ -21,7 +21,6 @@ import { listKanbanTasks } from "./kanban.ts";
 import { listFanouts } from "./fanout.ts";
 import { listSubagentRuns } from "./resume.ts";
 import { getAgentMode, recordDryRun } from "./governance.ts";
-import { pythonJsonDump } from "./pyjson.ts";
 import {
   describeCheckScriptOutcome, runCheckScript, validateCheckScriptDef,
   type CheckScriptDef, type SpawnResult,
@@ -230,7 +229,7 @@ function appendHeartbeatAudit(home: string, agent: string, findings: HeartbeatFi
   const entry = { at: nowIso(), agent, findings: findings.length, items: findings.map((f) => ({ kind: f.kind, summary: f.summary, count: f.count })), ...(extra ?? {}) };
   const fd = openSync(path, "a", 0o600);
   try {
-    writeSync(fd, pythonJsonDump(entry) + "\n", null, "utf-8");
+    writeSync(fd, JSON.stringify(entry) + "\n", null, "utf-8");
     fsyncSync(fd);
   } finally { closeSync(fd); }
 }

@@ -53,7 +53,9 @@ test("RunTests.test_atomic_permissions_and_events", () => {
   }
   store.appendEvent(state.run_id, "turn", { turn: 1 });
   const events = readFileSync(join(home, "runs", state.run_id, "events.jsonl"), "utf-8");
-  expect(events).toContain('"type": "turn"');
+  // 只认语义不认字节：事件行是合法 JSON、带 type=turn（序列化已改用 JSON.stringify）。
+  const parsed = events.trim().split("\n").map((l) => JSON.parse(l) as Record<string, unknown>);
+  expect(parsed.some((e) => e.type === "turn")).toBe(true);
   expect(() => store.appendEvent(state.run_id, "bogus_event")).toThrow();
 });
 

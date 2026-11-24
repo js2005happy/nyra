@@ -7,7 +7,6 @@ import {
   readdirSync, renameSync, rmSync, statSync, writeSync, appendFileSync, writeFileSync,
 } from "node:fs";
 import { join, relative, sep, dirname, basename } from "node:path";
-import { pythonJsonDump } from "./pyjson.ts";
 import { tokenize, scoreBm25 } from "./knowledge.ts";
 import { listSoulAgents, loadSoul, type SoulTenet, type TenetKind } from "./soul.ts";
 
@@ -76,10 +75,73 @@ export function sessionsDir(home?: string): string {
   return join(resolveNyraHome(home), "sessions");
 }
 
-/** 原子写会话：同目录 tmp（0600）+ fsync + replace；失败不损坏旧会话。 */
+// 会话写入的增量快路径：记住每个会话文件上次写出的每一行与文件指纹
+// （size + mtime + inode）。下一次保存时，如果旧行原样是新内容的前缀、
+// 且磁盘上的文件没被别人动过（指纹一致），就只把新增的行追加进去并 fsync；
+// 否则（消息被改写、压缩、回滚、别的进程写过、首次写）走原来的原子整写。
+// 追加时崩溃最多留下半行，loadSession 会跳过损坏行，前面的行不受影响。
+// 序列化用 JSON.stringify：Python 版 0.4.0 已删除，不再需要和它逐字节一致，
+// 读取端一律 JSON.parse，格式差异（分隔符空格）不影响任何读者。
+interface SessionWriteState { lines: string[]; size: number; mtimeMs: number; ino: number }
+const SESSION_WRITE_STATE = new Map<string, SessionWriteState>();
+const SESSION_WRITE_STATE_MAX = 32;
+
+function rememberSessionWrite(path: string, lines: string[]): void {
+  try {
+    const st = statSync(path);
+    SESSION_WRITE_STATE.delete(path);
+    SESSION_WRITE_STATE.set(path, { lines, size: st.size, mtimeMs: st.mtimeMs, ino: st.ino });
+    while (SESSION_WRITE_STATE.size > SESSION_WRITE_STATE_MAX) {
+      const oldest = SESSION_WRITE_STATE.keys().next().value as string;
+      SESSION_WRITE_STATE.delete(oldest);
+    }
+  } catch {
+    SESSION_WRITE_STATE.delete(path);
+  }
+}
+
+/** 仅测试/基准用：清掉增量写入状态，下一次保存一定走原子整写。 */
+export function clearSessionWriteState(): void { SESSION_WRITE_STATE.clear(); }
+
+/** 旧行是不是新行的前缀、且磁盘文件仍是我们上次写的那份。 */
+function canAppend(path: string, prev: SessionWriteState | undefined, lines: string[]): boolean {
+  if (!prev || lines.length <= prev.lines.length || prev.lines.length === 0) return false;
+  for (let i = 0; i < prev.lines.length; i++) {
+    if (prev.lines[i] !== lines[i]) return false;
+  }
+  try {
+    const st = statSync(path);
+    return st.size === prev.size && st.mtimeMs === prev.mtimeMs && st.ino === prev.ino;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 保存会话。首次写、内容被改写时：同目录 tmp（0600）+ fsync + replace 的原子整写，
+ * 失败不损坏旧会话。只是在末尾多了消息时：只追加新增行并 fsync（见上面的快路径说明）。
+ */
 export function saveSession(sessionId: string, messages: Record<string, unknown>[], home?: string): string {
   const path = sessionPath(sessionId, home);
   const dir = sessionsDir(home);
+  const lines = messages.map((m) => JSON.stringify(m));
+  const prev = SESSION_WRITE_STATE.get(path);
+  if (canAppend(path, prev, lines)) {
+    try {
+      const fd = openSync(path, "a", 0o600);
+      try {
+        writeSync(fd, lines.slice(prev!.lines.length).join("\n") + "\n", null, "utf-8");
+        fsyncSync(fd);
+      } finally {
+        closeSync(fd);
+      }
+      rememberSessionWrite(path, lines);
+      return path;
+    } catch {
+      // 追加失败（磁盘满、权限变了）：退回原子整写，整写自己会报错。
+      SESSION_WRITE_STATE.delete(path);
+    }
+  }
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   if (process.platform !== "win32") {
     try { chmodSync(dir, 0o700); } catch { /* ignore */ }
@@ -88,7 +150,7 @@ export function saveSession(sessionId: string, messages: Record<string, unknown>
   try {
     const fd = openSync(tmp, "w", 0o600);
     try {
-      const data = messages.map((m) => pythonJsonDump(m)).join("\n") + (messages.length ? "\n" : "");
+      const data = lines.join("\n") + (lines.length ? "\n" : "");
       writeSync(fd, data, null, "utf-8");
       fsyncSync(fd);
     } finally {
@@ -98,9 +160,13 @@ export function saveSession(sessionId: string, messages: Record<string, unknown>
       try { chmodSync(tmp, 0o600); } catch { /* ignore */ }
     }
     renameSync(tmp, path);
+  } catch (err) {
+    SESSION_WRITE_STATE.delete(path);
+    throw err;
   } finally {
     try { rmSync(tmp, { force: true }); } catch { /* ignore */ }
   }
+  rememberSessionWrite(path, lines);
   return path;
 }
 
