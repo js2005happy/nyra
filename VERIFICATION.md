@@ -1,7 +1,7 @@
 # Nyra 验证报告（2026-11-16，v3 0.3.0）
 
 > **过期声明（2026-11-24 补）**：本文件写的是 Python 版 0.3.0 在 2026-11-16 的验证状态。
-> Python 树已在 0.4.0 删除，当前 Nyra 是 TypeScript / Bun 单运行时（`--version` 0.5.12-dev）。
+> Python 树已在 0.4.0 删除，当前 Nyra 是 TypeScript / Bun 单运行时（`--version` 0.5.12）。
 > **不要再把本文件当成当前验证。**当前验证方法是：`bun x tsc -p tsconfig.json --noEmit`、
 > `bun test tests/node`（全量 4000+ 项）、`bash scripts/run-probes.sh`、`bash scripts/check-budgets.sh`、
 > main 分支的 Node CI（三平台）与 Node binaries，以及 `docs/eval.md` 的 20 题真实模型基线。

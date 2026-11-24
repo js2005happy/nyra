@@ -357,7 +357,7 @@ fetchText?: (url: string) => Promise<WatchContent>;
 readFile?: (path: string) => WatchContent;
 }
 
-const UA = "Nyra/0.5.12-dev (watch)";
+const UA = "Nyra/0.5.12 (watch)";
 
 async function defaultFetchText(url: string): Promise<WatchContent> {
 let res: Response;

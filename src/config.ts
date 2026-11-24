@@ -11,7 +11,7 @@ import { getFileKey } from "./keystore.ts";
 import { effectiveValue } from "./enforcedConfig.ts";
 import { SANDBOX_BACKENDS } from "./sandbox.ts";
 
-export const VERSION = "0.5.12-dev";
+export const VERSION = "0.5.12";
 
 export interface ProviderPreset {
   baseUrl: string | null;

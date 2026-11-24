@@ -67,11 +67,7 @@ v0.5.11 的 `SHA256SUMS` 与签名是 2026-11-24 手动跑签名工作流补上�
 `android/app/build.gradle`（`versionName` = tag 去掉 `v`，`versionCode` =
 工作流运行号）。
 
-开发期间的过渡态：根 `package.json` 与 `src/config.ts` 先行 `0.5.12-dev`
-（开发版后缀，明确不是正式版，与 CHANGELOG 顶部“未发布（0.5.12）”
-对应），桌面/手机四处仍为 `0.5.11`；正式发版时六处一起升到 `0.5.12`。
-此期间手动跑 desktop 工作流会因版本检查失败，属预期（打 tag 发版前会
-统一）；Node CI 与 Node binaries 不跑这项检查，不受影响。
+开发期间根 `package.json` 与 `src/config.ts` 可以先行带 `-dev` 后缀（与 CHANGELOG 顶部“未发布”对应）；正式发版时六处一起升到同一个版本号。
 
 ## 手动操作（发版之外）
 
