@@ -9,6 +9,14 @@
 # （Nyra 终端 / Nyra 网页界面，带 Nyra 图标），不写注册表、不装服务。
 # 网页界面快捷方式调的是真实命令 `nyra ui --open`（0.4.0 起有 ui 子命令）。
 #
+# 默认版本钉在下面 param 的 $Version = "v0.5.12"（发版时改这一处，
+# 同时改 install-node.sh、install-node-macos.sh 与 docs/installers.md）；
+# 不再默认 latest。下载后先对同一 Release 的 SHA256SUMS 校验再安装：
+# 下不到 SHA256SUMS、清单里没有这个文件、哈希对不上，一律拒绝安装。
+# -FromFile 从本地文件装，不联网、不校验（日志里会写明未校验）。
+# 注意：v0.5.12 尚未正式发版（本批不打 tag、不发 Release），在它发版
+# 之前默认安装会因下载不到而拒绝——这是有意的 fail-closed，不是 bug。
+#
 # 注意（诚实写，不编造）：
 #   - exe 未签名：首次运行 SmartScreen 会弹警告，点“更多信息”→“仍要运行”；
 #     积累信誉或买代码签名证书后才会消失。
@@ -16,7 +24,7 @@
 #     烟雾测试；真机首次运行体验待用户反馈后补充。
 #   - 旧的 Python 版安装脚本 scripts/install.ps1 已在 0.4.0 删除。
 param(
-    [string]$Version = "latest",
+    [string]$Version = "v0.5.12",
     [string]$InstallDir = "$env:USERPROFILE\nyra",
     [string]$FromFile = "",
     [switch]$Uninstall
@@ -28,6 +36,47 @@ $Asset = "nyra-windows-x64.exe"
 
 function Write-Info($msg) { Write-Host "nyra-install: $msg" }
 function Write-ErrAndExit($msg) { Write-Host "nyra-install: 错误：$msg" -ForegroundColor Red; exit 1 }
+
+# 校验下载好的 exe：先下同一 Release 的 SHA256SUMS，对上哈希才装。
+# 下不到 SHA256SUMS、清单是空的、清单里没有这个文件、哈希对不上，
+# 一律删掉已下载的 exe 再拒绝安装（fail-closed）。
+function Test-Sha256 {
+    param([string]$Asset, [string]$File)
+    if ($Version -eq "latest") {
+        $SumsUrl = "https://github.com/$Repo/releases/latest/download/SHA256SUMS"
+    } else {
+        $SumsUrl = "https://github.com/$Repo/releases/download/$Version/SHA256SUMS"
+    }
+    $SumsFile = Join-Path $env:TEMP ("SHA256SUMS-" + [Guid]::NewGuid().ToString("N"))
+    try {
+        Invoke-WebRequest -Uri $SumsUrl -OutFile $SumsFile -UseBasicParsing
+    } catch {
+        Remove-Item $File -Force -ErrorAction SilentlyContinue
+        Write-ErrAndExit "没有 SHA256SUMS：下载不到 $SumsUrl，拒绝安装（该 Release 可能没有附带哈希清单）。下载失败：$($_.Exception.Message)"
+    }
+    if (-not (Test-Path $SumsFile) -or (Get-Item $SumsFile).Length -eq 0) {
+        Remove-Item $SumsFile -Force -ErrorAction SilentlyContinue
+        Remove-Item $File -Force -ErrorAction SilentlyContinue
+        Write-ErrAndExit "没有 SHA256SUMS：$SumsUrl 下载到的清单是空的，拒绝安装"
+    }
+    $Expected = $null
+    foreach ($line in Get-Content $SumsFile) {
+        if ($line -match '^\s*([0-9a-fA-F]{64})\s+\*?(\S+)\s*$') {
+            if ($Matches[2] -eq $Asset) { $Expected = $Matches[1].ToLower(); break }
+        }
+    }
+    Remove-Item $SumsFile -Force -ErrorAction SilentlyContinue
+    if (-not $Expected) {
+        Remove-Item $File -Force -ErrorAction SilentlyContinue
+        Write-ErrAndExit "没有 SHA256SUMS：清单里没有 $Asset，拒绝安装"
+    }
+    $Actual = (Get-FileHash -Path $File -Algorithm SHA256).Hash.ToLower()
+    if ($Actual -ne $Expected) {
+        Remove-Item $File -Force -ErrorAction SilentlyContinue
+        Write-ErrAndExit "哈希不匹配：$Asset 的 SHA256 与 SHA256SUMS 不符，拒绝安装（文件可能被篡改）"
+    }
+    Write-Info "哈希校验通过：$Asset"
+}
 
 if ($Uninstall) {
     # 卸载：删安装目录、两个桌面快捷方式、从用户级 PATH 摘掉安装目录；保留 ~/.nyra 数据。
@@ -59,7 +108,7 @@ $Exe = Join-Path $InstallDir "nyra.exe"
 
 if ($FromFile -ne "") {
     if (-not (Test-Path $FromFile)) { Write-ErrAndExit "找不到本地二进制：$FromFile（先在 CI 或 Linux 上编好）" }
-    Write-Info "从本地文件安装：$FromFile"
+    Write-Info "从本地文件安装：$FromFile（本地文件，不联网、不做哈希校验）"
     Copy-Item $FromFile $Exe -Force
 } else {
     Write-Info "下载 $Url"
@@ -68,6 +117,7 @@ if ($FromFile -ne "") {
     } catch {
         Write-ErrAndExit "下载失败：$($_.Exception.Message)。检查网络，或到 https://github.com/$Repo/releases 手动下载 $Asset。"
     }
+    Test-Sha256 -Asset $Asset -File $Exe
 }
 
 # ~/.nyra（0700 语义：Windows 没有 POSIX 权限位，只保证目录存在）

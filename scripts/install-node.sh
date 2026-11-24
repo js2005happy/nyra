@@ -15,10 +15,15 @@
 #   ./scripts/install-node.sh [--version TAG] [--from-file PATH]
 #                             [--prefix DIR] [--bin-dir DIR]
 #                             [--with-systemd] [--uninstall] [--help]
-#   默认 --version 是 latest（GitHub Releases 最新版）；已编好二进制时
-#   用 --from-file dist/nyra-linux-x64 从本地文件安装（不联网下载）。
-#   --version 传版本号时带 v 前缀，如 v0.5.1（不带 v 也行，脚本会补上）。
+#   默认 --version 是下面 DEFAULT_VERSION 钉住的版本（当前 v0.5.12，
+#   发版时改那一处）；已编好二进制时用 --from-file dist/nyra-linux-x64
+#   从本地文件安装（不联网下载）。--version 传版本号时带 v 前缀，
+#   如 v0.5.1（不带 v 也行，脚本会补上）；latest 也可显式传，但仍要校验。
 #   重复跑就是升级：旧二进制会被替换，~/.nyra 里的数据不动。
+#
+#   下载后先对同一 Release 的 SHA256SUMS 校验再安装：哈希对不上、
+#   清单里没有这个文件、下载不到 SHA256SUMS，一律拒绝安装（fail-closed）。
+#   --from-file 从本地文件装，不联网、不校验（日志里会写明未校验）。
 #
 # 要求：curl 或 wget（二选一）；--with-systemd 还要 systemctl。
 # 不装 Python、不装 Node、不装 Bun——二进制自带运行时。
@@ -28,7 +33,12 @@
 set -euo pipefail
 
 REPO="js2005happy/nyra"
-VERSION="latest"
+# 默认安装版本（钉住，不再是无校验的 latest）。发版时改这一处，
+# 同时改 install-node-macos.sh、install-node.ps1 与 docs/installers.md。
+# 注意：v0.5.12 尚未正式发版（本批不打 tag、不发 Release），在它发版
+# 之前默认安装会因下载不到而拒绝——这是有意的 fail-closed，不是 bug。
+DEFAULT_VERSION="v0.5.12"
+VERSION="$DEFAULT_VERSION"
 FROM_FILE=""
 PREFIX="${HOME}/.local/share/nyra"
 BIN_DIR="${HOME}/.local/bin"
@@ -60,11 +70,11 @@ check_linux() {
 }
 
 usage() {
-    sed -n '2,26p' "$0"
+    sed -n '2,31p' "$0"
     cat <<'EOF'
 
 选项：
-  --version TAG      Release 版本（默认 latest，如 v0.5.1）
+  --version TAG      Release 版本（默认 DEFAULT_VERSION 钉住的 v0.5.12）
   --from-file PATH   从本地已编好的二进制安装（不联网下载）
   --prefix DIR       安装位置（默认 ~/.local/share/nyra）
   --bin-dir DIR      nyra 链接位置（默认 ~/.local/bin）
@@ -115,7 +125,13 @@ arch_name() {
 # 二进制，否则后面 chmod +x 与 --version 自检会对着损坏文件报错，
 # 而符号链接还指着它。
 download() {
-    local url="$1" dest="$2" tmp="$dest.tmp.$$"
+    # 注意：不能写成一行 local url="$1" dest="$2" tmp="$dest.tmp.$$"
+    # ——同一条 local 里的右值在赋值前就全展开了，$dest 当时还没绑定，
+    # set -u 下直接报 "dest: unbound variable"（下载路径此前一直是坏的，
+    # CI 只跑 --from-file 从没走过 download()）。
+    local url="$1"
+    local dest="$2"
+    local tmp="$dest.tmp.$$"
     rm -f "$tmp"
     if command -v curl >/dev/null 2>&1; then
         curl -fL --progress-bar -o "$tmp" "$url" || { rm -f "$tmp"; die "下载失败：$url（检查网络，或到 https://github.com/$REPO/releases 手动下载）"; }
@@ -125,6 +141,39 @@ download() {
         die "需要 curl 或 wget 才能下载（二选一）"
     fi
     mv "$tmp" "$dest"
+}
+
+# 校验下载好的二进制：先下同一 Release 的 SHA256SUMS，对上哈希才装。
+# 下不到 SHA256SUMS、清单是空的、清单里没有这个文件、哈希对不上，
+# 一律拒绝安装（fail-closed）；失败时删掉已下载的临时文件再退出。
+verify_asset() {
+    local asset="$1" file="$2" sums_url sums_file expected actual
+    if [ "$VERSION" = "latest" ]; then
+        sums_url="https://github.com/$REPO/releases/latest/download/SHA256SUMS"
+    else
+        sums_url="https://github.com/$REPO/releases/download/$VERSION/SHA256SUMS"
+    fi
+    sums_file="$(mktemp)"
+    if command -v curl >/dev/null 2>&1; then
+        curl -fL -s -o "$sums_file" "$sums_url" || { rm -f "$sums_file" "$file"; die "没有 SHA256SUMS：下载不到 $sums_url，拒绝安装（该 Release 可能没有附带哈希清单）"; }
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q -O "$sums_file" "$sums_url" || { rm -f "$sums_file" "$file"; die "没有 SHA256SUMS：下载不到 $sums_url，拒绝安装（该 Release 可能没有附带哈希清单）"; }
+    else
+        rm -f "$sums_file" "$file"; die "需要 curl 或 wget 才能下载 SHA256SUMS 做校验"
+    fi
+    [ -s "$sums_file" ] || { rm -f "$sums_file" "$file"; die "没有 SHA256SUMS：$sums_url 下载到的清单是空的，拒绝安装"; }
+    expected="$(awk -v name="$asset" '$2 == name || $2 == ("*" name) { print $1 }' "$sums_file" | head -1)"
+    rm -f "$sums_file"
+    [ -n "$expected" ] || { rm -f "$file"; die "没有 SHA256SUMS：清单里没有 $asset，拒绝安装"; }
+    if command -v sha256sum >/dev/null 2>&1; then
+        actual="$(sha256sum "$file" | awk '{print $1}')"
+    elif command -v shasum >/dev/null 2>&1; then
+        actual="$(shasum -a 256 "$file" | awk '{print $1}')"
+    else
+        rm -f "$file"; die "需要 sha256sum 或 shasum 才能校验（都没有时拒绝安装）"
+    fi
+    [ "$actual" = "$expected" ] || { rm -f "$file"; die "哈希不匹配：$asset 的 sha256 与 SHA256SUMS 不符，拒绝安装（文件可能被篡改）"; }
+    log "哈希校验通过：$asset"
 }
 
 if [ "$UNINSTALL" -eq 1 ]; then
@@ -144,7 +193,7 @@ mkdir -p "$PREFIX" "$BIN_DIR"
 
 if [ -n "$FROM_FILE" ]; then
     [ -f "$FROM_FILE" ] || die "找不到本地二进制：$FROM_FILE（先跑 ./scripts/build-binaries.sh）"
-    log "从本地文件安装：$FROM_FILE"
+    log "从本地文件安装：$FROM_FILE（本地文件，不联网、不做哈希校验）"
     cp "$FROM_FILE" "$PREFIX/nyra"
 else
     if [ "$VERSION" = "latest" ]; then
@@ -153,7 +202,11 @@ else
         URL="https://github.com/$REPO/releases/download/$VERSION/$ASSET"
     fi
     log "下载 $URL"
-    download "$URL" "$PREFIX/nyra"
+    TMP_BIN="$PREFIX/nyra.tmp.$$"
+    rm -f "$TMP_BIN"
+    download "$URL" "$TMP_BIN"
+    verify_asset "$ASSET" "$TMP_BIN"
+    mv "$TMP_BIN" "$PREFIX/nyra"
 fi
 chmod 755 "$PREFIX/nyra"
 ln -sf "$PREFIX/nyra" "$BIN_DIR/nyra"
