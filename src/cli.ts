@@ -293,7 +293,7 @@ nyra judge <status|enable|disable|set-model|set-thresholds|check|verdicts>   意
 nyra verifier <status|enable|disable|set-model|rework-on|rework-off|add-rule|remove-rule|list-rules|check>   验收者：并行产出合入前先过验收门（确定性检查 + 便宜模型复核），未通过打回重做（详见 docs/verifier.md）
 nyra skills <status|enable|disable|draft|drafts|show|approve|reject|archive|sweep>   技能自沉淀：成功任务自动起草技能草稿，人工批准后才安装，低质自动归档（详见 docs/skill-sedimentation.md）
 nyra bughunt <install|status|scope|template|check>   授权漏洞挖掘技能包：范围卡 + 证伪验证 + 提交前七问 + 证据卫生，提交前核对（详见 docs/bughunt.md）
-nyra market <list|show|source|install|uninstall|installed|publish|template>   内置机器人市场：浏览、安装、发布技能包、机器人配置与业务流程模板（静态策展仓库 + 本地客户端，详见 docs/marketplace.md）
+nyra market <list|show|source|install|update|uninstall|installed|publish|template>   内置机器人市场：浏览、安装、更新、发布技能包、机器人配置与业务流程模板（静态策展仓库 + 本地客户端，详见 docs/marketplace.md）
 nyra account <status|login|logout|list|revoke|link|suspend|reactivate>   用户账号登录：Google / GitHub / 邮箱 / SSO，账号身份 + 会话（详见 docs/accounts.md）
 nyra cloud <status|connect|disconnect|sync|push|pull|pref|devices|set-url>   手机云端连接：账号登录后直连云端服务、跨端同步，不走局域网（详见 docs/mobile-cloud.md）
 nyra sso <provider|login|status|scim>   企业 SSO：OIDC 身份提供方注册与登录、SCIM 账号开通（详见 docs/sso.md）
@@ -458,7 +458,7 @@ nyra judge <status|enable|disable|set-model|set-thresholds|check|verdicts>   int
 nyra verifier <status|enable|disable|set-model|rework-on|rework-off|add-rule|remove-rule|list-rules|check>   verifier: parallel output passes an acceptance gate before merging (deterministic checks + cheap-model review); failures are sent back for rework (see docs/verifier.md)
 nyra skills <status|enable|disable|draft|drafts|show|approve|reject|archive|sweep>   skill sedimentation: successful runs auto-draft skill drafts, installed only after your approval, low-quality ones auto-archived (see docs/skill-sedimentation.md)
 nyra bughunt <install|status|scope|template|check>   authorized bug-hunting skill pack: scope card + falsification + pre-submit seven questions + evidence hygiene, pre-submit gate (see docs/bughunt.md)
-nyra market <list|show|source|install|uninstall|installed|publish|template>   built-in bot marketplace: browse, install and publish skill packs, bot configs and business process templates (static curated repo + local client, see docs/marketplace.md)
+nyra market <list|show|source|install|update|uninstall|installed|publish|template>   built-in bot marketplace: browse, install, update and publish skill packs, bot configs and business process templates (static curated repo + local client, see docs/marketplace.md)
 nyra account <status|login|logout|list|revoke|link|suspend|reactivate>   user account login: Google / GitHub / email / SSO, account identity + sessions (see docs/accounts.md)
 nyra cloud <status|connect|disconnect|sync|push|pull|pref|devices|set-url>   mobile cloud link: after account login, connect straight to the cloud service and sync across devices, no local network needed (see docs/mobile-cloud.md)
 nyra sso <provider|login|status|scim>   enterprise SSO: OIDC identity provider registration and login, SCIM provisioning (see docs/sso.md)
@@ -3514,7 +3514,7 @@ async function handleAccount(argv: string[], home: string): Promise<number> {
 async function handleMarket(argv: string[], home: string): Promise<number> {
   const action = argv[0];
   if (!action) {
-    process.stdout.write("用法：nyra market <list|show|source|install|uninstall|installed|publish|template> [选项]\n");
+    process.stdout.write("用法：nyra market <list|show|source|install|update|uninstall|installed|publish|template> [选项]\n");
     return 2;
   }
   try {
@@ -3571,7 +3571,14 @@ async function handleMarket(argv: string[], home: string): Promise<number> {
       process.stdout.write(`声明的工具：${verification.tools.join("、") || "未声明"}\n`);
       process.stdout.write(`声明的权限：${verification.permissions.join("、") || "未声明"}\n`);
       process.stdout.write(`模式：${e.mode ?? verification.manifest?.mode ?? "readonly"}（新装机器人默认只读起步）\n`);
-      if (verification.routines.length) process.stdout.write(`routine：${verification.routines.length} 个（只随机器人安装，不自动执行，须手动启用）\n`);
+      if (verification.manifest?.model) process.stdout.write(`模型钉选：${verification.manifest.model}（机器人永远用这个模型跑，key 仍在密码箱）\n`);
+      if (verification.manifest?.env_requires?.length) {
+        process.stdout.write(`环境变量：${verification.manifest.env_requires.map((r) => `${r.name}${r.required ? "（必填）" : "（选填）"}：${r.description}`).join("、")}（只声明、不带值；安装时逐项核对并生成 .env.EXAMPLE）\n`);
+      }
+      if (verification.manifest?.hands_off_to?.length) {
+        process.stdout.write(`交接目标：${verification.manifest.hands_off_to.map((h) => `${h.target}${h.when ? `（${h.when}）` : ""}`).join("、")}（目标未装时只警告不拦安装）\n`);
+      }
+      if (verification.routines.length) process.stdout.write(`${mod.formatRoutinesForDisplay(verification.routines).join("\n")}\n`);
       if (verification.highPrivilegeTools.length) process.stdout.write(`⚠ 高权限工具：${verification.highPrivilegeTools.join("、")}\n`);
       for (const w of verification.warnings) process.stdout.write(`提醒：${w}\n`);
       if (!verification.ok) {
@@ -3617,26 +3624,60 @@ async function handleMarket(argv: string[], home: string): Promise<number> {
     }
     if (action === "install") {
       const id = argv[1];
-      if (!id) { process.stderr.write("错误：用法：nyra market install <条目 id> [--force]\n"); return 2; }
+      if (!id) { process.stderr.write("错误：用法：nyra market install <条目 id|git URL> [--force]\n"); return 2; }
       const force = argv.includes("--force");
-      const prepared = await mod.prepareMarketplaceInstall(home, id, { config });
+      // B5：git URL 直接装单个 Bot（只接 git 地址，裸 .zip 不支持）；
+      // 其余按条目 id 从已登记的市场源里找。
+      const prepared = mod.isMarketGitUrl(id)
+        ? await mod.prepareMarketplaceInstallFromUrl(home, id, { config })
+        : await mod.prepareMarketplaceInstall(home, id, { config });
       process.stdout.write(`${prepared.plannedChanges.join("\n")}\n`);
       if (argv.includes("--yes")) {
         process.stdout.write("提示：市场安装确认不能用 --yes 跳过（市场内容是不受信任的第三方配置），仍需你确认。\n");
       }
       if (!await askConfirm("确认安装？(y/N) ")) {
         process.stdout.write("已取消，未安装任何文件。\n");
+        prepared.cleanup?.();
         return 0;
       }
-      const { store, runId } = newRun(`marketplace install ${id}`);
-      const result = mod.executeMarketplaceInstall(home, prepared, { force, store, runId });
+      const { store, runId } = newRun(`marketplace install ${prepared.entry.name}`);
+      let result;
+      try {
+        result = mod.executeMarketplaceInstall(home, prepared, { force, store, runId });
+      } finally {
+        // B5：URL 安装的临时克隆目录，装完（或失败）就清掉。
+        prepared.cleanup?.();
+      }
       process.stdout.write(`已安装 ${result.installed.item_name} v${result.installed.version}：${result.installed.installed_path}\n`);
       if (result.overwritten) process.stdout.write("（覆盖了旧版）\n");
       if (result.keptModified.length) process.stdout.write(`升级时保留了你改过的文件：${result.keptModified.join("、")}\n`);
       if (result.installed.kind === "bot") {
         process.stdout.write("机器人默认只读起步：写操作须在机器人自己的权限里显式放开；routine 不自动执行，须手动启用。\n");
       }
+      if (result.installed.agent_decl) process.stdout.write(`已登记进花名册（nyra agent list 可见，常驻会话已建）：${result.installed.item_name}\n`);
+      if (result.warnings?.length) for (const w of result.warnings) process.stdout.write(`提醒：${w}\n`);
       process.stdout.write(`卸载：nyra market uninstall ${result.installed.item_name}\n`);
+      return 0;
+    }
+    if (action === "update") {
+      const name = argv[1];
+      if (!name) { process.stderr.write("错误：用法：nyra market update <机器人名>\n"); return 2; }
+      const plan = await mod.prepareMarketplaceUpdate(home, name, { config });
+      process.stdout.write(`${plan.planLines.join("\n")}\n`);
+      if (!plan.needsUpdate) return 0;
+      if (argv.includes("--yes")) {
+        process.stdout.write("提示：市场更新确认不能用 --yes 跳过（市场内容是不受信任的第三方配置），仍需你确认。\n");
+      }
+      if (!await askConfirm("确认更新？(y/N) ")) {
+        process.stdout.write("已取消，未更新任何文件。\n");
+        return 0;
+      }
+      const { store, runId } = newRun(`marketplace update ${name}`);
+      const result = mod.executeMarketplaceUpdate(home, plan, { store, runId });
+      if (!result.updated) { process.stdout.write(`${name} 已是最新版。\n`); return 0; }
+      process.stdout.write(`已更新 ${result.name}：v${result.previousVersion} → v${result.version}（模式 ${result.mode}，routines ${result.routinesMerged} 个）\n`);
+      if (result.keptModified.length) process.stdout.write(`更新时保留了你改过的文件：${result.keptModified.join("、")}\n`);
+      for (const w of result.warnings) process.stdout.write(`提醒：${w}\n`);
       return 0;
     }
     if (action === "uninstall") {
@@ -3650,6 +3691,7 @@ async function handleMarket(argv: string[], home: string): Promise<number> {
       const result = mod.uninstallMarketplaceEntry(home, name, { store, runId });
       process.stdout.write(`已卸载 ${name}：删了 ${result.removed.join("、") || "无"}\n`);
       if (result.kept.length) process.stdout.write(`保留未删：${result.kept.join("、")}\n`);
+      if (result.warnings?.length) for (const w of result.warnings) process.stdout.write(`提醒：${w}\n`);
       process.stdout.write("卸载记录留在安装账本里（nyra market installed 可查历史）。\n");
       return 0;
     }
@@ -3698,7 +3740,7 @@ async function handleMarket(argv: string[], home: string): Promise<number> {
       process.stdout.write("用法：nyra market template <bot|index>\n");
       return 2;
     }
-    process.stdout.write("用法：nyra market <list|show|source|install|uninstall|installed|publish|template> [选项]\n");
+    process.stdout.write("用法：nyra market <list|show|source|install|update|uninstall|installed|publish|template> [选项]\n");
     return 2;
   } catch (err: unknown) {
     if (err instanceof Error && (err as { gate?: string }).gate) {

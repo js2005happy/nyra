@@ -133,6 +133,7 @@ cloud_sync_conflict: ["scope", "key", "kept"],
 // 绝对路径在 ~/.nyra/marketplace-installed.json 账本里（与缺口 11 同理）。
 marketplace_installed: ["item_name", "item_version", "kind", "source", "bot_ready", "reviewer_model"],
 marketplace_uninstalled: ["item_name", "kind"],
+marketplace_updated: ["item_name", "item_version", "kind", "source", "previous_version"],
 marketplace_published: ["item_name", "item_version", "kind", "license", "bot_ready"],
 // 缺口 17：对外 MCP 服务调用进证据链——哪个工具、谁调的（owner/device）、
 // 参数指纹（args_hash 单向指纹，不可还原原文）、成功还是失败、审查结论
