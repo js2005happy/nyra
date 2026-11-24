@@ -128,6 +128,13 @@ jobs:
           find . -maxdepth 1 -type f \
             ! -name 'SHA256SUMS*' ! -name '*.intoto.jsonl' \
             -printf '%f\n' | sort | xargs -r -d '\n' sha256sum > SHA256SUMS
+          # 与安装脚本同一套严格解析：坏行、重复名、漏文件都不签。
+          # shellcheck source=scripts/release-verify-lib.sh
+          . "${GITHUB_WORKSPACE}/scripts/release-verify-lib.sh"
+          while IFS= read -r name; do
+            [ -n "$name" ] || continue
+            nyra_expected_hash_for SHA256SUMS "$name" >/dev/null
+          done < <(find . -maxdepth 1 -type f ! -name 'SHA256SUMS*' ! -name '*.intoto.jsonl' -printf '%f\n')
           echo "--- SHA256SUMS ---"
           cat SHA256SUMS
 

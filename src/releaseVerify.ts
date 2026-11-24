@@ -19,7 +19,7 @@ export class ReleaseVerifyError extends Error {
 const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
 // SHA256SUMS 每行：64 位小写十六进制哈希 + 空白 + 文件名（sha256sum 的
 // 文本模式是两个空格，二进制模式是 " *" 前缀；两种都认）。
-const SUMS_LINE_RE = /^([0-9a-f]{64})[ \t]+\*?(\S+)\s*$/;
+const SUMS_LINE_RE = /^([0-9a-fA-F]{64})[ \t]+\*?(\S+)\s*$/;
 
 /** 钉住的默认安装版本（与三份安装脚本头部的 DEFAULT_VERSION 同步）。 */
 export const PINNED_INSTALL_VERSION = "v0.5.12";
@@ -31,11 +31,54 @@ export function normalizeReleaseVersion(version: string): string {
   return v.startsWith("v") ? v : `v${v}`;
 }
 
-/** 下载 SHA256SUMS 的 URL 根：latest 走 latest/download，其余走固定版本。 */
+/**
+ * 下载根必须是已经解析好的 tag。latest 在这里直接拒绝，避免产物和
+ * 校验材料各自跟随 latest，打到两个不同的 Release。
+ */
 export function releaseDownloadBase(repo: string, version: string): string {
   const v = normalizeReleaseVersion(version);
-  if (v === "latest") return `https://github.com/${repo}/releases/latest/download`;
+  if (v === "latest" || v === "") {
+    throw new ReleaseVerifyError("latest 必须先解析成具体 tag，再下载产物和校验材料");
+  }
   return `https://github.com/${repo}/releases/download/${v}`;
+}
+
+/** 从 GitHub releases/latest JSON 取出 tag_name。只认 v 开头。 */
+export function parseGithubLatestTag(json: string): string {
+  let data: unknown;
+  try {
+    data = JSON.parse(json);
+  } catch {
+    throw new ReleaseVerifyError("解析 latest 失败：不是 JSON");
+  }
+  const tag = data && typeof data === "object" ? (data as { tag_name?: unknown }).tag_name : undefined;
+  if (typeof tag !== "string" || !/^v[0-9A-Za-z._+-]+$/.test(tag)) {
+    throw new ReleaseVerifyError("解析 latest 失败：没有合法的 tag_name");
+  }
+  return tag;
+}
+
+/** 同一个 tag 上的某个附件 URL。产物名不许带路径。 */
+export function releaseAssetUrl(repo: string, tag: string, asset: string): string {
+  if (asset.includes("/") || asset.includes("\\") || asset.includes("..") || asset === "") {
+    throw new ReleaseVerifyError(`产物名非法：${asset}`);
+  }
+  return `${releaseDownloadBase(repo, tag)}/${asset}`;
+}
+
+export type SignatureMaterial = "bundle" | "sig-pem";
+
+/**
+ * 发布者证明：bundle，或成对的 sig+pem。都没有就拒绝。
+ * 调用方不得把“哈希与清单一致”说成已经证明发布者。
+ */
+export function requireSignatureMaterial(names: readonly string[]): SignatureMaterial {
+  const set = new Set(names);
+  if (set.has("SHA256SUMS.bundle")) return "bundle";
+  if (set.has("SHA256SUMS.sig") && set.has("SHA256SUMS.pem")) return "sig-pem";
+  throw new ReleaseVerifyError(
+    "缺少签名材料：没有 SHA256SUMS.bundle，也没有成对的 SHA256SUMS.sig 与 SHA256SUMS.pem。哈希清单未被认证，不能当作发布者证明。",
+  );
 }
 
 /** SHA256SUMS 下载地址。 */
@@ -63,7 +106,7 @@ export function parseSha256sums(text: string): Map<string, string> {
     if (sums.has(name)) {
       throw new ReleaseVerifyError(`SHA256SUMS 里 ${name} 出现了两次`);
     }
-    sums.set(name, hash);
+    sums.set(name, hash.toLowerCase());
   }
   return sums;
 }

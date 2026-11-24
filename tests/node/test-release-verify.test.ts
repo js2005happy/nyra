@@ -12,8 +12,11 @@ import {
   ghReleaseViewArgs,
   listReleaseArtifacts,
   normalizeReleaseVersion,
+  parseGithubLatestTag,
   parseSha256sums,
+  releaseAssetUrl,
   releaseDownloadBase,
+  requireSignatureMaterial,
   sha256Hex,
   sha256sumsUrl,
   verifyFileHash,
@@ -101,15 +104,35 @@ test("ReleaseVerifyTest.test_version_normalize_and_download_urls", () => {
   expect(normalizeReleaseVersion("0.5.12")).toBe("v0.5.12");
   expect(normalizeReleaseVersion("v0.5.12")).toBe("v0.5.12");
   expect(normalizeReleaseVersion("latest")).toBe("latest");
-  expect(releaseDownloadBase("js2005happy/nyra", "latest")).toBe(
-    "https://github.com/js2005happy/nyra/releases/latest/download",
-  );
+  expect(() => releaseDownloadBase("js2005happy/nyra", "latest")).toThrow(ReleaseVerifyError);
   expect(releaseDownloadBase("js2005happy/nyra", "0.5.12")).toBe(
     "https://github.com/js2005happy/nyra/releases/download/v0.5.12",
   );
   expect(sha256sumsUrl("js2005happy/nyra", "v0.5.12")).toBe(
     "https://github.com/js2005happy/nyra/releases/download/v0.5.12/SHA256SUMS",
   );
+});
+
+test("ReleaseVerifyTest.test_latest_resolves_to_one_tag_and_signature_is_required", () => {
+  expect(parseGithubLatestTag('{"tag_name":"v0.5.1","name":"v0.5.1"}')).toBe("v0.5.1");
+  expect(() => parseGithubLatestTag('{"tag_name":"main"}')).toThrow(/没有合法的 tag_name/);
+  expect(() => parseGithubLatestTag("not-json")).toThrow(/不是 JSON/);
+  const tag = parseGithubLatestTag('{"tag_name":"v0.5.1"}');
+  const sums = releaseAssetUrl("js2005happy/nyra", tag, "SHA256SUMS");
+  const bin = releaseAssetUrl("js2005happy/nyra", tag, "nyra-linux-x64");
+  expect(sums).toBe("https://github.com/js2005happy/nyra/releases/download/v0.5.1/SHA256SUMS");
+  expect(bin).toBe("https://github.com/js2005happy/nyra/releases/download/v0.5.1/nyra-linux-x64");
+  expect(sums).not.toContain("/latest/");
+  expect(bin).not.toContain("/latest/");
+  expect(requireSignatureMaterial(["SHA256SUMS", "SHA256SUMS.bundle"])).toBe("bundle");
+  expect(requireSignatureMaterial(["SHA256SUMS.sig", "SHA256SUMS.pem"])).toBe("sig-pem");
+  expect(() => requireSignatureMaterial(["SHA256SUMS"])).toThrow(/缺少签名材料/);
+  expect(() => releaseAssetUrl("js2005happy/nyra", "v0.5.1", "../nyra")).toThrow(/非法/);
+});
+
+test("ReleaseVerifyTest.test_uppercase_hash_is_normalized", () => {
+  const sums = parseSha256sums(`${"AB".repeat(32)}  nyra-linux-x64\n`);
+  expect(expectedHash(sums, "nyra-linux-x64")).toBe("ab".repeat(32));
 });
 
 test("ReleaseVerifyTest.test_pinned_install_version_is_unreleased_dev_target", () => {

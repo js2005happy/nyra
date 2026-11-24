@@ -36,16 +36,18 @@ v0.5.2–v0.5.11 的 Release 都没有（根因另有 `gh --jq -r` 写法错误�
 三份安装脚本（`scripts/install-node.sh`、`scripts/install-node-macos.sh`、
 `scripts/install-node.ps1`）默认不再是无校验的 `latest`，而是钉住
 `DEFAULT_VERSION`（当前 `v0.5.12`，写在每份脚本头部显眼处）。发版时
-三处一起改到新版本号（与下面“版本号六处”同步）。下载后先对同一
-Release 的 `SHA256SUMS` 校验再安装：哈希对不上、清单里没有这个文件、
-下载不到 `SHA256SUMS`，一律拒绝安装（fail-closed）。`--version latest`
-仍可显式传，但同样要校验；`--from-file` 从本地文件装，不联网、不校验。
+三处一起改到新版本号（与下面“版本号六处”同步）。`--version latest`
+会先把最新 Release 解析成一个 tag，再只从那个 tag 下载二进制、
+`SHA256SUMS` 和签名。安装前用 cosign 验证清单签名，再核对哈希。
+签名材料缺失、验签失败、清单格式不对、哈希不符，一律拒绝，并且
+不运行下载到的文件。哈希一致不能代替签名。`--from-file` 从本地文件装，
+不联网、不验签（日志会写明）。
 
 注意：`v0.5.12` 尚未正式发版（本批只改源码与工作流，不打 tag、不发
 Release），在它发版之前默认安装会因下载不到而拒绝——这是有意的
-fail-closed，不是 bug；v0.5.2–v0.5.11 的 Release 都没有 `SHA256SUMS`，
-所以发版前任何版本的 Release 安装都会被拒绝，本地 `--from-file`
-安装不受影响。
+fail-closed，不是 bug。已发布的版本里，v0.5.2–v0.5.11 没有
+`SHA256SUMS` 和 sigstore 签名，安装会被拒绝；只有 v0.5.1 带这两样。
+本地 `--from-file` 安装不验签，日志会写明。
 
 ## 版本号：六处（升版时一处都不能漏）
 
@@ -82,11 +84,11 @@ fail-closed，不是 bug；v0.5.2–v0.5.11 的 Release 都没有 `SHA256SUMS`�
 
 ## 签名状态（实话）
 
-- `SHA256SUMS` 的 cosign keyless 签名与 SLSA 证明从 0.5.12 起是自动的，
-  每个 Release 都有，用户可用 `scripts/verify-release.sh` 验证；
-  v0.5.2–v0.5.11 的 Release 没有 `SHA256SUMS`（原因见 `docs/SIGNING.md`），
-  只有 v0.5.1 有。没有 `SHA256SUMS` 时 `verify-release.sh` 直接报
-  “没有 SHA256SUMS”并退出码 1，不指向不存在的文件。
+- `SHA256SUMS` 的 cosign keyless 签名与 SLSA 证明从 0.5.12 起按工作流生成；
+  在 v0.5.12 真正发出之前，这句话还不是已发布事实。用户用
+  `scripts/verify-release.sh` 先验签再核对哈希。v0.5.2–v0.5.11 没有
+  `SHA256SUMS` 和签名（原因见 `docs/SIGNING.md`），只有 v0.5.1 有。
+  没有清单或签名时脚本退出码 1。哈希一致不是发布者证明。
 - 安装包本身的**代码签名**是另一回事，见 `docs/SIGNING.md`：证书没买，
   Windows `.msi` / `.exe` 与 macOS `.dmg` 目前未签名、未公证；安卓 APK
   是 Gradle 自动生成的 debug 签名（正式 keystore 待用户决定后再接）；

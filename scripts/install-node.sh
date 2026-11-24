@@ -21,8 +21,10 @@
 #   如 v0.5.1（不带 v 也行，脚本会补上）；latest 也可显式传，但仍要校验。
 #   重复跑就是升级：旧二进制会被替换，~/.nyra 里的数据不动。
 #
-#   下载后先对同一 Release 的 SHA256SUMS 校验再安装：哈希对不上、
-#   清单里没有这个文件、下载不到 SHA256SUMS，一律拒绝安装（fail-closed）。
+#   下载前先把版本解析成一个 tag（latest 只解析一次）。产物、SHA256SUMS
+#   和 sigstore 签名都从这一个 tag 下载。先用 cosign 验清单签名（发布者），
+#   再对清单核对哈希（完整性）。签名缺失、验签失败、清单格式不对、
+#   哈希不符，一律拒绝，并且不运行下载到的文件。哈希对上不能代替签名。
 #   --from-file 从本地文件装，不联网、不校验（日志里会写明未校验）。
 #
 # 要求：curl 或 wget（二选一）；--with-systemd 还要 systemctl。
@@ -100,6 +102,8 @@ while [ $# -gt 0 ]; do
 done
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=release-verify-lib.sh
+. "$ROOT/scripts/release-verify-lib.sh"
 SERVICE_SRC="$ROOT/systemd/nyra-scheduler.service"
 SERVICE_DST="${HOME}/.config/systemd/user/nyra-scheduler.service"
 
@@ -134,46 +138,26 @@ download() {
     local tmp="$dest.tmp.$$"
     rm -f "$tmp"
     if command -v curl >/dev/null 2>&1; then
-        curl -fL --progress-bar -o "$tmp" "$url" || { rm -f "$tmp"; die "下载失败：$url（检查网络，或到 https://github.com/$REPO/releases 手动下载）"; }
+        curl -fL --progress-bar -o "$tmp" "$url" || { rm -f "$tmp"; return 1; }
     elif command -v wget >/dev/null 2>&1; then
-        wget -q --show-progress -O "$tmp" "$url" || { rm -f "$tmp"; die "下载失败：$url（检查网络，或到 https://github.com/$REPO/releases 手动下载）"; }
+        wget -q --show-progress -O "$tmp" "$url" || { rm -f "$tmp"; return 1; }
     else
         die "需要 curl 或 wget 才能下载（二选一）"
     fi
     mv "$tmp" "$dest"
 }
 
-# 校验下载好的二进制：先下同一 Release 的 SHA256SUMS，对上哈希才装。
-# 下不到 SHA256SUMS、清单是空的、清单里没有这个文件、哈希对不上，
-# 一律拒绝安装（fail-closed）；失败时删掉已下载的临时文件再退出。
-verify_asset() {
-    local asset="$1" file="$2" sums_url sums_file expected actual
-    if [ "$VERSION" = "latest" ]; then
-        sums_url="https://github.com/$REPO/releases/latest/download/SHA256SUMS"
-    else
-        sums_url="https://github.com/$REPO/releases/download/$VERSION/SHA256SUMS"
-    fi
-    sums_file="$(mktemp)"
+# 可选材料下载失败只删掉半截文件，不中断：bundle 与 sig/pem 二选一，
+# 缺哪一种由 nyra_verify_asset_dir 在验签时拒绝。
+fetch_optional() {
+    local url="$1" dest="$2"
     if command -v curl >/dev/null 2>&1; then
-        curl -fL -s -o "$sums_file" "$sums_url" || { rm -f "$sums_file" "$file"; die "没有 SHA256SUMS：下载不到 $sums_url，拒绝安装（该 Release 可能没有附带哈希清单）"; }
+        curl -fL -sS -o "$dest" "$url" || { rm -f "$dest"; return 0; }
     elif command -v wget >/dev/null 2>&1; then
-        wget -q -O "$sums_file" "$sums_url" || { rm -f "$sums_file" "$file"; die "没有 SHA256SUMS：下载不到 $sums_url，拒绝安装（该 Release 可能没有附带哈希清单）"; }
+        wget -q -O "$dest" "$url" || { rm -f "$dest"; return 0; }
     else
-        rm -f "$sums_file" "$file"; die "需要 curl 或 wget 才能下载 SHA256SUMS 做校验"
+        return 0
     fi
-    [ -s "$sums_file" ] || { rm -f "$sums_file" "$file"; die "没有 SHA256SUMS：$sums_url 下载到的清单是空的，拒绝安装"; }
-    expected="$(awk -v name="$asset" '$2 == name || $2 == ("*" name) { print $1 }' "$sums_file" | head -1)"
-    rm -f "$sums_file"
-    [ -n "$expected" ] || { rm -f "$file"; die "没有 SHA256SUMS：清单里没有 $asset，拒绝安装"; }
-    if command -v sha256sum >/dev/null 2>&1; then
-        actual="$(sha256sum "$file" | awk '{print $1}')"
-    elif command -v shasum >/dev/null 2>&1; then
-        actual="$(shasum -a 256 "$file" | awk '{print $1}')"
-    else
-        rm -f "$file"; die "需要 sha256sum 或 shasum 才能校验（都没有时拒绝安装）"
-    fi
-    [ "$actual" = "$expected" ] || { rm -f "$file"; die "哈希不匹配：$asset 的 sha256 与 SHA256SUMS 不符，拒绝安装（文件可能被篡改）"; }
-    log "哈希校验通过：$asset"
 }
 
 if [ "$UNINSTALL" -eq 1 ]; then
@@ -193,20 +177,28 @@ mkdir -p "$PREFIX" "$BIN_DIR"
 
 if [ -n "$FROM_FILE" ]; then
     [ -f "$FROM_FILE" ] || die "找不到本地二进制：$FROM_FILE（先跑 ./scripts/build-binaries.sh）"
-    log "从本地文件安装：$FROM_FILE（本地文件，不联网、不做哈希校验）"
+    log "从本地文件安装：$FROM_FILE（本地文件，不联网、不验签、不核对哈希）"
     cp "$FROM_FILE" "$PREFIX/nyra"
 else
-    if [ "$VERSION" = "latest" ]; then
-        URL="https://github.com/$REPO/releases/latest/download/$ASSET"
-    else
-        URL="https://github.com/$REPO/releases/download/$VERSION/$ASSET"
-    fi
+    TAG="$(nyra_resolve_release_tag "$VERSION")" || die "无法确定 Release tag，拒绝安装"
+    URL="$(nyra_download_url "$REPO" "$TAG" "$ASSET")" || die "无法构造下载地址，拒绝安装"
+    STAGE="$(mktemp -d)"
+    trap 'rm -rf "$STAGE"' EXIT
+    log "安装 Release $TAG（产物、清单和签名都来自这个 tag，只解析一次）"
     log "下载 $URL"
-    TMP_BIN="$PREFIX/nyra.tmp.$$"
-    rm -f "$TMP_BIN"
-    download "$URL" "$TMP_BIN"
-    verify_asset "$ASSET" "$TMP_BIN"
-    mv "$TMP_BIN" "$PREFIX/nyra"
+    download "$URL" "$STAGE/$ASSET" || die "下载失败：$URL（检查网络，或到 https://github.com/$REPO/releases 手动下载）"
+    download "$(nyra_download_url "$REPO" "$TAG" SHA256SUMS)" "$STAGE/SHA256SUMS" \
+        || die "没有 SHA256SUMS：下载不到该 Release 的哈希清单，拒绝安装"
+    fetch_optional "$(nyra_download_url "$REPO" "$TAG" SHA256SUMS.bundle)" "$STAGE/SHA256SUMS.bundle"
+    fetch_optional "$(nyra_download_url "$REPO" "$TAG" SHA256SUMS.sig)" "$STAGE/SHA256SUMS.sig"
+    fetch_optional "$(nyra_download_url "$REPO" "$TAG" SHA256SUMS.pem)" "$STAGE/SHA256SUMS.pem"
+    if ! nyra_verify_asset_dir "$STAGE" "$ASSET" "$STAGE/$ASSET"; then
+        rm -rf "$STAGE"
+        die "校验未通过，已删除下载的文件，未安装、未运行"
+    fi
+    mv "$STAGE/$ASSET" "$PREFIX/nyra"
+    rm -rf "$STAGE"
+    log "签名与哈希都已通过：$ASSET（哈希只证明和已验签的清单一致）"
 fi
 chmod 755 "$PREFIX/nyra"
 ln -sf "$PREFIX/nyra" "$BIN_DIR/nyra"
