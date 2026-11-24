@@ -1,11 +1,11 @@
 blank_issues_enabled: true
 contact_links:
-  - name: 内测上手说明
+  - name: 内测上手说明 / Beta getting-started guide
     url: https://github.com/js2005happy/nyra/blob/main/docs/beta.md
-    about: 安装、配置模型、手机连电脑，先看这里。
-  - name: 讨论区（内测反馈 · 想法 · 展示）
+    about: 安装、配置模型、手机连电脑，先看这里。 / Installing, setting up a model, connecting your phone. English version at docs/beta.en.md.
+  - name: 讨论区（内测反馈 · 想法 · 展示） / Discussions (beta feedback · ideas · show and tell)
     url: https://github.com/js2005happy/nyra/discussions
-    about: 体验感受、功能想法、用 Nyra 做的东西，都可以在这里聊。
-  - name: 安全问题（请勿公开提交）
+    about: 体验感受、功能想法、用 Nyra 做的东西，都可以在这里聊。 / Share how it's going, feature ideas and things you've built with Nyra.
+  - name: 安全问题（请勿公开提交） / Security issue (please don't report publicly)
     url: https://github.com/js2005happy/nyra/security/policy
-    about: 发现安全漏洞请私下报告，见 SECURITY.md。
+    about: 发现安全漏洞请私下报告，见 SECURITY.md。 / Report vulnerabilities privately; see SECURITY.md.
