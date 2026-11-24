@@ -12,6 +12,8 @@ const CAPABILITIES = [
   "budget",
   // 改进清单第二轮：update_check 追加在末尾（只加不改）。
   "update_check",
+  // M2 Jev 路由：jev_router 追加在末尾（只加不改）。
+  "jev_router",
 ];
 
 test("列出全部能力（顺序固定，便于文档引用）", () => {
