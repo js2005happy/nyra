@@ -60,13 +60,13 @@ EigenFlux 不替代 Nyra 的本地 agent 编排或 Poppy 身份模型。网络�
 |---|---|
 | 流式输出 | 部分：工具输出流式已实现（`src/tools.ts` 的 `streamToolOutput`，经 `onEvent` 增量输出）；模型 token 流式未做 |
 | 图片输入 | 已实现（已模拟验证）：`describe_image`（缺口 16），模型须支持看图，本地优先、云端默认关 |
-| 会话全文搜索 | 待开发：只有记忆搜索（`search_memory`，`src/memory.ts`）；会话全文搜索未做 |
+| 会话全文搜索 | 已实现（0.5.6，第 4 批）：`src/sessionSearch.ts`（SQLite FTS5 索引，`nyra search`，模型工具 `session_search`，只搜机主自己的会话） |
 | 并行子 Agent | 已实现（已模拟验证）：`src/fanout.ts` + `src/merge.ts`（H-1/H-5/H-6），`delegate_parallel` |
 | Nyra MCP Server | 已实现（已模拟验证）：`src/mcp.ts` + `src/mcp/`，对外 MCP 服务 + 网关 POST /mcp（缺口 17） |
 | HTTP MCP | 已实现（已模拟验证）：MCP 客户端支持 Streamable HTTP（缺口 17） |
 | Linux 本地沙箱 | 已实现（已模拟验证）：bwrap（`src/sandbox.ts`）；2026-11-22 断网分支加 `--unshare-user-try` 修通，Chrome 158 已装接通 |
 | 真实浏览器工具 | 已实现（已模拟验证）：真实浏览器 CDP（`src/cdpBrowser.ts`）；Chrome 158 已装接通，断网时加 `--unshare-user-try` |
-| 编辑器集成 | 待开发：只有 LSP 客户端做诊断与符号查询（`src/lsp.ts`，缺口 24）；无编辑器插件 |
+| 编辑器集成 | 已实现（0.5.6，第 5 批）：`src/editorBridge.ts`（JSON-lines 协议 v1）+ `editors/`（VS Code 完整实现、JetBrains 骨架、Zed 协议核），模型工具 `editor_context`；JetBrains 未编译、Zed 只验了协议核，真机点命令未验证 |
 
 ## 开发原则
 

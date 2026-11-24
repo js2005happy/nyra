@@ -1,5 +1,12 @@
 # Nyra 验证报告（2026-11-16，v3 0.3.0）
 
+> **过期声明（2026-11-24 补）**：本文件写的是 Python 版 0.3.0 在 2026-11-16 的验证状态。
+> Python 树已在 0.4.0 删除，当前 Nyra 是 TypeScript / Bun 单运行时（`--version` 0.5.12-dev）。
+> **不要再把本文件当成当前验证。**当前验证方法是：`bun x tsc -p tsconfig.json --noEmit`、
+> `bun test tests/node`（全量 4000+ 项）、`bash scripts/run-probes.sh`、`bash scripts/check-budgets.sh`、
+> main 分支的 Node CI（三平台）与 Node binaries，以及 `docs/eval.md` 的 20 题真实模型基线。
+> 下面的旧内容只保留作历史记录。
+
 ## 已验证：EigenFlux 逐机器人网络行为上限（PR #22）
 
 - `tests/test_eigenflux_policy.py`：默认拒绝所有行为、必须用户 `--confirm`、群聊/机器人和能力隔离、撤销及审计、SHA-256 过期修改拒绝、私有权限文件、未知能力/账户拒绝、损坏文件和符号链接拒绝。
