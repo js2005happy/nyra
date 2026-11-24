@@ -692,8 +692,13 @@ function apprInfo(a){
   } else {
     sentence = t('d.appr.sumTool', { tool: a.tool });
     rows.push(['dot', t('d.scope.tool'), a.tool]);
-    if (a.summary) rows.push(['list', '', String(a.summary).split('\n')[0].slice(0, 200)]);
-    compact = a.tool;
+    // 审批卡要盖住真正发出的参数：摘要全文按行展开（邮件正文/抄送/密送、
+    // POST 请求体、键入全文、MCP 参数都在摘要里），不再只给首行前 200 字。
+    // 超长时由 .v.wrap 折行显示，人能滚动看到全文。
+    if (a.summary) String(a.summary).split('\n').forEach((line, i) => {
+      if (line.length) rows.push(['list', i === 0 ? t('d.scope.detail') : '', line, null, 'wrap']);
+    });
+    compact = a.tool + (a.summary ? ' · ' + String(a.summary).split('\n')[0].slice(0, 120) : '');
   }
   const canRule = !!a.suggestion; const canAlways = canRule || (!!a.always && a.tool !== 'shell');
   return { isEdit, isShell, d, sentence, compact, rows, canRule, canAlways };
@@ -702,9 +707,9 @@ function scopeBox(info){
   const box = el('div', 'scope');
   box.appendChild(el('div', 'st', t('d.scope.title')));
   info.rows.forEach(([ic, label, value, extra, mono]) => {
-    const r = el('div', 'sr'); r.appendChild(icon(ic));
+    const r = el('div', 'sr' + (mono === 'wrap' ? ' wrap' : '')); r.appendChild(icon(ic));
     r.appendChild(el('span', 'k', label));
-    const v = el('span', 'v' + (ic === 'file' || mono ? ' mono' : ''), value); v.title = value; r.appendChild(v);
+    const v = el('span', 'v' + ((ic === 'file' || mono) ? ' mono' : '') + (mono === 'wrap' ? ' wrap' : ''), value); v.title = value; r.appendChild(v);
     if (extra) { const x = el('span', 'x'); extra.forEach((p, i) => { if (Array.isArray(p)) { x.appendChild(document.createTextNode(i ? ' ' : '')); x.appendChild(el('span', p[0], p[1])); } else x.appendChild(document.createTextNode(p + ' · ')); }); r.appendChild(x); }
     box.appendChild(r);
   });

@@ -324,6 +324,8 @@ body{background:radial-gradient(1100px 560px at 14% -8%,var(--depth1),transparen
 .scope .st+.sr{border-top:none}
 .scope .sr .k{color:var(--mu);width:44px;flex:none}
 .scope .sr .v{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.scope .sr.wrap{align-items:flex-start}
+.scope .sr .v.wrap{white-space:normal;overflow:visible;text-overflow:clip;word-break:break-word}
 .scope .sr .v.mono{font-size:12px}
 .scope .sr .x{color:var(--mu);font-size:12px;white-space:nowrap;flex:none}
 .appr .acts,.rfoot .acts{display:flex;align-items:center;gap:8px;padding:10px 14px 12px;margin:0;flex:1}
