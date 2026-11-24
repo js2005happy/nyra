@@ -91,13 +91,15 @@ nyra "解释一下这个项目的结构"
 
 | 选项 | 默认值 | 说明 |
 | --- | --- | --- |
-| `--version TAG` | latest | 从 GitHub Releases 下载的版本（带 `v` 前缀，如 `v0.5.2`；不带 `v` 也行，脚本会补上） |
+| `--version TAG` | `v0.5.12`（钉住） | 从 GitHub Releases 下载的版本（带 `v` 前缀，如 `v0.5.2`；不带 `v` 也行，脚本会补上；`latest` 也可显式传） |
 | `--from-file PATH` | — | 从本地已编好的二进制安装（不联网下载） |
 | `--prefix DIR` | `~/.local/share/nyra` | 安装位置（不能是 `/`、不能就是 `$HOME`、不能含空格） |
 | `--bin-dir DIR` | `~/.local/bin` | 启动器位置 |
 | `--with-launchd` | 关 | 再装 launchd 用户 agent 文件（只装、不加载） |
 | `--uninstall` | — | 卸载（见下） |
 | `--help` | — | 显示帮助 |
+
+下载后先对同一 Release 的 `SHA256SUMS` 校验再安装：哈希对不上、清单里没有这个文件、下载不到 `SHA256SUMS`，一律拒绝安装。`--from-file` 从本地文件装，不联网、不校验。
 
 ## 升级
 

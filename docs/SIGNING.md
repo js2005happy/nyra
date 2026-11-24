@@ -1,10 +1,10 @@
 # 签名与验证（SIGNING）
 
-Nyra 有三层签名，分别解决不同问题。**第 1 层已经自动化，第 2 层是本地约定，第 3 层接线已就绪（0.5.1），等商业证书到位。**
+Nyra 有三层签名，分别解决不同问题。**第 1 层在 0.5.12 起恢复（v0.5.2–v0.5.11 的 Release 没有 SHA256SUMS，原因见下），第 2 层是本地约定，第 3 层接线已就绪（0.5.1），等商业证书到位。**
 
 | 层 | 签什么 | 解决什么 | 状态 |
 |---|---|---|---|
-| 1 | Release 产物 | 用户能证明下载的二进制确实由本仓库构建、且没被篡改 | ✅ 已自动（`.github/workflows/release-sign.yml`） |
+| 1 | Release 产物 | 用户能证明下载的二进制确实由本仓库构建、且没被篡改 | ⚠️ 0.5.12 起恢复（v0.5.2–v0.5.11 缺失，原因见下） |
 | 2 | Git 提交 | 提交确实来自维护者本人 | ⚙️ 本地 SSH 签名（见下） |
 | 3 | Windows/macOS 二进制 | 消除 SmartScreen / Gatekeeper 首次运行警告 | ⚙️ 接线已就绪（0.5.1，条件式），证书未配置、产物仍未签名 |
 
@@ -22,9 +22,19 @@ Nyra 有三层签名，分别解决不同问题。**第 1 层已经自动化，�
 
 ```
 git tag v0.5.0 && git push origin v0.5.0
-→ Release 发布 → release-sign.yml 触发
+→ Node binaries 建 Release → Node binaries 跑完触发 release-sign.yml（workflow_run）
 → 下载全部产物 → 生成 SHA256SUMS → cosign 签名 → SLSA 来源证明 → 回传 Release
 ```
+
+### 当前真实状态：v0.5.2–v0.5.11 没有 SHA256SUMS
+
+`SHA256SUMS` 只存在于 v0.5.1，v0.5.2 至 v0.5.11 的 Release 都没有。根因有三处，都在 `release-sign.yml` 里，0.5.12 已修：
+
+1. **`gh --jq -r` 写法是错的**：`gh release view … --json assets --jq -r '.assets[].name'` 里 `--jq` 只接受一个参数，`-r` 被当成 jq 表达式，真正的表达式变成多余位置参数，gh 报 `accepts at most 1 arg(s), received 2` 直接退出；这一步在 `bash -e` 下一失败整个 job 就红了，签名在第一轮询就断了。已修成 `--jq '.assets[].name'`（不带 `-r`），偶发的 gh 失败只算“这次没等到”，继续等。
+2. **签名工作流根本没启动**：Release 是 CI 用默认 `GITHUB_TOKEN` 建的（`node-binaries.yml` 的 softprops/action-gh-release），GitHub 不会因此触发 `release: published` 工作流——用 `GITHUB_TOKEN` 触发的事件（除 workflow_dispatch / repository_dispatch 外）不会再触发新的 workflow run。所以只靠 `release: published` 时，tag 推送建 Release 根本不会启动签名。已改走 `workflow_run`：Node binaries 跑完（它负责建 Release）即触发，等待循环再等桌面/手机产物挂齐；手动建的 Release 仍走 `release` 事件，手动重跑仍走 `workflow_dispatch`。
+3. **等待循环没有 fail-closed 出口**：以前等满 50 分钟仍缺产物时，脚本会照常下载、签名一份不全的清单。已补：等不到就直接失败，不签不全的清单。
+
+`SHA256SUMS` 从 0.5.12 起恢复；v0.5.2–v0.5.11 的 Release 不回头补（没法对已发版的产物事后证明“构建时”状态）。安装脚本默认钉住 v0.5.12 并强制校验：下载后先对同一 Release 的 `SHA256SUMS` 校验，哈希对不上、清单里没有、下载不到 `SHA256SUMS`，一律拒绝安装；`verify-release.sh` 在没有 `SHA256SUMS` 时直接报“没有 SHA256SUMS”并退出码 1。
 
 Release 页面会多出这些文件：
 
