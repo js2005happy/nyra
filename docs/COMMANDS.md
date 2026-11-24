@@ -49,7 +49,7 @@
 | `nyra verifier <status\|enable\|disable\|set-model\|rework-on\|rework-off\|add-rule\|remove-rule\|list-rules\|check>` | 验收者：并行产出合入前先验收，不通过打回重做，结论进证据链（详见 `docs/verifier.md`） |
 | `nyra account <status\|login\|logout\|list\|revoke\|link\|suspend\|reactivate>` | 用户账号登录：Google / GitHub / 邮箱 / SSO，账号身份 + 会话（详见 `docs/accounts.md`） |
 | `nyra cloud <status\|connect\|disconnect\|sync\|push\|pull\|pref\|devices\|set-url>` | 第 6 批：手机云端连接——账号登录后直连云端服务、跨端同步，不走局域网（详见 `docs/mobile-cloud.md`） |
-| `nyra sso <provider\|login\|status\|scim>` | 缺口 43 第二批：企业 SSO——OIDC 身份提供方注册与登录、SCIM 账号开通（详见 `docs/sso.md`） |
+| `nyra sso <provider\|login\|route\|status\|scim>` | 缺口 43 第二批：企业 SSO——OIDC 身份提供方注册与登录、邮箱域名路由、组织强制 SSO、SCIM 账号开通（详见 `docs/sso.md`） |
 | `nyra init [--name 名字] [--role researcher\|assistant\|shopkeeper\|custom] [--work 干什么活] [--persona 风格] [--redline 红线] [--agent default] [--yes] [--force]` | 缺口 35：对话式入职——三个问题（叫什么、干什么活、什么风格/红线）→ 生成 Soul + 按角色预装技能包 + 配置清单确认后生效，确认后发就绪简报（详见 `docs/onboarding.md`） |
 | `nyra templates <list\|show <角色>\|apply <角色>\|export <角色> <文件>\|import <文件>>` | 缺口 35：一键角色模板——研究员 / 助理 / 店小二（Soul + 技能包 + 权限规则的打包文件，可导出成本地文件分享；导入先验后装；与 `nyra template` 业务流程模板不同，详见 `docs/onboarding.md`） |
 | `nyra wake` | 缺口 35：唤醒——重发一次就绪简报（我是谁、我会什么、我的红线、本次 0 token），走终端 + 机主收件箱（详见 `docs/onboarding.md`） |
@@ -79,7 +79,7 @@
 | `nyra events <list\|add\|remove\|enable\|disable\|test\|poll>` | 事件触发任务：webhook 与新邮件触发进任务队列（详见 `docs/event-triggers.md`） |
 | `nyra thread <create\|list\|search\|show\|copy\|prune\|state\|history\|runs\|cron-add\|cron-remove\|crons\|archive\|unarchive\|remove>` | 远端线程操作 API：建线程、搜线程、复制接着跑、剪历史、读写状态、给线程绑 cron（详见 `docs/threads.md`） |
 | `nyra automation <list\|show\|install\|remove\|suggested>` | 自动化 bundle：一次装好整条自动化，自带建议触发器（详见 `docs/automations.md`） |
-| `nyra cron <incidents\|policy\|hold>` | cron 成熟语义：漏跑补跑策略（once/skip）+ 配额 hold + 事故账（详见 `docs/cron-maturity.md`） |
+| `nyra cron <incidents\|policy\|hold>` | cron 成熟语义：漏跑补跑策略（once/skip）+ 配额 hold + 事故账 + 例行护栏（15 分钟下限、最多 20 个启用、连败 10 次自动关闭，详见 `docs/cron-maturity.md`） |
 | `nyra backend <list\|use\|status\|docker\|ssh\|e2b>` | 命令后端可换：本机 / Docker / SSH / E2B 控制面 / 云端（未接线），默认本机（详见 `docs/command-backends.md`） |
 | `nyra mail-inbox <status\|enable\|disable\|allowlist\|set\|poll>` | 邮件即任务入口：白名单发件人的邮件直接进任务队列，跑完回信（详见 `docs/mail-inbox.md`） |
 | `nyra responsibility <list\|add\|set\|remove\|enable\|disable\|check\|pause\|resume\|complete\|cancel\|brief\|show>` | 持续责任语义：责任对象（归属人 + 验收标准 + 升级条件 + 过期时间）与晨间简报，无事安静（详见 `docs/responsibilities.md`） |
@@ -123,6 +123,12 @@
 | `nyra governance <policy\|mandate\|mode\|dry-runs>` | 缺口 43：企业治理——版本化策略 + 不可变授权 + observe/auto 接单模式 + 干跑记录（详见 `docs/governance.md`） |
 | `nyra governance caps <set\|list\|show\|check\|assign-team\|pause\|resume\|discard\|pauses>` | 缺口 43 第三批：分层成本上限——按 Bot/角色/团队/人设设月度美元与 token 上限，触顶进可恢复暂停态，放宽留痕（详见 `docs/governance.md`） |
 | `nyra governance audit <export\|verify>` | 缺口 43 第三批：审计导出——治理审计日志导出给 SIEM（JSONL + 哈希链，可验证；详见 `docs/governance.md`） |
+| `nyra governance audit export [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--source <来源>] [--actor <主体>] [--type <事件类型>] [--scope <deployment\|org>] [--initiator <触发方>]` | O2：审计导出——按时间/主体/事件类型/范围/触发方过滤导出给 SIEM（详见 `docs/governance.md`） |
+| `nyra governance audit deployment [--all] [--json]` | O2：部署级审计——部署/升级/回滚记录（详见 `docs/governance.md`） |
+| `nyra governance deploy <说明> [--kind deploy\|upgrade\|rollback]` | O2：部署——记一笔部署级审计（部署/升级/回滚，详见 `docs/governance.md`） |
+| `nyra policy <list\|add\|remove\|enable\|disable\|test\|dry-run\|status>` | O1：策略网关——CEL 风格规则表达式，执行前按规则放行/拒绝/要求审批，拒绝进证据链（详见 `docs/policy.md`） |
+| `nyra learn <list\|scan\|show\|propose\|approve\|reject\|publish\|share\|remove>` | O5：学习队列——候选记忆/技能草稿/agent 声明的人工审核与发布，学习永远要人批（详见 `docs/learning.md`） |
+| `nyra components <list\|block\|unblock>` | O7：生成式 UI——白名单组件（table/card/list/code/chart-bar）与每 Bot 屏蔽表（详见 `docs/components.md`） |
 | `nyra kanban pause <id> "<原因>"` / `nyra kanban resume <id>` | 缺口 43 第三批：任务板 `paused` 状态——分层上限触顶暂停（可恢复，attempts 不动） |
 | `nyra optimize <propose\|list\|show\|edit\|approve\|reject\|apply\|verify\|revert\|loop\|arms>` | G-4：带人批的自优化环——只起草改指令建议，须人批才生效，三数据集 + holdout 定放行；G-P1-29：`loop` 读评测报告自动起草提议并按 UCB 排队，`arms` 看臂排行（详见 `docs/governance.md`） |
 | `nyra eval <scenarios\|scorecard\|benchmarks\|import\|benchmark\|remove\|probes\|probe\|manifest\|scripted>` | G-P1-30：评测当一等公民——场景成绩单 + 外部基准集导入 + 仓内探针 + 可复现清单 + 脚本化任务与金标状态（M5）；跑评测走 `bun run scripts/eval.ts run --scenario/--benchmark/--probe`，脚本化走 `bun run scripts/eval.ts scripted --mode <record\|replay> --out <报告.json>`（详见 `docs/eval.md`） |
@@ -149,7 +155,7 @@
 | `nyra mcp server <status\|enable\|disable\|allow-writes-on\|allow-writes-off>` | 对外 MCP 服务开关：别的 agent 经网关 `POST /mcp` 调 Nyra 的记忆与任务（默认关闭；写操作须显式开且过独立审查，详见 `docs/mcp.md`） |
 | `nyra peer <status\|enable\|disable\|list\|auth\|ask\|handoff\|card\|code\|add\|request\|accept\|friends\|block\|circle\|share\|grant\|proposal\|branch\|discover\|token>` | 对端协作：问别的 Nyra 实例、交接运行上下文、名片加好友（默认关闭；对外发送须开独立审查，详见 `docs/peer.md`）；第 2 批 G-P1-5/G-P1-6/G-P1-8/G-P1-10：名片 per-circle 可见性、带 scope 可吊销的 grant、对方写操作默认进提议、外来任务隔离分支；第 3 批 G-P1-4/G-P1-7：公开发现（well-known 名片 + 验签，不靠线下传码）、per-peer token（出站，每好友一条）、名片 JWS 签名（详见 `docs/peer-discovery.md`） |
 | `nyra circle <create\|list\|show\|invite\|revoke\|delete\|bind\|unbind\|owner\|check\|bindings>` | 信任圈与跨实例准入：谁能给 agent 发任务（默认全封闭，圈外消息网关直接丢弃；详见 `docs/circles.md`） |
-| `nyra org <create\|list\|show\|add\|remove\|role\|delete\|check>` | 组织与团队 workspace：组织/成员/角色 admin/member/viewer（机主是超级管理员；详见 `docs/orgs.md`） |
+| `nyra org <create\|list\|show\|add\|remove\|role\|delete\|check\|sso>` | 组织与团队 workspace：组织/成员/角色 admin/member/viewer（机主是超级管理员；`sso` 开关组织强制 SSO，详见 `docs/orgs.md`） |
 | `nyra org <share\|shared\|unshare\|grant-write\|revoke-write\|grants\|learnings\|workspace\|file-read\|cross-access\|catalog\|tasks\|task-add\|violations\|isolation\|memory>` | 共享 Bot（默认只读、写须主人接受）、租户隔离（任务与记忆带 org_id 归属、文件走组织工作区）、组织内私有目录（详见 `docs/orgs.md`） |
 | `nyra session <create\|list\|show\|join\|leave\|delegate\|accept\|verify\|complete\|share\|frame\|record\|end\|join-request\|join-approve\|join-decline\|join-list>` | 跨 agent 联合会话：多人多 agent 视频会（本地扇出模型），会内委派 + 共享任务产物（allowlist），画面默认不留存、录制须全体同意；第 2 批 G-P1-5：好友进会要批（待批请求，批准时重查准入闸）；39-40 后续：交活即按契约跑验收（`verify` 看逐项结论，`complete` 须 `--confirm`/`--fail` 逐项确认，全通过才标 completed，详见 `docs/sessions.md`） |
 | `nyra call <ledger\|show <通话 id>\|summary [--by-person]>` | 通话成本与隐私仪表：每通电话的三本账（传输/媒体/token，本地与云端分开记）+ 录制仪表 + 通话纪要进证据链；39-40 后续：`summary --by-person` 按人分摊（费用与 token 按参与人数平分，时长按各人实际在场时间，录制按各人同意且在场的时间，详见 `docs/call-ledger.md`） |

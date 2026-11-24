@@ -32,6 +32,26 @@ nyra sso status
 - 身份链到缺口 41 的账号（provider `"sso"`，`LinkedIdentity.issuer` 记 issuer，`sub` 是 IdP 的 sub；同邮箱链到同一个账号，不建第二个）。
 - 已停用的账号拒绝登录（`upsertAccount` 里拦，见下）。
 
+### 组织强制 SSO 与邮箱域名路由（O3）
+
+组织可以要求成员只能走 SSO 登录（不再接受 GitHub / Google / 邮箱 magic link）：
+
+```sh
+# 组织管理员开强制 SSO：绑身份提供方 + 绑定邮箱域名
+nyra org sso 研发组 on --provider corp --domains example.com,example.cn
+# 关掉
+nyra org sso 研发组 off
+# 用户先查自己该走哪个提供方登录
+nyra sso route me@example.com
+nyra sso login corp
+```
+
+- 开关存在组织账本（`Org.require_sso` / `sso_provider` / `sso_domains`），改动进组织审计（`org-audit.jsonl`，动作 `org_sso_changed`）与运行事件 `org_sso_changed`。
+- 拦截点在登录发会话之前（`loginWithGoogle` / `loginWithGithub` / `requestMagicLink` / `loginWithMagicLink`）：邮箱域名命中强制 SSO 的组织，或账号已是强制 SSO 组织的成员时，非 SSO 登录直接拒绝并提示该走的 `nyra sso login <提供方>`。SSO 登录本身不受影响。
+- 路由只做建议：`nyra sso route <邮箱>` 按域名找组织、打印对应的身份提供方与登录命令；域名没绑定任何组织时提示走默认登录。
+- 先开开关、后注册提供方是合法顺序：此时非 SSO 登录仍会被拦，提示里写 `<身份提供方>`，CLI 会提醒先绑提供方。
+- 只做登录，不做 SCIM 全量同步；actor 直接对应 IdP 的 sub，不另起身份体系；自托管单机场景下 SSO 默认关。
+
 ## SCIM 2.0 账号开通（RFC 7643 / 7644）
 
 SCIM 端点挂在网关上：`/scim/v2/Users`、`/scim/v2/Groups`，另有 `/scim/v2/ServiceProviderConfig`、`/scim/v2/ResourceTypes`、`/scim/v2/Schemas`。鉴权用 SCIM 自己的 Bearer token，**不走 `X-Nyra-Token`**。

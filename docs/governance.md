@@ -282,14 +282,15 @@ nyra governance caps discard <暂停 id> --yes
 hash 重算；来源文件漂移只警告，不判失败——导出那一刻的指纹在
 头部里，事后文件变了是正常的追加）。
 
-覆盖的 10 份治理审计日志：`governance-audit.jsonl`（策略/授权/
-模式/干跑/提议 + 本批的上限与暂停）、`sso-audit.jsonl`、
+覆盖的 11 份治理审计日志：`governance-audit.jsonl`（策略/授权/
+模式/干跑/提议 + 本批的上限与暂停 + O2 的部署级审计）、`sso-audit.jsonl`、
 `accounts-audit.jsonl`、`business-redlines-audit.jsonl`、
 `soul-audit.jsonl`、`trust-ladder-audit.jsonl`（信任阶梯）、
 `model-switch-audit.jsonl`（备用模型切换）、`bot-audit.jsonl`
 （缺口 27：渠道路由决定——routed/dropped + 绑定/规则/原因）、
 `script-preauth-audit.jsonl`（Pi Bot 借鉴第 1 条：脚本预授权——granted / revoked / used / refused）、
-`handover-contract-audit.jsonl`（Pi Bot 借鉴第 2 条：交接契约验收——created / linked / checked / resolved / closed）。策略文件（`governance-policy.json`、
+`handover-contract-audit.jsonl`（Pi Bot 借鉴第 2 条：交接契约验收——created / linked / checked / resolved / closed）、
+`policy-audit.jsonl`（O1：策略网关——规则增删、命中拒绝/要求人工/演练）。策略文件（`governance-policy.json`、
 `governance-mandates.json`）与上限账本（`cost-caps.json`、
 `cost-pauses.json`）只导出指纹，不导出正文。运行级证据链
 （`runs/` 下的 `events.jsonl`）不在本导出里——那是运行证据，
@@ -297,6 +298,7 @@ hash 重算；来源文件漂移只警告，不判失败——导出那一刻的
 
 ```
 nyra governance audit export [--from <ISO 日期>] [--to <ISO 日期>] [--out <文件>] [--force]
+  [--source <来源>] [--actor <主体>] [--type <事件类型>] [--scope <deployment|org>] [--initiator <触发方>]
 nyra governance audit verify <导出文件>
 ```
 
@@ -308,6 +310,68 @@ nyra governance audit verify <导出文件>
 只记元数据与指纹：导出里不出现邮箱、token、secret、绝对路径——数据行在
 导出前脱敏（home 目录换成 `[home]`，其他用户路径前缀换成 `[path]`，
 密钥样字段的值换成 `<redacted>`），哈希链在脱敏后的行上算。
+
+### 导出过滤（O2）
+
+`--actor` 认审计行里的 `actor`/`actor_id`/`by`，`--type` 认
+`kind`/`action`/`type`，`--scope` 认 `scope`，`--initiator` 认
+`initiator`/`initiator_kind`，任一字段等于过滤值即命中。注意 `kind`
+与 `action` 不是同一概念：部署行 `kind` 是 `deployment`、`action`
+才是 `deploy`，所以 `--type deploy` 能筛到它。某行完全没有该概念的
+字段时不命中（筛不出来不等于丢了：不过滤的完整导出里仍有它）。
+想精确查某类事件时，用 `--type` + `--source` 一起筛（例如
+`--source governance --type audit_exported`）。
+
+### 审计导出 API（O2）
+
+与 CLI 导出同一份内容（JSONL + 哈希链），只是这里返回解析后的 JSON：
+
+```
+GET /api/audit/export?from=2026-11-01&to=2026-11-30&sources=governance,policy
+  &actor=owner&type=denied&scope=deployment&initiator=cron&format=json&limit=5000
+```
+
+- 只限本机机主（token 鉴权 + owner 限定，已配对设备也不给）。
+- `format=json`（默认）返回 `{ ok, lines, out_hash, header_hash, records }`；
+  `format=jsonl` 返回原始 JSONL 文本（与 CLI 导出到文件的内容一致，可
+  用 `nyra governance audit verify` 验链）。
+- `limit` 默认 5000、最大 50000：记录超过 limit 时返回 400，请加过滤条件
+  或用 CLI 导出到文件（CLI 不限行数）。这是响应体积保护，不是审计本身的上限。
+- 导出本身照常记 `audit_exported`（这条记录在下一次导出里才看得到）。
+- 先做只读导出，不做 OTLP 直送 SIEM（要直送时用 CLI 导出 + 自家采集器推）。
+
+### 部署级审计（O2）
+
+部署配置变更、升级、回滚、密钥轮换、成员变动这类事件也要进审计——
+但**不另起一套账本**：仍写同一本 `governance-audit.jsonl`，只加
+`scope: "deployment"` 区分（组织级事件 scope 为 `"org"` 或不填）。
+
+```
+nyra governance deploy <说明> [--kind deploy|upgrade|rollback]
+nyra governance audit deployment [--all] [--json]
+```
+
+- `deploy` 的说明必填（最长 300 字，超长截断）；`--kind` 默认 `deploy`。
+- `audit deployment` 默认看最近 20 条，`--all` 看全部，`--json` 出 JSON。
+- 部署脚本（O4 的 `scripts/deploy.sh`）升级/回滚时调这条命令记账；
+  密钥轮换与成员变动由调用方用 `scope: "deployment"` 的审计行记
+  （action 写 `key_rotated` / `member_changed`），不经过 `deploy` 命令。
+
+### 运行事件的触发方（O2）
+
+每次运行创建时记 `initiator`（触发方）：`person`（CLI 人工）、`gateway`
+（网页/API 发起）、`cron`（定时任务）、`routine`（例行）、`webhook`
+（webhook 触发）、`handoff`（交接）、`group`（群聊）。记在三处：
+
+- 运行记录 `runs/<id>/state.json` 的 `initiator` 字段（旧运行没有该字段）；
+- 运行事件 `run_started` 的 `initiator` 字段；
+- 审计导出可用 `--initiator <触发方>` 过滤（审计行里有 `initiator` 或
+  `initiator_kind` 字段的才参与筛）。
+
+注意：`routine`/`webhook`/`handoff`/`group` 这几个值目前只有字段位，
+除 `cron`（网关定时任务）与 `gateway`（网关会话）外，其他触发方
+还没接调用方传值——CLI 人工运行记 `person`，队列/定时任务经 CLI
+跑的也记 `person`（调用方后续传值后才分得清）。
 
 ## 审计与事件
 
