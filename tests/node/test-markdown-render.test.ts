@@ -96,3 +96,26 @@ describe("safe markdown", () => {
     }
   });
 });
+
+describe("mobile 待你决定 card summary", () => {
+  test("review card summary uses the safe renderer, not raw text", () => {
+    const mob = readFileSync(join(ASSETS, "mobile-app.js.txt"), "utf-8");
+    // 摘要走 mdBox（内部调用 NyraMd.render，失败退回 textContent），不再把原文塞进 el('div','sum', …)。
+    expect(mob).toContain("card.appendChild(mdBox('sum', String(item.summary)");
+    expect(mob).not.toMatch(/el\('div', 'sum', String\(item\.summary\)/);
+    const fn = mob.slice(mob.indexOf("function mdBox("), mob.indexOf("function bubble("));
+    expect(fn).toContain("window.NyraMd.render(txt, b, document)");
+    expect(fn).toContain("b.textContent = txt");
+    expect(fn).not.toMatch(/innerHTML/);
+    const css = readFileSync(join(ASSETS, "mobile-app.css.txt"), "utf-8");
+    expect(css).toContain(".rv .sum.md{white-space:normal}");
+  });
+
+  test("the m-06 sample summary renders as a list with bold and code", () => {
+    const html = render("好的，我把要点整理如下：\n\n1. **先确认目标**：今天要交付的是周报初稿\n2. **数据来源**：`orders.csv`（本周 412 行）\n3. **输出**：Markdown 表格 + 3 条结论\n\n要我现在开始吗？");
+    expect(html).toContain("<ol><li><div><strong>先确认目标</strong>");
+    expect(html).toContain("<code>orders.csv</code>");
+    expect(html).not.toContain("**");
+    expect(html).not.toContain("`");
+  });
+});

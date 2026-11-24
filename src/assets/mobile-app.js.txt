@@ -491,6 +491,12 @@ function renderFeed(v){
   if (v.status !== 'running') pendingText = '';
   window.scrollTo(0, document.body.scrollHeight);
 }
+// 待你决定卡片里的摘要（多半是助手写的 Markdown）也走同一个安全渲染器；渲染器缺失或出错时退回纯文字。
+function mdBox(cls, txt){
+  const b = el('div', cls);
+  if (window.NyraMd) { try { window.NyraMd.render(txt, b, document); return b; } catch (e) {} }
+  b.textContent = txt; return b;
+}
 function bubble(m, all, txt){
   // 助手回复用安全 Markdown 渲染（表格可横向滚动）；用户自己的话原样显示。
   let b;
@@ -880,7 +886,7 @@ function renderReview(items){
     tags.appendChild(el('span', 'tag', reviewCostLabel(item)));
     card.appendChild(tags);
     if (item.changedFiles && item.changedFiles.length) card.appendChild(el('div', 'files mono', item.changedFiles.join(t('m.listSep'))));
-    if (item.summary) card.appendChild(el('div', 'sum', String(item.summary).slice(0, 500)));
+    if (item.summary) card.appendChild(mdBox('sum', String(item.summary).slice(0, 500)));
     if (item.diffStat) { const d = el('pre', '', String(item.diffStat).slice(0, 1500)); d.setAttribute('aria-label', t('m.review.diff')); card.appendChild(d); }
     if (item.status === 'pending' && (!item.verification || item.verification.status !== 'verified')) card.appendChild(el('div', 'warn', t('m.review.unverifiedWarn')));
     if (item.decidedBy) card.appendChild(el('div', 'note', t('m.review.decided') + t('m.colon') + item.decidedBy)).style.padding = '8px 0 0';
