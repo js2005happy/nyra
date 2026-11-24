@@ -22,9 +22,13 @@ export interface ProviderPreset {
   auth?: "cli";
 }
 
-/** 14 个内置 provider，与 Python 版 nyra/config.py 的 PROVIDERS 一一对应。 */
+/** 15 个内置 provider，与 Python 版 nyra/config.py 的 PROVIDERS 一一对应。 */
 export const PROVIDERS: Record<string, ProviderPreset> = {
   deepseek: { baseUrl: "https://api.deepseek.com/v1", defaultModel: "deepseek-flash", envKey: "DEEPSEEK_API_KEY", connector: "custom.deepseek", allowedHosts: ["api.deepseek.com"], models: ["deepseek-flash", "deepseek-v4-pro"] },
+  // OpenLux（openlux.ai）：AI API 中转站，一个 Key 调 300+ 模型（OpenAI 兼容）。
+  // Key 按建 Key 时选的分组计费，不同分组带的模型不同；models 只列窗口已核实的，
+  // 其余模型名照样能用 --model 透传（见 GUIDE.md）。
+  openlux: { baseUrl: "https://api.openlux.ai/v1", defaultModel: "deepseek-v4.1-flash", envKey: "OPENLUX_API_KEY", connector: null, allowedHosts: ["api.openlux.ai"], models: ["deepseek-v4.1-flash", "claude-sonnet-5-5", "claude-opus-5-5", "claude-sonnet-5", "claude-fable-5-2", "gemini-3.8-flash", "gemini-3.7-flash"] },
   xai: { baseUrl: "https://api.x.ai/v1", defaultModel: "grok-4.3", envKey: "XAI_API_KEY", connector: "custom.xai", allowedHosts: ["api.x.ai"], models: ["grok-4.3", "grok-4.5"] },
   openrouter: { baseUrl: "https://openrouter.ai/api/v1", defaultModel: "nousresearch/hermes-4-14b", envKey: "OPENROUTER_API_KEY", connector: null, allowedHosts: [], models: ["nousresearch/hermes-4-14b", "nousresearch/hermes-4-70b"] },
   ollama: { baseUrl: "http://localhost:11434/v1", defaultModel: "qwen2.5:7b", envKey: null, connector: null, allowedHosts: [], models: ["qwen2.5:7b"] },

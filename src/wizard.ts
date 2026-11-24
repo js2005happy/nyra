@@ -1,5 +1,5 @@
 // src/wizard.ts — 首次启动向导（中文，三步到第一个任务）。
-// 第 1 步：选模型来源（14 个 provider + 本地 Ollama / Codex，二选一的本地项排在前面）。
+// 第 1 步：选模型来源（15 个 provider + 本地 Ollama / Codex，二选一的本地项排在前面）。
 // 第 2 步：填 Key 或选本地。Key 绝不写进 config.json（与 Python 版一致）：
 //   已在环境变量里的 Key 直接认；rc 里已有的 Key 只显示后 4 位，密码箱可用时
 //   问要不要迁入密码箱；新填的 Key 用掩码输入（屏幕上只显示 *），
@@ -24,7 +24,7 @@ export interface WizardResult {
 
 const LOCAL_FIRST = ["ollama", "codex"];
 
-/** 向导里的 provider 顺序：本地项在前，内置 14 个，末尾跟用户自定义的。 */
+/** 向导里的 provider 顺序：本地项在前，内置 15 个，末尾跟用户自定义的。 */
 export function providerOrder(config: Record<string, unknown>): string[] {
   const customNames = Object.keys((config.custom_providers as Record<string, unknown>) || {})
     .filter((n) => !PROVIDERS[n]);

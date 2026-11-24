@@ -41,14 +41,15 @@ export interface ModelCapability {
 }
 
 /** 内置表版本（整理日期）：每次人工更新数值时改这一处与各条的 updated。 */
-export const MODEL_CATALOG_UPDATED = "2026-11-20";
+export const MODEL_CATALOG_UPDATED = "2026-11-24";
 
 /**
- * 内置模型能力登记表（2026-11-20 整理，数值与来源逐项见 docs/model-catalog.md）。
+ * 内置模型能力登记表（2026-11-20 整理，OpenLux 7 条 2026-11-24 补入；数值与来源逐项见 docs/model-catalog.md）。
  * 只覆盖 config.ts 里 PROVIDERS 的模型；codex-default 不在表里——Codex CLI
  * 用的模型由本机 Codex 决定，Nyra 从配置里看不到窗口，走 unknown 分支说明原因。
  * 计价为官方定价页的缓存未命中价（美元 / 百万 token），仅作参考，不进成本计算；
- * 没把握的留 null，不编数字。
+ * 没把握的留 null，不编数字。OpenLux 的价是官方价 × 建 Key 时选的分组系数，
+ * 分组不同价不同，所以 OpenLux 各条计价一律留 null，见 note。
  */
 export const MODEL_CATALOG: ModelCapability[] = [
   // DeepSeek（api-docs.deepseek.com/quick_start/pricing）：两模型均为 1M 窗口、384K 输出。
@@ -95,6 +96,17 @@ export const MODEL_CATALOG: ModelCapability[] = [
   { model: "meta-llama/Llama-3.3-70B-Instruct-Turbo", provider: "together", supportsVision: false, contextWindow: 131_072, maxOutputTokens: null, inputPricePer1M: null, outputPricePer1M: null, source: "https://www.together.ai/pricing", updated: "2026-11-20" },
   { model: "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo", provider: "together", supportsVision: false, contextWindow: 131_072, maxOutputTokens: null, inputPricePer1M: null, outputPricePer1M: null, source: "https://www.together.ai/pricing", updated: "2026-11-20" },
   { model: "Qwen/Qwen2.5-72B-Instruct-Turbo", provider: "together", supportsVision: false, contextWindow: 32_768, maxOutputTokens: null, inputPricePer1M: null, outputPricePer1M: null, source: "https://www.together.ai/pricing", updated: "2026-11-20" },
+  // OpenLux（2026-11-24 核实）：窗口数来自各家官方文档（Anthropic / DeepSeek / OpenLux
+  // 定价页）；计价一律留 null——OpenLux 按建 Key 时选的分组系数（官方价 × 系数）计费，
+  // 分组不同价不同，见 note。GPT-6 系与 gemini-4-argon 未在官方文档里核实到窗口，
+  // 不进表（照样能用 --model 透传，窗口走 unknown 分支说明原因）。
+  { model: "deepseek-v4.1-flash", provider: "openlux", supportsVision: true, contextWindow: 1_000_000, maxOutputTokens: 393_216, inputPricePer1M: null, outputPricePer1M: null, source: "https://api-docs.deepseek.com/quick_start/pricing", updated: "2026-11-24", note: "OpenLux 按分组系数计价，见 openlux.ai/pricing" },
+  { model: "claude-sonnet-5-5", provider: "openlux", supportsVision: true, contextWindow: 1_000_000, maxOutputTokens: 128_000, inputPricePer1M: null, outputPricePer1M: null, source: "https://platform.claude.com/docs/about-claude/models/overview", updated: "2026-11-24", note: "OpenLux 按分组系数计价，见 openlux.ai/pricing" },
+  { model: "claude-opus-5-5", provider: "openlux", supportsVision: true, contextWindow: 1_000_000, maxOutputTokens: 128_000, inputPricePer1M: null, outputPricePer1M: null, source: "https://platform.claude.com/docs/about-claude/models/overview", updated: "2026-11-24", note: "OpenLux 按分组系数计价，见 openlux.ai/pricing" },
+  { model: "claude-sonnet-5", provider: "openlux", supportsVision: true, contextWindow: 1_000_000, maxOutputTokens: 128_000, inputPricePer1M: null, outputPricePer1M: null, source: "https://platform.claude.com/docs/about-claude/models/overview", updated: "2026-11-24", note: "OpenLux 按分组系数计价，见 openlux.ai/pricing" },
+  { model: "claude-fable-5-2", provider: "openlux", supportsVision: true, contextWindow: 1_000_000, maxOutputTokens: 128_000, inputPricePer1M: null, outputPricePer1M: null, source: "https://platform.claude.com/docs/about-claude/models/overview", updated: "2026-11-24", note: "OpenLux 按分组系数计价，见 openlux.ai/pricing" },
+  { model: "gemini-3.8-flash", provider: "openlux", supportsVision: true, contextWindow: 1_000_000, maxOutputTokens: null, inputPricePer1M: null, outputPricePer1M: null, source: "https://www.openlux.ai/pricing", updated: "2026-11-24", note: "OpenLux 按分组系数计价，见 openlux.ai/pricing" },
+  { model: "gemini-3.7-flash", provider: "openlux", supportsVision: true, contextWindow: 1_000_000, maxOutputTokens: null, inputPricePer1M: null, outputPricePer1M: null, source: "https://www.openlux.ai/pricing", updated: "2026-11-24", note: "OpenLux 按分组系数计价，见 openlux.ai/pricing" },
 ];
 
 /** 刷新缓存的来源：OpenRouter 公开模型列表（无需 Key），含 context_length 与计价。 */
