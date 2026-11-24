@@ -22,7 +22,7 @@ const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
 const SUMS_LINE_RE = /^([0-9a-f]{64})[ \t]+\*?(\S+)\s*$/;
 
 /** 钉住的默认安装版本（与三份安装脚本头部的 DEFAULT_VERSION 同步）。 */
-export const PINNED_INSTALL_VERSION = "v0.5.11";
+export const PINNED_INSTALL_VERSION = "v0.5.12";
 
 /** 把用户给的版本统一成 v 前缀；"latest" 原样保留。 */
 export function normalizeReleaseVersion(version: string): string {

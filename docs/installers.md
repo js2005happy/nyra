@@ -35,7 +35,7 @@ v0.5.2–v0.5.11 的 Release 都没有（根因另有 `gh --jq -r` 写法错误�
 
 三份安装脚本（`scripts/install-node.sh`、`scripts/install-node-macos.sh`、
 `scripts/install-node.ps1`）默认不再是无校验的 `latest`，而是钉住
-`DEFAULT_VERSION`（当前 `v0.5.11`，写在每份脚本头部显眼处）。下载后先对同一
+`DEFAULT_VERSION`（当前 `v0.5.12`，写在每份脚本头部显眼处）。下载后先对同一
 Release 的 `SHA256SUMS` 校验再安装：哈希对不上、清单里没有这个文件、
 下载不到 `SHA256SUMS`，一律拒绝安装（fail-closed）。`--version latest`
 仍可显式传，但同样要校验；`--from-file` 从本地文件装，不联网、不校验。
