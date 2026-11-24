@@ -98,7 +98,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." 2>/dev/null && pwd)"
 LABEL="ai.nyra.scheduler"
 PLIST_NAME="ai.nyra.scheduler.plist"
 PLIST_SRC="$ROOT/launchd/$PLIST_NAME"

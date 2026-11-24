@@ -99,7 +99,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." 2>/dev/null && pwd)"
 SERVICE_SRC="$ROOT/systemd/nyra-scheduler.service"
 SERVICE_DST="${HOME}/.config/systemd/user/nyra-scheduler.service"
 
