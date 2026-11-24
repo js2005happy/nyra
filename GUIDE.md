@@ -2,6 +2,134 @@
 
 这里是 Nyra 的全部功能、命令与安全说明。简介与快速上手见 [README](README.md)。
 
+## 快速开始
+
+**新用户：下载、运行，两步**（Node 单文件二进制，不用装 Python、不用装 Node）：
+
+```bash
+# 1）下载：到 https://github.com/js2005happy/nyra/releases 下最新版，
+#    按平台拿一个文件（Linux x64：nyra-linux-x64；Windows：nyra-windows-x64.exe；
+#    macOS arm64：nyra-macos-arm64，Intel：nyra-macos-x64）
+# 2）运行（以 Linux 为例）：
+chmod +x nyra-linux-x64
+./nyra-linux-x64 setup      # 首次启动向导（中文，三步到第一个任务）
+./nyra-linux-x64 doctor     # 中文自检：Key、网络、目录权限、磁盘
+```
+
+Node 二进制是完整版（agent 核心、网页界面、插件市场、创造模式都在内）。
+
+> 想从源码自己编二进制：`bash scripts/build-binaries.sh --only linux-x64`（产物在 `dist/`）。
+
+**源码方式（想自己构建或看代码）：**
+
+先把仓库克隆到本地，再进入仓库目录——下面所有命令都在这个目录里运行：
+
+```bash
+git clone https://github.com/js2005happy/nyra.git
+cd nyra
+
+# 一次性任务（需要先配置模型，见下）
+bun run src/cli.ts "创建一个文件 hello.txt，写一句问候，再读回来汇报"
+
+# 交互模式
+nyra
+
+# 查看技能和历史会话
+nyra --list-skills
+nyra --list-sessions
+```
+
+## 配置模型
+
+Nyra 支持任何 OpenAI 兼容接口。配置方式按优先级：命令行参数 > 环境变量 > `~/.nyra/config.json`。
+
+| Provider | 环境变量 | 默认模型 | 说明 |
+|---|---|---|---|
+| deepseek（默认） | `DEEPSEEK_API_KEY` | `deepseek-flash` | 便宜，适合日常任务；`deepseek-v4-pro` 更强 |
+| xai（Grok） | `XAI_API_KEY` | `grok-4.3` | |
+| openrouter | `OPENROUTER_API_KEY` | `nousresearch/hermes-4-14b` | 可用 Hermes 等开源权重模型 |
+| openlux | `OPENLUX_API_KEY` | `deepseek-v4.1-flash` | 中转站，一个 Key 调 300+ 模型（Claude/GPT/Gemini/DeepSeek/Qwen）；Key 按建 Key 时选的分组计费，不同分组带的模型不同，`--model` 可透传任意模型名 |
+| ollama（本地） | 无需 Key | `qwen2.5:7b` | 需本地跑 Ollama |
+| openai | `OPENAI_API_KEY` | `gpt-4o-mini` | |
+| qwen（通义千问） | `DASHSCOPE_API_KEY` | `qwen-plus` | 阿里 DashScope 兼容模式 |
+| kimi（Kimi） | `MOONSHOT_API_KEY` | `kimi-k3` | 月之暗面，中国区 endpoint |
+| glm（智谱） | `ZHIPU_API_KEY` | `glm-5.3` | 智谱 BigModel 兼容模式 |
+| gemini | `GEMINI_API_KEY` | `gemini-2.5-flash` | Google OpenAI 兼容端点 |
+| mistral | `MISTRAL_API_KEY` | `mistral-small-latest` | |
+| groq | `GROQ_API_KEY` | `llama-3.3-70b-versatile` | 极快推理，免费额度 |
+| together | `TOGETHER_API_KEY` | `meta-llama/Llama-3.3-70B-Instruct-Turbo` | 一个 Key 用上百个开源模型 |
+| custom | `NYRA_API_KEY` + `NYRA_BASE_URL` + `NYRA_MODEL` | — | 任意兼容接口（环境变量方式） |
+| codex | 无需 Key（本机 Codex 登录态） | `codex-default` | 调用本机 `codex` CLI，复用 ChatGPT 订阅；不调模型 API |
+
+### 自定义 provider 与列出模型
+
+上面没有的模型也能接：只要它走 OpenAI `/v1/chat/completions` 协议，在 `~/.nyra/config.json` 的 `custom_providers` 里加一条就行，Key 只从环境变量读，不写进配置：
+
+```json
+{
+  "custom_providers": {
+    "myllm": {
+      "base_url": "https://llm.example.com/v1",
+      "default_model": "myllm-1",
+      "env_key": "MYLLM_API_KEY",
+      "models": ["myllm-1", "myllm-2"]
+    }
+  }
+}
+```
+
+- `base_url` 和 `default_model` 必填，且 `base_url` 必须是 http/https；`env_key` 是存 Key 的环境变量名（不填则无需 Key，或用 `NYRA_API_KEY`）；`models`、`allowed_hosts` 可选；未知字段会被忽略。
+- 明文 `http://` 只允许本机地址（`localhost`、`127.0.0.1`、`::1`，比如本机 Ollama），外网地址必须用 `https://`——否则 API Key 会随请求明文发出去。写了外网 `http://` 会在解析配置时直接报错并提示改用 `https://`；即使绕过配置解析直接构造 provider，`chat()` / `list_models()` 发请求前也会再拦一次。环境变量方式的自定义（`NYRA_BASE_URL`）同样受这条规则约束。
+- 同名自定义会覆盖内置预设（比如自己搭的 DeepSeek 兼容代理可以覆盖 `deepseek`）；写错的自定义（缺 `base_url`/`default_model`、协议不是 http/https）会在解析时直接报错并点名，不会静默失效。
+- 自定义 provider 可以进 fallback 链：`"fallback_providers": ["myllm", "deepseek"]`，或环境变量 `NYRA_FALLBACK_PROVIDERS="myllm,deepseek"`。
+- 某个 provider 需要 Key 但环境变量没设时，Nyra 会直接报“未设置 API Key”并提示配置，不会先发一个无认证的请求再等服务端 401。
+- 列出可用模型：`nyra --list-providers` 看全部 provider 与默认模型；`nyra --provider qwen --list-models` 问该 endpoint 的 `/models` 接口拿实时模型列表（需要 Key，Ollama 本地不用）。
+
+也可以直接用已保存的连接器凭证：DeepSeek 和 xAI 的 Key 已通过安全流程保存，**不用再填 Key**，直接用：
+
+```bash
+nyra --provider deepseek "做点什么"
+nyra --provider xai --model grok-4.5 "做点什么"
+```
+
+发往本机地址（如本地 Ollama 的 `localhost:11434`）的请求总是直连，不受 `HTTP_PROXY` / `HTTPS_PROXY` 影响；其他地址照常遵守代理设置。
+
+Key 只从环境变量或已保存的连接器读取，**绝不会**打印、记录或写进项目文件。配置存在 `~/.nyra/config.json`（不含任何 Key）。
+
+### Codex CLI provider（不用 API Key）
+
+`--provider codex` 不调任何模型 API，而是用子进程跑本机装好的 `codex` CLI（`codex exec` 非交互方式），复用它自己的登录态与 ChatGPT 订阅：
+
+```bash
+nyra --provider codex "做点什么"
+```
+
+- **模型**：默认模型名是 `codex-default`，意思是“不传 `-m`，让 CLI 用自己的默认模型”。实测：ChatGPT 订阅登录时 `-m gpt-5` 与 `-m gpt-5-codex` 都会被服务端以 `model_not_found` 拒绝（“The 'gpt-5' model is not supported when using Codex with a ChatGPT account.”），唯有不传 `-m` 能跑通。`--model` 显式指定别的模型时会原样传 `-m`，被服务端拒绝时报配置错误（不兜底、不重试去烧别的 Key）。
+- **固定提示前缀（缓存命中）**：每次请求的最开头都会先拼一段字节级固定的英文前缀（`src/providers.ts` 的 `CODEX_PROMPT_PREFIX`），再接按 `[role]` 标记序列化后的消息。前缀内容是身份与边界声明——“You are Nyra, a text-only assistant. Reply in the user's language, concisely and directly. Do not call tools, run commands, browse the web, or modify files. Answer with text only.”——因为它在每个请求里一字不变、又始终在最前面，提供商侧的提示缓存能直接命中这段公共前缀，重复调用时只算增量 token。注意：前缀只做文字模型的身份与行为约束，不传任何工具 schema；`codex exec` 本身没有“纯聊天模式”开关，仍跑自己的 agent 循环，真正的硬约束靠只读沙箱与临时工作目录（见下）。
+- **调用方式**：固定 argv——`codex exec --json -o <临时文件> -s read-only -C <空临时工作目录> --ephemeral --skip-git-repo-check -c features.browser_use=false -c features.computer_use=false -c features.plugins=false`（默认模型时不加 `-m`）。prompt 走 stdin 传（不在 argv 里，`ps` 看不到）；成功时优先读 `-o` 文件里的最终消息，文件为空时回退解析 `--json` 的 JSONL 事件流；用量能解析到就记进 usage。超时由 Nyra 的 subprocess 侧强制（`codex exec` 没有 `--timeout` 参数），超时后杀掉整个进程组。
+- **四个安全条件（代码里强制 + 测试覆盖）**：
+  1. **只用固定路径**：`codex` 二进制只从固定已知位置解析（`/opt/hatch-image/bin/codex`、`~/.local/bin/codex`、`/usr/local/bin/codex`、`/usr/bin/codex`，Windows 再加两条固定候选），`shutil.which("codex")` 只是最后的兜底；绝不从配置、环境变量或用户输入里取路径（`NYRA_CODEX_PATH` 之类的变量会被忽略）。
+  2. **不碰登录凭证**：绝不读取、复制或记录 `~/.codex/auth.json` 之类的 CLI 凭据文件；登录检查只跑 `codex login status`，只读退出码与 “Logged in” 标记（实测该标记走 stderr）。子进程环境会删掉全部 `*_API_KEY` 变量，CLI 只靠自己 HOME 下的登录态。
+  3. **不用跳过审批的参数**：绝不传 `--dangerously-bypass-approvals-and-sandbox`、`--approve-for-me`、`--dangerously-bypass-hook-trust`、`-y`、`--full-auto`；argv 建好后会自检，含禁用参数直接拒绝。调用始终是 `-s read-only`，工作目录是每次新建的空临时目录，用后删除。
+  4. **不进兜底链**：只能被显式选中（`--provider codex`、配置、`POST /api/provider`），绝不作为兜底目标；`resolve_fallback_chain("codex")` 只返回 `["codex"]`，链里出现 codex 会被跳过并记日志；定时任务与队列里绝不用——`Provider` 的直接构造在 auth 为 CLI 时会被拒绝（`src/providers.ts` 构造器守卫），定时任务与队列走直接构造，所以选 codex 时会在启动前就报错。
+- **Claude 待办**：本轮只做了 Codex。Claude CLI（`claude`）尚未装到本机，且须先在用户电脑（Windows）上核查 `claude --version` 与登录情况，核查完再按同一套约束接进来。
+
+### 后台任务 worker（0.4.0）
+
+Python worker（`nyra.worker`，stdio JSONL 协议 v1）已在 0.4.0 随 Python 一起删除；Go 混合路线已作废（改走完整 Node 运行时，见 `docs/node-migration-phase*.md`）。后台任务现在由 Node 原生任务队列跑：`nyra task add` 入队，`nyra task worker` 消费执行，`nyra task list/show/cancel/approve` 管理；审批与超时规则与主循环一致，协议细节见 `src/tasks.ts`。
+
+### 模型自动兜底
+
+主模型调用失败时，Nyra 可以自动按链切换到下一个模型重试一次，不用手动换模型。默认链是 DeepSeek flash → Grok → 本地 Ollama（主模型始终排第一，每次调用都从主模型开始试）。
+
+- 会兜底的失败：余额不足（402）、限流（429）、服务端错误（5xx）、超时、网络错误。
+- 不会兜底的失败：认证失败（401/403，换模型也解决不了）、配置问题（没设 Key、响应无法解析等）。
+- **默认关闭**，只由用户自己开启（三选一）：`~/.nyra/config.json` 里设 `"fallback_enabled": true`；环境变量 `NYRA_FALLBACK=1`；单次加 `--fallback`。关闭方式：`"fallback_enabled": false`、环境变量 `NYRA_FALLBACK=0`，或单次加 `--no-fallback`（`--fallback` 与 `--no-fallback` 同时给时，以关闭为准）。
+- 允许列表：只切换到 `fallback_providers` 里列出的服务商。改链：`~/.nyra/config.json` 里设 `"fallback_providers": ["deepseek", "xai", "ollama"]`，或环境变量 `NYRA_FALLBACK_PROVIDERS="deepseek,xai,ollama"`（逗号分隔，主模型自动排第一；未知名字会被跳过并记一条日志；显式写空列表表示不允许任何备用，不会静默补默认链）。链里写了未配置 Key 的服务商时也会被跳过并记日志。备用模型用各自的默认模型；自定义 provider 的名字也可以写进链里。
+- 每次切换都会明确提示：命令行走 stderr（一次性任务的 stdout 仍只有答案），例如：`模型切换：ollama 失败（网络错误……），已切换到 deepseek 继续`；`--json` 在输出里发 `model_switch` 事件；网页聊天流里出现一行“模型已切换：deepseek → xai（402 …）”并刷新模型卡；群聊里机器人的回复下方同样显示切换提示。
+- 全部备用模型都失败时，报错会列出每个模型失败的原因，不会静默失败。
+- 已接在命令行入口（交互 REPL、一次性任务、`--plan`）、`--json` 单次模式、网页界面和群聊：主模型遇可恢复失败时都按同一条链切换。`--json` 会在输出里如实写清最终用了哪个 provider（`run_started` 是起跑的主模型，`run_completed` / `run_incomplete` 是实际答复的模型，另有 `model_switch` 事件和 `model_switches` 列表）；网页界面的信息面板同样显示实际答复的模型与切换记录。定时任务与队列里不切换：定时任务仍用单个 provider（调度器直接构造 `Provider`，见 `src/providers.ts` 构造器守卫）。
+
 ## 功能一览
 
 - **先计划，后执行**：`--plan` 只读生成 `plan.md`，你审完用 SHA-256 批准，改一个字节旧批准就失效。
@@ -77,43 +205,6 @@ nyra eigenflux policy audit --room alpha --bot lead
 权限存在 `~/.nyra/eigenflux/network-policy.json`：和各机器人 `EIGENFLUX_HOME` 凭据文件分离，使用私有文件权限、原子写入及 SHA-256 版本检查。记录最多 250 条非不可篡改的本地审计事件；同进程修改有锁，跨进程文件竞争仍需加强。群聊采用随机实例标记，删除后同 ID 重建不会继承旧组的网络权限或 EigenFlux Home；旧群聊保留原路径以兼容。
 
 此功能尚未执行官方 EigenFlux CLI 的网络指令。即使设为 `allow`，也不会触发 `ef-onboarding`、自动读取 Feed、发布广播或设定周期任务；未来的网络执行网关必须在每次操作前再次核验本地上限和**独立的官方授权**。当前不声称可以控制用户在 Nyra 之外直接执行的 EigenFlux CLI。
-
-## 快速开始
-
-**新用户：下载、运行，两步**（Node 单文件二进制，不用装 Python、不用装 Node）：
-
-```bash
-# 1）下载：到 https://github.com/js2005happy/nyra/releases 下最新版，
-#    按平台拿一个文件（Linux x64：nyra-linux-x64；Windows：nyra-windows-x64.exe；
-#    macOS arm64：nyra-macos-arm64，Intel：nyra-macos-x64）
-# 2）运行（以 Linux 为例）：
-chmod +x nyra-linux-x64
-./nyra-linux-x64 setup      # 首次启动向导（中文，三步到第一个任务）
-./nyra-linux-x64 doctor     # 中文自检：Key、网络、目录权限、磁盘
-```
-
-0.5.1 的 Node 二进制是完整版（agent 核心、网页界面、插件市场、创造模式都在内），不再有“预览版只含部分功能”的限制。
-
-> 注意：带 Node 二进制的 Release 随 `v*` 标签发布，在第一个这样的 Release 出现之前，先本地构建：`bash scripts/build-binaries.sh --only linux-x64`（产物在 `dist/`）。
-
-**源码方式（想自己构建或看代码）：**
-
-先把仓库克隆到本地，再进入仓库目录——下面所有命令都在这个目录里运行：
-
-```bash
-git clone https://github.com/js2005happy/nyra.git
-cd nyra
-
-# 一次性任务（需要先配置模型，见下）
-bun run src/cli.ts "创建一个文件 hello.txt，写一句问候，再读回来汇报"
-
-# 交互模式
-nyra
-
-# 查看技能和历史会话
-nyra --list-skills
-nyra --list-sessions
-```
 
 ## 两阶段计划模式（先审核，后执行）
 
@@ -244,97 +335,6 @@ nyra ui
 数据保存在 `~/.nyra/groups/<群 ID>/room.json` 和对应成员的 `bots/<成员 ID>/` 私有目录；每个成员的会话是独立的 `~/.nyra/sessions/group-<群 ID>-<成员 ID>.jsonl`。群消息是共享上下文，但各机器人的记忆文件相互独立。浏览器群聊交互的页面（HTML + JS）已随 Node 二进制打包（`src/assets/`），复用 Node Agent 核心与 HTTP API。该目录隔离不是操作系统沙箱。
 
 **群聊安全说明**：不要把群内的 AI 建议当成已经实际执行的操作。当前默认只读、限制讨论轮次和模型调用；多 Agent 写文件权限、任务队列、并行调度和人工审批将分阶段实现。群聊页面与 API 继续使用 Nyra Web UI 的本地监听及访问 token 机制。
-
-## 配置模型
-
-Nyra 支持任何 OpenAI 兼容接口。配置方式按优先级：命令行参数 > 环境变量 > `~/.nyra/config.json`。
-
-| Provider | 环境变量 | 默认模型 | 说明 |
-|---|---|---|---|
-| deepseek（默认） | `DEEPSEEK_API_KEY` | `deepseek-flash` | 便宜，适合日常任务；`deepseek-v4-pro` 更强 |
-| xai（Grok） | `XAI_API_KEY` | `grok-4.3` | |
-| openrouter | `OPENROUTER_API_KEY` | `nousresearch/hermes-4-14b` | 可用 Hermes 等开源权重模型 |
-| openlux | `OPENLUX_API_KEY` | `deepseek-v4.1-flash` | 中转站，一个 Key 调 300+ 模型（Claude/GPT/Gemini/DeepSeek/Qwen）；Key 按建 Key 时选的分组计费，不同分组带的模型不同，`--model` 可透传任意模型名 |
-| ollama（本地） | 无需 Key | `qwen2.5:7b` | 需本地跑 Ollama |
-| openai | `OPENAI_API_KEY` | `gpt-4o-mini` | |
-| qwen（通义千问） | `DASHSCOPE_API_KEY` | `qwen-plus` | 阿里 DashScope 兼容模式 |
-| kimi（Kimi） | `MOONSHOT_API_KEY` | `kimi-k3` | 月之暗面，中国区 endpoint |
-| glm（智谱） | `ZHIPU_API_KEY` | `glm-5.3` | 智谱 BigModel 兼容模式 |
-| gemini | `GEMINI_API_KEY` | `gemini-2.5-flash` | Google OpenAI 兼容端点 |
-| mistral | `MISTRAL_API_KEY` | `mistral-small-latest` | |
-| groq | `GROQ_API_KEY` | `llama-3.3-70b-versatile` | 极快推理，免费额度 |
-| together | `TOGETHER_API_KEY` | `meta-llama/Llama-3.3-70B-Instruct-Turbo` | 一个 Key 用上百个开源模型 |
-| custom | `NYRA_API_KEY` + `NYRA_BASE_URL` + `NYRA_MODEL` | — | 任意兼容接口（环境变量方式） |
-| codex | 无需 Key（本机 Codex 登录态） | `codex-default` | 调用本机 `codex` CLI，复用 ChatGPT 订阅；不调模型 API |
-
-### 自定义 provider 与列出模型
-
-上面没有的模型也能接：只要它走 OpenAI `/v1/chat/completions` 协议，在 `~/.nyra/config.json` 的 `custom_providers` 里加一条就行，Key 只从环境变量读，不写进配置：
-
-```json
-{
-  "custom_providers": {
-    "myllm": {
-      "base_url": "https://llm.example.com/v1",
-      "default_model": "myllm-1",
-      "env_key": "MYLLM_API_KEY",
-      "models": ["myllm-1", "myllm-2"]
-    }
-  }
-}
-```
-
-- `base_url` 和 `default_model` 必填，且 `base_url` 必须是 http/https；`env_key` 是存 Key 的环境变量名（不填则无需 Key，或用 `NYRA_API_KEY`）；`models`、`allowed_hosts` 可选；未知字段会被忽略。
-- 明文 `http://` 只允许本机地址（`localhost`、`127.0.0.1`、`::1`，比如本机 Ollama），外网地址必须用 `https://`——否则 API Key 会随请求明文发出去。写了外网 `http://` 会在解析配置时直接报错并提示改用 `https://`；即使绕过配置解析直接构造 provider，`chat()` / `list_models()` 发请求前也会再拦一次。环境变量方式的自定义（`NYRA_BASE_URL`）同样受这条规则约束。
-- 同名自定义会覆盖内置预设（比如自己搭的 DeepSeek 兼容代理可以覆盖 `deepseek`）；写错的自定义（缺 `base_url`/`default_model`、协议不是 http/https）会在解析时直接报错并点名，不会静默失效。
-- 自定义 provider 可以进 fallback 链：`"fallback_providers": ["myllm", "deepseek"]`，或环境变量 `NYRA_FALLBACK_PROVIDERS="myllm,deepseek"`。
-- 某个 provider 需要 Key 但环境变量没设时，Nyra 会直接报“未设置 API Key”并提示配置，不会先发一个无认证的请求再等服务端 401。
-- 列出可用模型：`nyra --list-providers` 看全部 provider 与默认模型；`nyra --provider qwen --list-models` 问该 endpoint 的 `/models` 接口拿实时模型列表（需要 Key，Ollama 本地不用）。
-
-也可以直接用已保存的连接器凭证：DeepSeek 和 xAI 的 Key 已通过安全流程保存，**不用再填 Key**，直接用：
-
-```bash
-nyra --provider deepseek "做点什么"
-nyra --provider xai --model grok-4.5 "做点什么"
-```
-
-发往本机地址（如本地 Ollama 的 `localhost:11434`）的请求总是直连，不受 `HTTP_PROXY` / `HTTPS_PROXY` 影响；其他地址照常遵守代理设置。
-
-Key 只从环境变量或已保存的连接器读取，**绝不会**打印、记录或写进项目文件。配置存在 `~/.nyra/config.json`（不含任何 Key）。
-
-### Codex CLI provider（不用 API Key）
-
-`--provider codex` 不调任何模型 API，而是用子进程跑本机装好的 `codex` CLI（`codex exec` 非交互方式），复用它自己的登录态与 ChatGPT 订阅：
-
-```bash
-nyra --provider codex "做点什么"
-```
-
-- **模型**：默认模型名是 `codex-default`，意思是“不传 `-m`，让 CLI 用自己的默认模型”。实测：ChatGPT 订阅登录时 `-m gpt-5` 与 `-m gpt-5-codex` 都会被服务端以 `model_not_found` 拒绝（“The 'gpt-5' model is not supported when using Codex with a ChatGPT account.”），唯有不传 `-m` 能跑通。`--model` 显式指定别的模型时会原样传 `-m`，被服务端拒绝时报配置错误（不兜底、不重试去烧别的 Key）。
-- **固定提示前缀（缓存命中）**：每次请求的最开头都会先拼一段字节级固定的英文前缀（`src/providers.ts` 的 `CODEX_PROMPT_PREFIX`），再接按 `[role]` 标记序列化后的消息。前缀内容是身份与边界声明——“You are Nyra, a text-only assistant. Reply in the user's language, concisely and directly. Do not call tools, run commands, browse the web, or modify files. Answer with text only.”——因为它在每个请求里一字不变、又始终在最前面，提供商侧的提示缓存能直接命中这段公共前缀，重复调用时只算增量 token。注意：前缀只做文字模型的身份与行为约束，不传任何工具 schema；`codex exec` 本身没有“纯聊天模式”开关，仍跑自己的 agent 循环，真正的硬约束靠只读沙箱与临时工作目录（见下）。
-- **调用方式**：固定 argv——`codex exec --json -o <临时文件> -s read-only -C <空临时工作目录> --ephemeral --skip-git-repo-check -c features.browser_use=false -c features.computer_use=false -c features.plugins=false`（默认模型时不加 `-m`）。prompt 走 stdin 传（不在 argv 里，`ps` 看不到）；成功时优先读 `-o` 文件里的最终消息，文件为空时回退解析 `--json` 的 JSONL 事件流；用量能解析到就记进 usage。超时由 Nyra 的 subprocess 侧强制（`codex exec` 没有 `--timeout` 参数），超时后杀掉整个进程组。
-- **四个安全条件（代码里强制 + 测试覆盖）**：
-  1. **只用固定路径**：`codex` 二进制只从固定已知位置解析（`/opt/hatch-image/bin/codex`、`~/.local/bin/codex`、`/usr/local/bin/codex`、`/usr/bin/codex`，Windows 再加两条固定候选），`shutil.which("codex")` 只是最后的兜底；绝不从配置、环境变量或用户输入里取路径（`NYRA_CODEX_PATH` 之类的变量会被忽略）。
-  2. **不碰登录凭证**：绝不读取、复制或记录 `~/.codex/auth.json` 之类的 CLI 凭据文件；登录检查只跑 `codex login status`，只读退出码与 “Logged in” 标记（实测该标记走 stderr）。子进程环境会删掉全部 `*_API_KEY` 变量，CLI 只靠自己 HOME 下的登录态。
-  3. **不用跳过审批的参数**：绝不传 `--dangerously-bypass-approvals-and-sandbox`、`--approve-for-me`、`--dangerously-bypass-hook-trust`、`-y`、`--full-auto`；argv 建好后会自检，含禁用参数直接拒绝。调用始终是 `-s read-only`，工作目录是每次新建的空临时目录，用后删除。
-  4. **不进兜底链**：只能被显式选中（`--provider codex`、配置、`POST /api/provider`），绝不作为兜底目标；`resolve_fallback_chain("codex")` 只返回 `["codex"]`，链里出现 codex 会被跳过并记日志；定时任务与队列里绝不用——`Provider` 的直接构造在 auth 为 CLI 时会被拒绝（`src/providers.ts` 构造器守卫），定时任务与队列走直接构造，所以选 codex 时会在启动前就报错。
-- **Claude 待办**：本轮只做了 Codex。Claude CLI（`claude`）尚未装到本机，且须先在用户电脑（Windows）上核查 `claude --version` 与登录情况，核查完再按同一套约束接进来。
-
-### 后台任务 worker（0.4.0）
-
-Python worker（`nyra.worker`，stdio JSONL 协议 v1）已在 0.4.0 随 Python 一起删除；Go 混合路线已作废（改走完整 Node 运行时，见 `docs/node-migration-phase*.md`）。后台任务现在由 Node 原生任务队列跑：`nyra task add` 入队，`nyra task worker` 消费执行，`nyra task list/show/cancel/approve` 管理；审批与超时规则与主循环一致，协议细节见 `src/tasks.ts`。
-
-### 模型自动兜底
-
-主模型调用失败时，Nyra 可以自动按链切换到下一个模型重试一次，不用手动换模型。默认链是 DeepSeek flash → Grok → 本地 Ollama（主模型始终排第一，每次调用都从主模型开始试）。
-
-- 会兜底的失败：余额不足（402）、限流（429）、服务端错误（5xx）、超时、网络错误。
-- 不会兜底的失败：认证失败（401/403，换模型也解决不了）、配置问题（没设 Key、响应无法解析等）。
-- **默认关闭**，只由用户自己开启（三选一）：`~/.nyra/config.json` 里设 `"fallback_enabled": true`；环境变量 `NYRA_FALLBACK=1`；单次加 `--fallback`。关闭方式：`"fallback_enabled": false`、环境变量 `NYRA_FALLBACK=0`，或单次加 `--no-fallback`（`--fallback` 与 `--no-fallback` 同时给时，以关闭为准）。
-- 允许列表：只切换到 `fallback_providers` 里列出的服务商。改链：`~/.nyra/config.json` 里设 `"fallback_providers": ["deepseek", "xai", "ollama"]`，或环境变量 `NYRA_FALLBACK_PROVIDERS="deepseek,xai,ollama"`（逗号分隔，主模型自动排第一；未知名字会被跳过并记一条日志；显式写空列表表示不允许任何备用，不会静默补默认链）。链里写了未配置 Key 的服务商时也会被跳过并记日志。备用模型用各自的默认模型；自定义 provider 的名字也可以写进链里。
-- 每次切换都会明确提示：命令行走 stderr（一次性任务的 stdout 仍只有答案），例如：`模型切换：ollama 失败（网络错误……），已切换到 deepseek 继续`；`--json` 在输出里发 `model_switch` 事件；网页聊天流里出现一行“模型已切换：deepseek → xai（402 …）”并刷新模型卡；群聊里机器人的回复下方同样显示切换提示。
-- 全部备用模型都失败时，报错会列出每个模型失败的原因，不会静默失败。
-- 已接在命令行入口（交互 REPL、一次性任务、`--plan`）、`--json` 单次模式、网页界面和群聊：主模型遇可恢复失败时都按同一条链切换。`--json` 会在输出里如实写清最终用了哪个 provider（`run_started` 是起跑的主模型，`run_completed` / `run_incomplete` 是实际答复的模型，另有 `model_switch` 事件和 `model_switches` 列表）；网页界面的信息面板同样显示实际答复的模型与切换记录。定时任务与队列里不切换：定时任务仍用单个 provider（调度器直接构造 `Provider`，见 `src/providers.ts` 构造器守卫）。
 
 ## apply_patch 补丁编辑与 /diff
 
@@ -545,7 +545,7 @@ nyra ui --port 9000 --workdir ~/project --mode auto
 - **顶栏与状态栏**——会话标题、运行状态（空闲 / 运行中 / 等待批准 / 出错）、“工作了 Ns”、本会话 Token 用量（入 / 出，模型没报告时不显示）；状态栏显示工作目录、模式、上下文占用（按最近一次输入 Token 估算）、MCP 状态。
 - **审阅面板（右侧，Ctrl/⌘ + .）**——改动（本会话每个文件改动的 diff：有审批预览时用审批时的真实 diff 和行号，读历史会话时按工具参数还原，`edit_file` 只能显示替换文本、没有行号）、计划（最近一次 `plan` 工具调用）、证据（联网抓取的来源）、终端（本会话 `shell` 工具的命令与输出）、产物（代码 / HTML，HTML 只在沙盒 iframe 里渲染）、用量（Token 明细、自动压缩次数）。窄屏下面板改为覆盖层，Esc 关闭。
 - **设置页**——provider 下拉 + 模型输入 +“应用”；审批模式三段切换；API Key 表只显示环境变量名和是否已配置——Key 只能在启动 `nyra ui` 的终端里用环境变量设置后重启，页面不输入、不显示、不保存 Key；运行配置只读。
-- **技能与工具 / 定时任务 / 机器人群聊**——同前：技能与 24 个内置工具一览；定时任务查看、启停、删除（网页端新建暂缓开放，请用 `nyra schedule add`）；群聊列表与独立的 `/groups` 页面入口（`?room=<id>` 直达）。
+- **技能与工具 / 定时任务 / 机器人群聊**——同前：技能与内置工具一览；定时任务查看、启停、删除（网页端新建暂缓开放，请用 `nyra schedule add`）；群聊列表与独立的 `/groups` 页面入口（`?room=<id>` 直达）。
 - **可用性**——390px 手机宽度可用（侧栏抽屉、面板全屏覆盖）；全键盘可操作（Tab 顺序、审阅面板标签页左右方向键切换、焦点描边）；`prefers-reduced-motion` 时关闭所有动画；网页端没有开场动画。设计稿里内核还不支持的东西（diff 逐行评论、提交 / 在编辑器打开按钮、云电脑、终端实时输入）不做假按钮。
 
 截图说明：README 顶部是 v0.5.5 网页界面与手机页面的实际截图（本地测试夹具跑出的示例会话）。桌面宽度下是“侧栏 + 对话 + 右侧抽屉”，抽屉分概览 / 改动 / 计划 / 证据 / 终端；审批卡按钮是“不行，换个做法 / 允许一次”，“更多”里是本会话总是允许、记住为规则。
@@ -596,7 +596,7 @@ Nyra 会按任务关键词自动加载最相关的技能。你自己的技能存
 
 ## 工具
 
-Nyra 有 24 个工具：`read_file`、`write_file`、`edit_file`、`apply_patch`、`list_dir`、`shell`（带危险命令黑名单）、`web_fetch`、`web_search`、`memory_append`、`save_skill`、`delegate`（子 agent）、`plan`（先写计划再执行）、`grep_search`、`git_status`、`http_post`、`browser_navigate` / `browser_click` / `browser_screenshot`（CDP 浏览器）、`computer_screenshot` / `computer_click` / `computer_type` / `computer_key` / `computer_windows`（电脑操作，均需审批）、`multi_model_research`（多模型并行调研），以及默认关闭、需显式开启的 3 个 Poppy opt-in 工具：`poppy_discover`、`poppy_identity_check`、`poppy_permission_check`（只做公开协议发现与本地权限意向核验，不登录、不发交易）。
+Nyra 内置 46 个工具（`TOOL_SCHEMAS`，测试会核对这个数字）：文件与代码 `read_file`、`write_file`、`edit_file`、`apply_patch`、`list_dir`、`grep_search`、`git_status`、`lsp_diagnostics`、`lsp_symbols`、`editor_context`；命令 `shell`（带危险命令黑名单）；网络 `web_fetch`、`web_search`、`http_post`、`multi_model_research`（多模型并行调研）；浏览器 `browser_navigate` / `browser_click` / `browser_screenshot`（CDP）；电脑操作 `computer_screenshot` / `computer_click` / `computer_type` / `computer_key` / `computer_windows`（均需审批）；媒体与文档 `describe_image`、`media_ingest`、`export_office`；记忆与检索 `memory_append`、`memory_search`、`memory_forget`、`memory_delete`、`knowledge_search`、`session_search`；连接器 `gmail_search` / `gmail_read` / `gmail_send`、`shopify_products` / `shopify_orders` / `shopify_inventory`、`slack_channels` / `slack_history` / `slack_send`（默认关闭，连上账号才可用，发送类需审批）；技能与协作 `save_skill`、`read_skill`、`delegate`（子 agent）、`delegate_parallel`、`plan`（先写计划再执行）。另有默认关闭、需显式开启的 3 个 Poppy opt-in 工具：`poppy_discover`、`poppy_identity_check`、`poppy_permission_check`（只做公开协议发现与本地权限意向核验，不登录、不发交易），不计入上面的 46 个。
 
 - **plan**：多步骤任务先写计划文件（默认 `plan.md`）再执行。
 - **delegate**：把子任务交给一个子 agent（轮数受限），拿回摘要再继续。
@@ -625,7 +625,7 @@ bun x tsc -p tsconfig.json --noEmit   # 类型检查
 ├── src/               Node 运行时（0.5.1 唯一实现，Bun --compile 打包成单文件二进制）
 │   ├── cli.ts         入口：参数解析 + 交互 REPL + 全部子命令
 │   ├── agent.ts       agent 主循环（plan → 工具调用 → 汇报）+ 模式切换（含创造模式技能）
-│   ├── tools.ts       24 个工具 + 审批 + shell 黑名单
+│   ├── tools.ts       46 个工具 + 审批 + shell 黑名单
 │   ├── providers.ts   OpenAI 兼容客户端 + 模型自动兜底 + 同模型多 Key 轮换 + 14 个预置
 │   ├── gateway.ts     本地网页界面服务器（nyra ui，含群聊页、模式切换、创造模式）
 │   ├── webuiPage.ts   网页界面内嵌单页（HTML/CSS/JS，含模式选择器）
