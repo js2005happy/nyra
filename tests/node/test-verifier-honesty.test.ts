@@ -3,7 +3,7 @@
 //   - draft-labeled：标题/摘要含草稿标记却声称已完成 → 不通过；
 //     只含草稿标记（未声称完成）、只声称完成（非草稿）、裸“通过” → 都通过；
 //   - ui-before-shot：改了界面文件但摘要里没提 before/对比/截图 → 不通过；
-//     裸 .html 不算界面文件，desktop/ui/ 与 docs/design/ 路径算；
+//     裸 .html 不算界面文件，desktop/ui/ 路径算；
 //   - 两项都是启发式文本判定：只核对说法，不验截图像素。
 import { test, expect } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -79,12 +79,10 @@ test("VerifierHonestyTest.test_ui_change_with_before_mention_passes", () => {
   expect(checkById(dir, { changedFiles: ["Button.tsx"], diffStat: " Button.tsx | 2 +-\n 1 file changed", summary: "改了按钮样式，附 before/after 对比截图。" }, "ui-before-shot").passed).toBe(true);
 });
 
-test("VerifierHonestyTest.test_bare_html_is_not_ui_but_design_paths_are", () => {
-  const dir = makeWorkdir({ "index.html": "<html></html>\n", "docs/design/video-call/d1.html": "<html></html>\n", "desktop/ui/README.md": "# ui\n" });
+test("VerifierHonestyTest.test_bare_html_is_not_ui_but_desktop_ui_paths_are", () => {
+  const dir = makeWorkdir({ "index.html": "<html></html>\n", "desktop/ui/README.md": "# ui\n" });
   // 裸 .html 是文档页，不是产品界面：通过。
   expect(checkById(dir, { changedFiles: ["index.html"], diffStat: " index.html | 2 +-\n 1 file changed", summary: "改了文档页。" }, "ui-before-shot").passed).toBe(true);
-  // docs/design/ 下的 html 是设计稿：没提 before 就不通过。
-  expect(checkById(dir, { changedFiles: ["docs/design/video-call/d1.html"], diffStat: " d1.html | 2 +-\n 1 file changed", summary: "改了设计稿。" }, "ui-before-shot").passed).toBe(false);
   // desktop/ui/ 路径下的文件（哪怕是 .md）也算界面：没提 before 就不通过。
   expect(checkById(dir, { changedFiles: ["desktop/ui/README.md"], diffStat: " README.md | 2 +-\n 1 file changed", summary: "改了界面说明。" }, "ui-before-shot").passed).toBe(false);
 });

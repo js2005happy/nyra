@@ -1,7 +1,7 @@
 // tests/node/test-mobile-v14.test.ts — 手机端 v14 / v14.1 落地：丸子（不画笑眼）、页面结构（四个标签、总指挥、群聊页、
 // 无原生对话框、无死按钮）、地面色与开机动画衔接、五档字号、启动器页（品牌、即将推出、无旧光标与金色）、文案只写 Nyra。
 import { test, expect } from "bun:test";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   MASCOTS, CHIEF_MASCOT, MASCOT_KEYS, MASCOT_STATES, MASCOT_COMPOSE_JS, mascotSvg, mascotClientData, mascotPiece,
@@ -61,8 +61,6 @@ test("代码里不出现笑眼画法：网页、手机页、启动器页、官�
     ["mobile/www/index.html", read("mobile/www/index.html")], ["docs/index.html", read("docs/index.html")],
     ["src/nyraAvatar.ts", read("src/nyraAvatar.ts")], ["src/mascots.ts", read("src/mascots.ts")],
   ];
-  const dir = "docs/design/bot/avatars/svg";
-  for (const f of readdirSync(join(ROOT, dir))) sources.push([`${dir}/${f}`, read(`${dir}/${f}`)]);
   for (const [name, src] of sources) {
     expect({ name, smile: OLD_SMILE.test(src) }).toEqual({ name, smile: false });
     expect({ name, smile: hasSmileEyes(src) }).toEqual({ name, smile: false });

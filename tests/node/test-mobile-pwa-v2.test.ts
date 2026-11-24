@@ -350,7 +350,7 @@ test("icons: manifest 192/512 any + maskable、apple 180、favicon；几何与 n
 });
 
 // ---------------------------------------------------------- 第 2 阶段 ---
-test("settings: 手机切全权要二次确认标记，电脑端不受影响；规则可在手机上撤销", async () => {
+test("settings: 手机切全权要电脑确认，电脑端不受影响；规则可在手机上撤销", async () => {
   const home = tmp("nyra-gw4-");
   const gw = new Gateway({ home, workdir: tmp("nyra-gw4-wd-"), host: "0.0.0.0", port: 0, mode: "auto", config: { mcp_enabled: false } });
   const info = await gw.start();
@@ -359,12 +359,24 @@ test("settings: 手机切全权要二次确认标记，电脑端不受影响；�
     const started = gw.startPairing() as { code: string };
     const dev = await (await fetch(`${base}/api/pair`, { method: "POST", body: JSON.stringify({ code: started.code, name: "Pixel 7" }) })).json() as { token: string };
     const h = { "X-Nyra-Token": dev.token };
-    expect((await fetch(`${base}/api/mode`, { method: "POST", headers: h, body: JSON.stringify({ mode: "full" }) })).status).toBe(400);
+    const owner = { "X-Nyra-Token": gw.token };
+    // 手机自己带 confirm 标记也不算数：只记一笔待确认请求，模式不动。
+    const pending = await fetch(`${base}/api/mode`, { method: "POST", headers: h, body: JSON.stringify({ mode: "full", confirm: "full" }) });
+    expect(pending.status).toBe(202);
+    const { request_id } = await pending.json() as { request_id: string };
+    expect(request_id).toBeTruthy();
     expect(gw.mode).toBe("auto");
-    expect((await fetch(`${base}/api/mode`, { method: "POST", headers: h, body: JSON.stringify({ mode: "full", confirm: "full" }) })).status).toBe(200);
+    // 待确认列表与确认只给电脑：手机看不到。
+    expect((await fetch(`${base}/api/mode/requests`, { headers: h })).status).toBe(403);
+    expect((await fetch(`${base}/api/mode/confirm`, { method: "POST", headers: h, body: JSON.stringify({ request_id, approve: true }) })).status).toBe(403);
+    const modeList = await (await fetch(`${base}/api/mode/requests`, { headers: owner })).json() as { requests: { id: string; device: string }[] };
+    expect(modeList.requests.map((r) => r.id)).toEqual([request_id]);
+    expect(modeList.requests[0].device).toBe("Pixel 7");
+    // 电脑确认后才生效。
+    expect((await fetch(`${base}/api/mode/confirm`, { method: "POST", headers: owner, body: JSON.stringify({ request_id, approve: true }) })).status).toBe(200);
     expect(gw.mode).toBe("full");
     expect((await fetch(`${base}/api/mode`, { method: "POST", headers: h, body: JSON.stringify({ mode: "readonly" }) })).status).toBe(200);
-    expect((await fetch(`${base}/api/mode`, { method: "POST", headers: { "X-Nyra-Token": gw.token }, body: JSON.stringify({ mode: "full" }) })).status).toBe(200);
+    expect((await fetch(`${base}/api/mode`, { method: "POST", headers: owner, body: JSON.stringify({ mode: "full" }) })).status).toBe(200);
     const rule = new RuleStore(home).add(gw.workdir, { kind: "prefix", prefix: ["make", "test"] });
     const list = await (await fetch(`${base}/api/rules`, { headers: h })).json() as { rules: { id: string; scope: string }[] };
     expect(list.rules.map((r) => r.id)).toEqual([rule.id]);
