@@ -104,7 +104,7 @@ jobs:
             echo "$NAMES" | grep -q '\.dmg$' || MISSING=1
             echo "$NAMES" | grep -q '\.msi$' || MISSING=1
             echo "$NAMES" | grep -q '\-setup\.exe$' || MISSING=1
-            # 0.5.13 起：APK 稳定名 nyra-android.apk（正式签名或 debug 均有），
+            # 0.5.13 起：APK 稳定名 nyra-android.apk（发版 tag 构建必须正式签名），
             # 桌面安装包另有不带版本号的稳定名副本（README「下载」按钮用）。
             for b in nyra-android.apk Nyra-windows-x64-setup.exe Nyra-windows-x64.msi Nyra-macos-universal.dmg Nyra-linux-x86_64.AppImage Nyra-linux-amd64.deb; do
               echo "$NAMES" | grep -qx "$b" || MISSING=1

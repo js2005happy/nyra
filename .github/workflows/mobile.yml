@@ -3,7 +3,7 @@
 # Runs only by hand (Actions → "Build mobile app" → Run workflow) or when a
 # version tag (v*) is pushed, so it never slows down normal pushes / PRs.
 #
-# Output: an Android debug APK (nyra-android-debug.apk). The APK is uploaded
+# Output: an Android APK (nyra-android.apk). The APK is uploaded
 # as a workflow artifact, and on tag pushes attached to the GitHub Release
 # (see docs/installers.md for the whole release picture).
 #
@@ -19,9 +19,11 @@
 # Signing (0.5.13 起): when the repository has the release keystore secrets
 # (ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS,
 # optional ANDROID_KEY_PASSWORD) the job builds `assembleRelease` signed with
-# that fixed key, so later versions install over earlier ones. Without them it
-# falls back to the old debug build (Gradle's auto-generated debug key, which
-# differs per runner, so updates need an uninstall) and says so in a warning.
+# that fixed key, so later versions install over earlier ones, and checks with
+# apksigner that the signer is CN=Nyra with the expected certificate SHA-256.
+# A tag (release) build without the secrets FAILS: releases must be signed with
+# the release key. Only a manual run without secrets falls back to a debug
+# build (Gradle's auto-generated debug key) for testing, with a warning.
 # A half-configured secret set fails loudly instead of silently shipping debug.
 # Outputs: nyra-android.apk (stable name, used by README/site "latest" links)
 # and, for a debug build only, nyra-android-debug.apk (old name, kept for
@@ -118,7 +120,10 @@ jobs:
         run: |
           SET=0; [ -n "$KS_B64" ] && SET=$((SET+1)); [ -n "$KS_PASS" ] && SET=$((SET+1)); [ -n "$KS_ALIAS" ] && SET=$((SET+1))
           if [ "$SET" = 3 ]; then echo "mode=release" >> "$GITHUB_OUTPUT"; echo "正式签名：用仓库里的 release keystore"
-          elif [ "$SET" = 0 ]; then echo "mode=debug" >> "$GITHUB_OUTPUT"; echo "::warning::没有配置 ANDROID_KEYSTORE_* secrets，本次 APK 仍是 debug 签名（升级需先卸载旧版）"
+          elif [ "$SET" = 0 ] && [ "${{ github.ref_type }}" = "tag" ]; then
+            # 正式发版必须正式签名：tag 构建缺 secrets 直接失败，不退回 debug 签名。
+            echo "::error::发版 tag 构建缺少 ANDROID_KEYSTORE_* secrets，拒绝发布 debug 签名的 APK"; exit 1
+          elif [ "$SET" = 0 ]; then echo "mode=debug" >> "$GITHUB_OUTPUT"; echo "::warning::没有配置 ANDROID_KEYSTORE_* secrets，本次手动构建是 debug 签名（仅供测试，升级需先卸载旧版）"
           else echo "::error::ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS 只配了一部分，拒绝退回 debug 签名"; exit 1; fi
 
       - name: Build signed release APK
@@ -128,8 +133,12 @@ jobs:
           NYRA_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           NYRA_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           NYRA_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          # 正式证书 SHA-256 的前缀（公开信息），验签后必须匹配。
+          EXPECTED_CERT_SHA256_PREFIX: d3cd8c92
         run: |
+          set -euo pipefail
           export NYRA_KEYSTORE_PATH="$RUNNER_TEMP/nyra-release.p12"
+          trap 'rm -f "$NYRA_KEYSTORE_PATH"' EXIT
           printf '%s' "$KS_B64" | base64 -d > "$NYRA_KEYSTORE_PATH"
           chmod 600 "$NYRA_KEYSTORE_PATH"
           (cd mobile && bash scripts/patch-android-signing.sh)
@@ -139,8 +148,18 @@ jobs:
           cp mobile/android/app/build/outputs/apk/release/app-release.apk dist/nyra-android.apk
           # 验签并打印证书指纹（公开信息），确认不是 debug 证书。
           BT="$(ls -d "${ANDROID_HOME}"/build-tools/* | sort -V | tail -1)"
-          "$BT/apksigner" verify --print-certs dist/nyra-android.apk | tee /tmp/certs.txt
+          # 先单独跑 verify 拿退出码（不经管道），再打印输出。
+          if ! "$BT/apksigner" verify --verbose --print-certs dist/nyra-android.apk > /tmp/certs.txt 2>&1; then
+            cat /tmp/certs.txt; echo "::error::apksigner verify 失败"; exit 1
+          fi
+          cat /tmp/certs.txt
           if grep -qi "CN=Android Debug" /tmp/certs.txt; then echo "::error::release APK 仍是 debug 证书"; exit 1; fi
+          if ! grep -q "Signer #1 certificate DN: CN=Nyra" /tmp/certs.txt; then echo "::error::签名者不是 CN=Nyra"; exit 1; fi
+          SHA="$(grep -m1 "Signer #1 certificate SHA-256 digest:" /tmp/certs.txt | awk '{print $NF}' | tr 'A-F' 'a-f')"
+          case "$SHA" in
+            "$EXPECTED_CERT_SHA256_PREFIX"*) echo "证书 SHA-256：$SHA（与正式证书一致）" ;;
+            *) echo "::error::证书 SHA-256 为 '$SHA'，不以 $EXPECTED_CERT_SHA256_PREFIX 开头，不是正式证书"; exit 1 ;;
+          esac
           ls -l dist/
 
       - name: Build debug APK
