@@ -65,7 +65,9 @@ function ago(iso){
   return t('d.ago.d', { n: Math.floor(s / 86400) });
 }
 function modeLabel(m){ return t('d.mode.' + (m || 'auto')); }
-function projectName(){ return (S.sessions && S.sessions.project && S.sessions.project.name) || (S.info && S.info.workdir ? S.info.workdir.split(/[\\/]/).pop() : ''); }
+// 路径只取最后一段文件夹名；/ 和 \ 都当分隔符（Windows 路径不会整串显示）。
+function baseName(p){ const parts = String(p || '').split(/[\\/]+/).filter(Boolean); return parts.length ? parts[parts.length - 1] : String(p || ''); }
+function projectName(){ const n = (S.sessions && S.sessions.project && S.sessions.project.name) || (S.info && S.info.workdir) || ''; return n ? baseName(n) : ''; }
 function sandboxLabel(){ const sb = S.info && S.info.config ? S.info.config.sandbox : 'local'; return sb === 'e2b' ? 'E2B' : sb === 'bwrap' ? t('d.sandbox.bwrap') : t('d.sandbox.local'); }
 
 // 统一 diff（网关审批摘要里的 unifiedPreview）→ 文件名、增删数、逐行。网关预览不带行号，栏里显示 +/−。
@@ -133,8 +135,14 @@ function renderThreads(){
   const list = (S.sessions.sessions || []).slice().sort((a, b) => String(b.mtime).localeCompare(String(a.mtime)));
   const groups = new Map(); const chats = [];
   const here = projectName();
-  if (here) groups.set(here, []);
-  list.forEach(s => { if (s.project) { if (!groups.has(s.project)) groups.set(s.project, []); groups.get(s.project).push(s); } else chats.push(s); });
+  // 项目名只显示文件夹名（Windows 路径也按 \ 拆），悬停显示完整路径。
+  const fullPath = new Map();
+  if (here) { groups.set(here, []); fullPath.set(here, (S.sessions.project && S.sessions.project.workdir) || (S.info && S.info.workdir) || here); }
+  list.forEach(s => {
+    const pn = s.project ? baseName(s.project) : '';
+    if (pn) { if (!groups.has(pn)) groups.set(pn, []); groups.get(pn).push(s); if (!fullPath.has(pn)) fullPath.set(pn, s.workdir || s.project); }
+    else chats.push(s);
+  });
   const row = (s, chat) => {
     const b = el('button', 'th' + (chat ? ' chat' : '') + (s.id === S.session ? ' on' : ''));
     b.dataset.sid = s.id;
@@ -149,7 +157,8 @@ function renderThreads(){
   };
   groups.forEach((items, name) => {
     const closed = !!S.collapsed[name];
-    const h = el('button', 'pr'); h.appendChild(el('span', 'car', closed ? '▸' : '▾')); h.appendChild(document.createTextNode(name));
+    const h = el('button', 'pr'); h.appendChild(el('span', 'car', closed ? '▸' : '▾')); h.appendChild(el('span', 'pn', name));
+    h.title = fullPath.get(name) || name;
     h.onclick = () => { S.collapsed[name] = !closed; renderThreads(); };
     box.appendChild(h);
     if (closed) return;

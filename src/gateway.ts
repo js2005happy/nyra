@@ -203,6 +203,12 @@ export interface GatewayOptions {
   shell?: string | null;
 }
 
+/** 路径的最后一段文件夹名：/ 与 \ 都当分隔符（Windows 路径在侧栏不再整串显示）。 */
+export function projectBaseName(path: string): string {
+  const parts = String(path || "").split(/[\\/]+/).filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : String(path || "");
+}
+
 /** 群聊机器人 / 总指挥团队成员的内部会话 id（groups.ts runBot：group-<房间>-<成员>）。 */
 export function isGroupMemberSessionId(id: string): boolean {
   return /^group-[a-z][a-z0-9_-]*-[A-Za-z0-9_.-]+$/.test(id);
@@ -607,12 +613,12 @@ export class Gateway {
       // status：手机列表的状态点用（运行中 / 出错 / 空闲）；没有 live run 的会话一律 idle。
       const status = this.runs.get(item.id)?.status ?? "idle";
       const outcome = recentIds.has(item.id) && status !== "running" ? this.lastTurnOutcome(item.id) : null;
-      return { ...item, workdir: workdir ?? null, project: workdir ? workdir.split("/").pop() ?? null : null, status, outcome };
+      return { ...item, workdir: workdir ?? null, project: workdir ? projectBaseName(workdir) : null, status, outcome };
     });
     return {
       sessions,
       member_sessions: memberSessions.byRun,
-      project: { name: this.workdir.split("/").pop() ?? this.workdir, workdir: this.workdir },
+      project: { name: projectBaseName(this.workdir), workdir: this.workdir },
     };
   }
 
