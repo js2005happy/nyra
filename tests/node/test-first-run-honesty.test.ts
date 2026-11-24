@@ -2,6 +2,7 @@
 // doctor 的 Ollama 实测与过期说法、无 Key 提示按当前 provider 写变量名、
 // 桌面测试失败文案带原因。只测纯逻辑与文案，不调真模型、不用真 Key。
 import { test, expect } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, readFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,7 +11,7 @@ import { runWizard } from "../../src/wizard.ts";
 import { runDoctor } from "../../src/doctor.ts";
 import { noKeyMessage } from "../../src/noKey.ts";
 import { loadConfig, resolveProvider } from "../../src/config.ts";
-import { MESSAGES } from "../../src/i18n.ts";
+import { MESSAGES, getLang, setLang } from "../../src/i18n.ts";
 
 function tempHome(): string {
   const home = mkdtempSync(join(tmpdir(), "nyra-first-run-"));
@@ -41,9 +42,12 @@ test("FirstRunHonesty.test_wizard_closing_is_honest", async () => {
     expect(result.exampleOk).toBe(true);
     const text = logs.join("\n");
     expect(text).not.toContain("第一个任务已经跑通");
+    expect(text).not.toContain("跑起第一个任务");
     expect(text).not.toContain("python3 -m nyra");
+    expect(text).toContain("本地示例不调用模型");
+    expect(text).toContain("也不代表 Key 或模型已经连通");
     expect(text).toContain("nyra doctor");
-    expect(text).toContain("本地示例任务");
+    expect(text).toContain("本地示例");
   } finally {
     console.log = origLog;
     process.env.HOME = origHome;
@@ -146,6 +150,91 @@ test("FirstRunHonesty.test_doctor_no_key_names_env_key_not_connector", async () 
   } finally {
     if (origKey !== undefined) process.env.DEEPSEEK_API_KEY = origKey;
   }
+});
+
+test("FirstRunHonesty.test_no_key_message_follows_cli_language", () => {
+  const home = tempHome();
+  const prev = getLang();
+  delete process.env.DASHSCOPE_API_KEY;
+  delete process.env.DEEPSEEK_API_KEY;
+  try {
+    const config = loadConfig(home);
+    const qwen = resolveProvider({ home, config, providerName: "qwen" });
+    setLang("en");
+    const en = noKeyMessage(qwen);
+    expect(en).toContain("qwen");
+    expect(en).toContain("DASHSCOPE_API_KEY");
+    expect(en).toContain("nyra setup");
+    expect(en).toContain("nyra ui");
+    expect(en).toContain("Test the connection");
+    expect(en).not.toContain("DEEPSEEK_API_KEY");
+    expect(en).not.toContain("<redacted>");
+    expect(en).not.toContain("python3 -m nyra");
+    setLang("zh");
+    const zh = noKeyMessage(qwen);
+    expect(zh).toContain("qwen");
+    expect(zh).toContain("DASHSCOPE_API_KEY");
+    expect(zh).toContain("测试连接");
+    expect(zh).toContain("窗口");
+    expect(zh).toContain("nyra setup");
+    expect(zh).not.toContain("DEEPSEEK_API_KEY");
+    expect(zh).not.toContain("<redacted>");
+    expect(zh).not.toContain("python3 -m nyra");
+  } finally {
+    setLang(prev);
+  }
+});
+
+function isolatedEnv(home: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, NYRA_HOME: home };
+  for (const key of Object.keys(env)) {
+    if (key === "NYRA_LANG" || key === "NYRA_VAULT_PASSWORD" || key === "NYRA_API_KEY" || key.endsWith("_API_KEY")) delete env[key];
+  }
+  env.NYRA_SENTINEL = "nyra-sentinel-not-a-key";
+  return env;
+}
+
+function runCli(home: string, args: string[], input?: string) {
+  return spawnSync("bun", ["run", "src/cli.ts", ...args], {
+    cwd: process.cwd(),
+    env: isolatedEnv(home),
+    encoding: "utf-8",
+    input,
+    timeout: 30000,
+  });
+}
+
+test("FirstRunHonesty.test_cli_missing_credentials_names_provider_in_both_languages", () => {
+  const home = tempHome();
+  const zh = runCli(home, ["--lang", "zh", "--provider", "qwen", "hello"]);
+  const en = runCli(home, ["--lang", "en", "--provider", "qwen", "hello"]);
+  for (const run of [zh, en]) {
+    expect(run.status).toBe(1);
+    const text = `${run.stdout}\n${run.stderr}`;
+    expect(text).toContain("qwen");
+    expect(text).toContain("DASHSCOPE_API_KEY");
+    expect(text).toContain("nyra setup");
+    expect(text).not.toContain("DEEPSEEK_API_KEY");
+    expect(text).not.toContain("<redacted>");
+    expect(text).not.toContain("python3 -m nyra");
+    expect(text).not.toContain("nyra-sentinel-not-a-key");
+  }
+  expect(zh.stdout).toContain("测试连接");
+  expect(en.stdout).toContain("Test the connection");
+  expect(en.stdout).toContain("did not contact the model");
+});
+
+test("FirstRunHonesty.test_cli_setup_describes_offline_example", () => {
+  const home = tempHome();
+  const run = runCli(home, ["setup"], "\n\n\n");
+  expect(run.status).toBe(0);
+  const text = `${run.stdout}\n${run.stderr}`;
+  expect(text).toContain("本地示例不调用模型");
+  expect(text).toContain("也不代表 Key 或模型已经连通");
+  expect(text).toContain("还不是模型任务");
+  expect(text).not.toContain("第一个任务已经跑通");
+  expect(text).not.toContain("python3 -m nyra");
+  expect(text).not.toContain("nyra-sentinel-not-a-key");
 });
 
 test("FirstRunHonesty.test_setup_no_creds_template_is_gone", () => {

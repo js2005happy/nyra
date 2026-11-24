@@ -893,6 +893,18 @@ const zh = {
   "m.q.count": "{n} 件 · 来自 {m} 个对话",
   "m.q.hint": "每件单独批",
   "m.q.more": "更多选项",
+  "creds.missing": "Nyra 还没有 {provider}（模型 {model}）的可用凭据。这次没有连接模型，也没有发出请求。",
+  "creds.short": "未找到 {provider} 的可用凭据，没有发出模型请求。",
+  "creds.how": "可以这样配好后再跑：",
+  "creds.envOnce": "  1）只对当前终端：export {env}=...（等号后面换上你自己的 Key，这条提示不会写出 Key）",
+  "creds.envPersist": "  2）长期生效：把上一行写进 ~/.bashrc 或 ~/.zshrc，再打开新终端",
+  "creds.window": "  3）在本机窗口里粘贴：运行 nyra ui，在首次设置里粘贴 Key，点「测试连接」通过后再保存（只存在本机）",
+  "creds.example": "  4）先不配 Key：nyra setup 或 nyra --example 只跑本地示例，不调用模型，也不代表已经连通",
+  "creds.then": "配好后再跑：nyra --provider {provider} \"你的任务\"",
+  "creds.ollama": "Ollama 不需要 Key，但要本机已经启动。先运行 ollama serve，再跑：nyra --provider ollama \"你的任务\"。也可以先跑 nyra doctor --provider ollama，没启动时不会算通过。",
+  "creds.codex": "Codex 复用本机 Codex CLI 的登录，不需要 API Key。请先在本机完成 codex 登录，再跑：nyra --provider codex \"你的任务\"。",
+  "creds.custom": "这个 provider 要先设置 NYRA_BASE_URL 和 NYRA_MODEL，再用环境变量 NYRA_API_KEY 提供 Key。也可以运行 nyra setup 选择模型来源。",
+  "creds.also": "没有 Key 也能运行：nyra --help、nyra --version、nyra --list-providers、nyra doctor、nyra setup、nyra --example",
 } as const;
 
 export type MsgKey = keyof typeof zh;
@@ -1759,6 +1771,18 @@ const en: Record<MsgKey, string> = {
   "m.q.count": "{n} items · from {m} threads",
   "m.q.hint": "One at a time",
   "m.q.more": "More options",
+  "creds.missing": "Nyra has no credentials for {provider} (model {model}). It did not contact the model and sent no request.",
+  "creds.short": "No credentials for {provider}. No model request was sent.",
+  "creds.how": "Set that up, then run the task:",
+  "creds.envOnce": "  1) This terminal only: export {env}=... (type your own key after the equals sign; this message never includes it)",
+  "creds.envPersist": "  2) Keep it: add the line above to ~/.bashrc or ~/.zshrc, then open a new terminal",
+  "creds.window": "  3) Paste it in the local window: run nyra ui, paste the key in first-time setup, and save only after Test the connection succeeds (it stays on this computer)",
+  "creds.example": "  4) Skip the key for now: nyra setup or nyra --example runs a local example only. It does not call a model and does not mean you are connected",
+  "creds.then": "After that, run: nyra --provider {provider} \"your task\"",
+  "creds.ollama": "Ollama needs no key, but it has to be running on this computer. Start it with ollama serve, then run: nyra --provider ollama \"your task\". nyra doctor --provider ollama does not pass while it is down.",
+  "creds.codex": "Codex reuses the Codex CLI login on this computer and needs no API key. Sign in with codex first, then run: nyra --provider codex \"your task\".",
+  "creds.custom": "This provider needs NYRA_BASE_URL and NYRA_MODEL first, then NYRA_API_KEY. You can also run nyra setup and pick a model source.",
+  "creds.also": "These still run without a key: nyra --help, nyra --version, nyra --list-providers, nyra doctor, nyra setup, nyra --example",
 };
 
 export const MESSAGES: Record<Lang, Record<MsgKey, string>> = { zh, en };
