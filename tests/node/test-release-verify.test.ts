@@ -124,6 +124,17 @@ test("ReleaseVerifyTest.test_pinned_install_version_matches_all_three_installers
   expect(ps).toBe(PINNED_INSTALL_VERSION);
 });
 
+test("ReleaseVerifyTest.test_pinned_install_version_not_ahead_of_package_version", () => {
+  // 发版后才把安装脚本默认版本升上去：钉住的版本永远不能超过当前代码的版本号（否则指向还没发布的 Release）。
+  const root = join(import.meta.dir, "..", "..");
+  const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf-8")).version as string;
+  const num = (v: string) => v.replace(/^v/, "").split("-")[0]!.split(".").map(Number);
+  const [a, b] = [num(PINNED_INSTALL_VERSION), num(pkg)];
+  const cmp = a[0]! - b[0]! || a[1]! - b[1]! || a[2]! - b[2]!;
+  expect(cmp).toBeLessThanOrEqual(0);
+  expect(PINNED_INSTALL_VERSION).toMatch(/^v\d+\.\d+\.\d+$/);
+});
+
 test("ReleaseVerifyTest.test_list_artifacts_skips_sums_and_attestations", () => {
   const dir = tmpDir();
   writeFileSync(join(dir, "nyra-linux-x64"), "x");

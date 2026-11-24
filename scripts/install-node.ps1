@@ -9,7 +9,7 @@
 # （Nyra 终端 / Nyra 网页界面，带 Nyra 图标），不写注册表、不装服务。
 # 网页界面快捷方式调的是真实命令 `nyra ui --open`（0.4.0 起有 ui 子命令）。
 #
-# 默认版本钉在下面 param 的 $Version = "v0.5.12"（发版时改这一处，
+# 默认版本钉在下面 param 的 $Version = "v0.5.13"（发版时改这一处，
 # 同时改 install-node.sh、install-node-macos.sh 与 docs/installers.md）；
 # 不再默认 latest。下载后先对同一 Release 的 SHA256SUMS 校验再安装：
 # 下不到 SHA256SUMS、清单里没有这个文件、哈希对不上，一律拒绝安装。
@@ -24,7 +24,7 @@
 #     烟雾测试；真机首次运行体验待用户反馈后补充。
 #   - 旧的 Python 版安装脚本 scripts/install.ps1 已在 0.4.0 删除。
 param(
-    [string]$Version = "v0.5.12",
+    [string]$Version = "v0.5.13",
     [string]$InstallDir = "$env:USERPROFILE\nyra",
     [string]$FromFile = "",
     [switch]$Uninstall

@@ -91,7 +91,7 @@ nyra "解释一下这个项目的结构"
 
 | 选项 | 默认值 | 说明 |
 | --- | --- | --- |
-| `--version TAG` | `v0.5.12`（钉住） | 从 GitHub Releases 下载的版本（带 `v` 前缀，如 `v0.5.2`；不带 `v` 也行，脚本会补上；`latest` 也可显式传） |
+| `--version TAG` | `v0.5.13`（钉住） | 从 GitHub Releases 下载的版本（带 `v` 前缀，如 `v0.5.2`；不带 `v` 也行，脚本会补上；`latest` 也可显式传） |
 | `--from-file PATH` | — | 从本地已编好的二进制安装（不联网下载） |
 | `--prefix DIR` | `~/.local/share/nyra` | 安装位置（不能是 `/`、不能就是 `$HOME`、不能含空格） |
 | `--bin-dir DIR` | `~/.local/bin` | 启动器位置 |
