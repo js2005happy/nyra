@@ -24,7 +24,7 @@ test("14 个 provider 预置齐全，默认 deepseek/deepseek-flash", () => {
   expect(PROVIDERS.codex.auth).toBe("cli");
 });
 
-test("NYRA_HOME 优先于 ~/.nyra；ANGEL_HOME 回退保留", () => {
+test("NYRA_HOME 优先于 ~/.nyra；ANGEL_HOME 不再绕过旧目录", () => {
   const home = tmpHome();
   expect(resolveHome(home)).toBe(home);
   const savedNyra = process.env.NYRA_HOME;
@@ -32,8 +32,10 @@ test("NYRA_HOME 优先于 ~/.nyra；ANGEL_HOME 回退保留", () => {
   try {
     delete process.env.NYRA_HOME;
     process.env.ANGEL_HOME = home;
+    // envVar("HOME") 的 ANGEL_ 回退保留（用一次印一次废弃提示），
+    // 但 resolveHome 不再用它决定数据目录：旧 ~/.angel 不再原地复用。
     expect(envVar("HOME")).toBe(home);
-    expect(resolveHome()).toBe(home);
+    expect(resolveHome()).not.toBe(home);
   } finally {
     if (savedNyra !== undefined) process.env.NYRA_HOME = savedNyra; else delete process.env.NYRA_HOME;
     if (savedAngel !== undefined) process.env.ANGEL_HOME = savedAngel; else delete process.env.ANGEL_HOME;

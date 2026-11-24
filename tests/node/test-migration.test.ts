@@ -28,7 +28,8 @@ test("MigrationTest.test_atomic_migration_copies_then_renames", () => {
   expect(result.migrated).toBe(true);
   expect(existsSync(join(home, ".nyra", "MEMORY.md"))).toBe(true);
   expect(readFileSync(join(home, ".nyra", "MEMORY.md"), "utf-8")).toBe("记忆\n");
-  expect(existsSync(join(home, ".angel"))).toBe(true);
+  // 迁移成功后旧目录删掉，不留双份 home（第四份审计 P0）。
+  expect(existsSync(join(home, ".angel"))).toBe(false);
   expect(existsSync(join(home, ".nyra.migrating"))).toBe(false);
 });
 
@@ -55,13 +56,19 @@ test("MigrationTest.test_approvals_voided_on_migration", () => {
   mkdirSync(join(home, ".angel"));
   writeFileSync(join(home, ".angel", "approvals.json"), "{}");
   writeFileSync(join(home, ".angel", "approved.json"), "{}");
+  writeFileSync(join(home, ".angel", "approval_rules.json"), "{}");
+  writeFileSync(join(home, ".angel", "bot-approvals.json"), "{}");
   writeFileSync(join(home, ".angel", "MEMORY.md"), "x\n");
   const result = migrateLegacyHome(home);
   expect(result.migrated).toBe(true);
   expect(result.voidedApprovals).toContain("approvals.json");
   expect(result.voidedApprovals).toContain("approved.json");
+  expect(result.voidedApprovals).toContain("approval_rules.json");
+  expect(result.voidedApprovals).toContain("bot-approvals.json");
   expect(existsSync(join(home, ".nyra", "approvals.json"))).toBe(false);
   expect(existsSync(join(home, ".nyra", "approved.json"))).toBe(false);
+  expect(existsSync(join(home, ".nyra", "approval_rules.json"))).toBe(false);
+  expect(existsSync(join(home, ".nyra", "bot-approvals.json"))).toBe(false);
   expect(existsSync(join(home, ".nyra", "MEMORY.md"))).toBe(true);
 });
 

@@ -37,12 +37,13 @@ function cleanSandboxEnv(): Record<string, undefined> {
   return Object.fromEntries(SANDBOX_ENV_KEYS.map((k) => [k, undefined])) as Record<string, undefined>;
 }
 
-/** PATH 里放一个假 bwrap：记录参数到 $BWRAP_LOG，再把最后一个参数当 shell 命令跑。 */
+/** PATH 里放一个假 bwrap：记录参数到烘进脚本的日志路径，再把最后一个参数当 shell 命令跑。
+    日志路径写死在脚本里——bwrap 子进程走环境白名单 + --clearenv，父进程的 BWRAP_LOG 不再透传。 */
 function makeBwrapShim(): { dir: string; log: string } {
   const dir = tmpDir("nyra-bwrap-shim-");
   const log = join(dir, "bwrap-args.log");
   writeFileSync(join(dir, "bwrap"), `#!/bin/sh
-echo "$@" >> "$BWRAP_LOG"
+echo "$@" >> "${log}"
 for last; do :; done
 sh -c "$last"
 `, "utf-8");
@@ -177,7 +178,7 @@ test("网关沙箱：bwrap + 假 shim 时命令经 bwrap 跑通，参数含工�
   const home = tmpDir("nyra-gw-sandbox-home-");
   const workdir = tmpDir("nyra-gw-sandbox-wd-");
   const { dir, log } = makeBwrapShim();
-  await withEnv({ ...cleanSandboxEnv(), PATH: `${dir}:${process.env.PATH ?? ""}`, BWRAP_LOG: log }, async () => {
+  await withEnv({ ...cleanSandboxEnv(), PATH: `${dir}:${process.env.PATH ?? ""}` }, async () => {
     const provider = shellProvider("echo via-shim-gw");
     const gw = makeGateway(home, workdir, { sandbox: "bwrap" }, provider);
     const run = gw.send(gw.newSession(), "跑一下");

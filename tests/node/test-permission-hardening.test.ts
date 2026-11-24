@@ -80,16 +80,18 @@ test("deny_read_globs：命中即拒读，错误信息说明原因", () => {
   expect(() => workspaceReadPath(ctx(), "src/a.ts")).not.toThrow();
 });
 
-test("deny_read_globs：没配就是不限制（零配置零影响）", () => {
+test("deny_read_globs：没配就用默认清单（.env 默认拒读）", () => {
   writeFileSync(join(home, "config.json"), JSON.stringify({}), "utf-8");
   writeFileSync(join(workdir, ".env"), "x=1", "utf-8");
-  expect(() => workspaceReadPath(ctx(), ".env")).not.toThrow();
+  expect(() => workspaceReadPath(ctx(), ".env")).toThrow(/deny_read_globs/);
 });
 
-test("deny_read_globs：配置损坏时按「不限制」处理，不把 agent 卡死", () => {
+test("deny_read_globs：配置损坏时用默认清单，不把 agent 卡死", () => {
   writeFileSync(join(home, "config.json"), "{ 坏 json", "utf-8");
   writeFileSync(join(workdir, "a.txt"), "x", "utf-8");
+  writeFileSync(join(workdir, ".env"), "x=1", "utf-8");
   expect(() => workspaceReadPath(ctx(), "a.txt")).not.toThrow();
+  expect(() => workspaceReadPath(ctx(), ".env")).toThrow(/deny_read_globs/);
 });
 
 test("deny_read_globs：改配置后 resetDenyReadCache 生效", () => {
@@ -97,8 +99,8 @@ test("deny_read_globs：改配置后 resetDenyReadCache 生效", () => {
   writeFileSync(join(workdir, ".env"), "x=1", "utf-8");
   expect(() => workspaceReadPath(ctx(), ".env")).toThrow();
 
-  // 改成不拦截 → 清缓存后应放行
-  writeFileSync(join(home, "config.json"), JSON.stringify({}), "utf-8");
+  // 改成显式清空 → 清缓存后应放行（只有显式 [] 才是放宽，{} 仍用默认清单）
+  writeFileSync(join(home, "config.json"), JSON.stringify({ deny_read_globs: [] }), "utf-8");
   resetDenyReadCache();
   expect(() => workspaceReadPath(ctx(), ".env")).not.toThrow();
 });

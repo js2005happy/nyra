@@ -201,9 +201,9 @@ test.skipIf(!codexOnMachine)("ProvidersTest.test_codex_binary_search", () => {
   const found = findCodexBinary();
   expect(found.endsWith("codex")).toBe(true);
   resetCodexCache();
-  // 不存在的 override 不会禁用 PATH 兜底（与 Python 版同语义）：本机 PATH
-  // 里有 codex，仍能找到。
-  expect(findCodexBinary("/definitely/not/here/codex").endsWith("codex")).toBe(true);
+  // 不存在的 override 不再走 PATH 兜底（第四份审计 P0）：显式路径
+  // 不存在就报错，哪怕 PATH 里有 codex 也不去找。
+  expect(() => findCodexBinary("/definitely/not/here/codex")).toThrow(ProviderError);
   resetCodexCache();
 });
 

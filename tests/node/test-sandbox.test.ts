@@ -44,12 +44,15 @@ function cleanSandboxEnv(): Record<string, undefined> {
   return Object.fromEntries(SANDBOX_ENV_KEYS.map((k) => [k, undefined])) as Record<string, undefined>;
 }
 
-/** PATH 里放一个假 bwrap：记录参数到 $BWRAP_LOG，再把最后一个参数当 shell 命令跑。 */
+/** PATH 里放一个假 bwrap：记录参数到日志，再把最后一个参数当 shell 命令跑。
+ * 日志路径直接烘进脚本（不读环境变量）：runSandboxed 给沙箱加 --clearenv 后，
+ * 父进程的环境变量不再透传进 bwrap 子进程，shim 不能再靠 $BWRAP_LOG 找日志。 */
 function makeBwrapShim(): { dir: string; log: string } {
   const dir = tmpDir("nyra-bwrap-shim-");
   const log = join(dir, "bwrap-args.log");
   writeFileSync(join(dir, "bwrap"), `#!/bin/sh
-echo "$@" >> "$BWRAP_LOG"
+LOG=${JSON.stringify(log)}
+echo "$@" >> "$LOG"
 for last; do :; done
 sh -c "$last"
 `, "utf-8");
@@ -229,6 +232,8 @@ test("runSandboxed：假 bwrap shim 端到端跑通一次，参数里含工作�
     expect(recorded).toContain("--bind");
     expect(recorded).toContain(wd);
     expect(recorded).toContain("--unshare-net");
+    // 白名单环境：bwrap 参数里有 --clearenv（第四份审计 P0）。
+    expect(recorded).toContain("--clearenv");
   });
 });
 

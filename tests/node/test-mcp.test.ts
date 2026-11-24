@@ -51,9 +51,8 @@ test("McpClientTest.test_modern_discover_and_paginated_tools", async () => {
 
 test("McpClientTest.test_legacy_initialize_fallback", async () => {
   const server = fakeServerPath();
-  const client = new MCPClient(new MCPServerConfig("fake", "node", [server]), 10);
-  const prev = process.env.FAKE_MCP_MODE;
-  process.env.FAKE_MCP_MODE = "legacy";
+  // FAKE_MCP_MODE 经配置 env 显式声明进子进程——MCP 子进程走环境白名单，父进程环境不再透传。
+  const client = new MCPClient(new MCPServerConfig("fake", "node", [server], { FAKE_MCP_MODE: "legacy" }), 10);
   try {
     client.start();
     const tools = await client.listTools();
@@ -62,8 +61,6 @@ test("McpClientTest.test_legacy_initialize_fallback", async () => {
   } finally {
     client.stop();
     await new Promise((r) => setTimeout(r, 300));
-    if (prev === undefined) delete process.env.FAKE_MCP_MODE;
-    else process.env.FAKE_MCP_MODE = prev;
   }
 });
 
