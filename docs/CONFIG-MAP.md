@@ -10,17 +10,17 @@
 | `tool_search` | `features.tool_search`<br>`tool_search.enabled`<br>`NYRA_LAZY_TOOLS`<br>`--enable-feature tool_search` | off | 未开启：MCP 工具超过 8 个时仍会自动开启 |
 | `run_recall` | `features.run_recall`<br>`--disable-feature run_recall`<br>`redlines.thresholds.recallMaxAgeDays` | on | 已开启；过期天数由 redlines.thresholds.recallMaxAgeDays 决定（默认 30） |
 | `cost_cap` | `max_cost_usd`<br>`--max-cost` | off | 未设上限：长任务可能无限烧钱 |
-| `budget` | `budget.strict_unknown_amount`<br>`nyra budget strict --on/--off` | 开（金额未知则暂停） | 未配单价或调用缺用量时，运行暂停并建暂停记录等人工处理（恢复走 nyra governance caps resume） |
 | `aux_model_routing` | `compact_model`<br>`delegate_model` | off | 未配置：压缩与子任务都用主模型（成本更高） |
 | `plan_act_model_routing` | `plan_model`<br>`act_model` | off | 未配置：规划与执行共用主模型 |
 | `reasoning_effort` | `reasoning_effort`<br>`verbosity` | provider 默认 | 未配置：不发这两个字段（payload 与默认一致） |
 | `extra_writable_dirs` | `extra_writable_dirs`<br>`--add-dir` | none | 只有工作目录可写 |
-| `deny_read_globs` | `deny_read_globs` | off | 未配置：敏感文件（.env / secrets）可被读取并发给模型 |
+| `deny_read_globs` | `deny_read_globs` | 4 条规则 | 命中即拒读：**/.env、**/.ssh/id_*、**/*.pem… |
 | `sandbox` | `sandbox`<br>`sandbox_mode`<br>`--sandbox` | auto | auto：Linux 用 bwrap、macOS 用 seatbelt（需显式 --sandbox seatbelt） |
 | `nested_delegate` | `delegate_max_depth` | 2 层 | 子 agent 默认不能再委派（flat）；委派时传 orchestrator: true 才允许嵌套，最多嵌套这么多层，每层预算独立记账 |
 | `trust_ladder` | `trust_ladder.required_successes`<br>`trust_ladder.spot_check_rate` | 5 次成功/级，抽查 10% | 新 agent / 新技能登记后默认只读；每级要攒够连续成功且零违规才升一级，升级须人点头；每次记成功有概率被随机抽查，抽中须复核才计入；降级随时可做 |
 | `reconciler` | `reconciler.enabled`<br>`reconciler.stuck_after_seconds`<br>`reconciler.max_retries`<br>`reconciler.scan_interval_seconds` | 关（只手动扫描） | 看门狗只重排任务板任务（回队列等下一轮 tick），不调模型、不写任务板账本以外的文件、不对外发；超限进 blocked 只等人 reset；无人值守续跑照样强制只读 |
 | `watch` | `watch.enabled`<br>`watch.default_interval_seconds` | 关（只手动检查） | Watch 本身只读（抓页面、读文件），不调模型、不对外发；enqueue-task 动作入队后执行时照常走审批；download 动作须人显式批准才执行 |
+| `budget` | `budget.strict_unknown_amount`<br>`nyra budget strict --on/--off` | 开（金额未知则暂停） | 未配单价或调用缺用量时，运行暂停并建暂停记录等人工处理（恢复走 nyra governance caps resume） |
 
 ## 生效优先级（通用）
 
