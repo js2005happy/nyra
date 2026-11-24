@@ -1,0 +1,77 @@
+name: 内测问题反馈（Bug）
+description: 装不上、打不开、报错、结果不对，都用这个。
+title: "[Bug] "
+labels: ["内测", "bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        谢谢你帮 Nyra 找问题！
+        **⚠️ 请勿粘贴 API Key、密码、配对码或任何私密信息。** 贴日志和截图前先检查一遍，把 Key 打码（例如 `sk-****`）。
+  - type: dropdown
+    id: platform
+    attributes:
+      label: 平台
+      description: 在哪里遇到的问题？可多选。
+      multiple: true
+      options:
+        - Windows 桌面应用
+        - macOS 桌面应用
+        - Linux 桌面应用（AppImage / deb）
+        - 命令行（终端里的 nyra）
+        - 电脑浏览器网页界面（nyra ui）
+        - 手机网页（/m）
+        - 安卓 App（APK）
+        - 一键安装脚本
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Nyra 版本
+      description: 终端里运行 `nyra --version`，或在 设置 → 关于 里看。
+      placeholder: 例如 nyra 0.5.13
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: 系统版本
+      placeholder: 例如 Windows 11 23H2 / macOS 15.2 / Ubuntu 24.04 / Android 15
+  - type: textarea
+    id: what
+    attributes:
+      label: 发生了什么
+      description: 一两句话说清楚问题，以及你本来期望看到什么。
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 按顺序写下怎么操作能再次遇到这个问题。
+      placeholder: |
+        1. 打开 …
+        2. 输入 …
+        3. 点 …
+        4. 看到 …
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 报错信息或日志（可选）
+      description: 终端输出、`nyra doctor` 的结果等。**先把 Key 和私密路径打码。**
+      render: text
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: 截图（可选）
+      description: 直接把图片拖进来。截图前确认画面里没有 Key、密码或配对码。
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我确认上面没有贴 API Key、密码、配对码或其他私密信息。
+          required: true

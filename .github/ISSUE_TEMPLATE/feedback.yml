@@ -1,0 +1,71 @@
+name: 内测体验反馈
+description: 好用、不好用、看不懂、希望加什么，都欢迎说。
+title: "[体验] "
+labels: ["内测", "体验反馈"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        随便说，不用写得很正式。
+        **⚠️ 请勿粘贴 API Key、密码、配对码或任何私密信息。**
+  - type: dropdown
+    id: platform
+    attributes:
+      label: 平台
+      multiple: true
+      options:
+        - Windows 桌面应用
+        - macOS 桌面应用
+        - Linux 桌面应用（AppImage / deb）
+        - 命令行（终端里的 nyra）
+        - 电脑浏览器网页界面（nyra ui）
+        - 手机网页（/m）
+        - 安卓 App（APK）
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Nyra 版本
+      description: 终端里运行 `nyra --version`，或在 设置 → 关于 里看。
+      placeholder: 例如 nyra 0.5.13
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: 关于哪一块
+      multiple: true
+      options:
+        - 安装与第一次配置
+        - 配置模型 / Key
+        - 对话与回复质量
+        - 审批卡与权限模式
+        - 手机连电脑
+        - 自动化 / 定时任务
+        - 总指挥团队
+        - 界面与文字
+        - 其他
+  - type: textarea
+    id: feedback
+    attributes:
+      label: 你的感受
+      description: 哪里顺手、哪里卡住、哪里看不懂？
+    validations:
+      required: true
+  - type: textarea
+    id: wish
+    attributes:
+      label: 希望怎么改（可选）
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: 截图（可选）
+      description: 截图前确认画面里没有 Key、密码或配对码。
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我确认上面没有贴 API Key、密码、配对码或其他私密信息。
+          required: true
