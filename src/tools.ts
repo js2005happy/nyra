@@ -239,6 +239,13 @@ export interface ToolContext {
    */
   shellReadOnly?: boolean;
   /**
+   * G-P2-4：类型化中间件链——按工具配的审批模式解析（agent.ts 在 ctx
+   * 创建处用闭包注入，fallback 为默认 require）。只对只读工具返回
+   * "never_require"；写工具即使配了也按 require 算（resolveApprovalMode
+   * 负责），checkApproval 里再拦一道（纵深防御）。
+   */
+  approvalMode?: ((tool: string) => "require" | "never_require") | null;
+  /**
    * 缺口 8：无人值守巡查——为 true 时，写操作在 checkApproval 里直接拒绝
    *（连权限规则 allow 都打不开），与 readonly 同级硬约束；读工具不受影响。
    * 只由守护进程的巡查设置，队列任务与人工运行不设。
@@ -997,6 +1004,13 @@ export async function checkApproval(
   opts?: { command?: string; cwd?: string; fileTarget?: string; timeout?: number },
 ): Promise<void> {
   if (!MUTATING_TOOLS.has(toolName)) return;
+  // G-P2-4：纵深防御——写工具配了 never_require 也直接拒绝（resolveApprovalMode
+  // 本就只对只读工具返回 never_require，这里是第二道门，防配置被绕过）。
+  if (ctx.approvalMode?.(toolName) === "never_require") {
+    throw new ToolError(
+      `审批模式拒绝：工具 ${toolName} 是写操作，不能配 never_require（只读工具才能免审批）`,
+    );
+  }
   // 缺口 8：无人值守巡查为只读——在权限规则之前就拒绝，规则 allow 打不开它
   //（与 readonly 同级硬约束）。被拦的写操作记 `patrol_write_blocked` 事件
   //（RunRecorder 白名单已登记），只记拦截、不记放行。

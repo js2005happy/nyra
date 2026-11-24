@@ -212,6 +212,7 @@ nyra checkpoint <list|show|history|update|replay|store>   步级检查点 + 时�
 nyra interrupt <list|show|respond|edit|resume>   结构化人机回环（G-P1-41）：工作流在配了 interrupt_before/after 的步骤前后停住，人回 accept/ignore/respond/edit 再原地续跑；只认 fixed 形态顶层步骤（详见 docs/interrupts.md）
 nyra intervention <list|add|remove|enable|disable|on|off|log|test>   运行时消息拦截（G-P2-1）：群聊 / A2A / AG-UI 入口对方 agent 发来的消息先过拦截器，可记日志、改写、丢弃；默认只记日志，drop / rewrite 须机主显式 enable，机主消息永远不拦截（详见 docs/interventions.md）
 nyra admission <log|show|who-approved|policy-history|export>   企业级准入账本（G-P2-2）：好友批准、进圈/离圈、策略变更、token 发放/吊销都记进同一本只追加账本，只记元数据与指纹，不记 token 原文（详见 docs/admission.md）
+nyra middleware <status|enable|disable|set|approval|cache-clear>   类型化中间件链（G-P2-4）：chat / function / agent 三层可组合链，内置校验、重试、缓存、token 计数；默认只开校验与 token 计数，重试与缓存默认关；审批模式按工具配（详见 docs/middleware.md）
 nyra delegate "<任务>" [--preset <预设名>] [--max-turns <1-12>] [--model <模型>] [--agent <成员>] [--json]   一次性委派：派一个子 agent 跑任务并打印摘要；--preset 指定具名预设（review 是只读预设），不给时按项目默认 → 用户默认 → general-purpose 解析（详见 docs/subagent-presets.md）
 nyra template <list|show|builtin|import|trial|activate|run|dry-run|remove|publish|install>   业务流程模板库（缺口 46）：流程 DSL + 连接器 + 验收标准 + 试跑数据，激活前须真实数据试跑 + 人工确认，随机器人市场分发（详见 docs/templates.md）
 nyra script check <文件> [--language python|javascript|lua|php]   判定一个脚本纯不纯（白名单静态分析）：纯返回 0，不纯返回 1
@@ -371,6 +372,7 @@ nyra checkpoint <list|show|history|update|replay|store>   step checkpoints + tim
 nyra interrupt <list|show|respond|edit|resume>   structured human-in-the-loop (G-P1-41): a workflow pauses before/after steps that carry interrupt_before/after; a human answers accept/ignore/respond/edit and resumes in place; only fixed-mode top-level steps (see docs/interrupts.md)
 nyra intervention <list|add|remove|enable|disable|on|off|log|test>   runtime message interception (G-P2-1): messages from other agents entering via group chat / A2A / AG-UI pass an interceptor first; log, rewrite or drop; log-only by default, drop / rewrite need the owner to enable them explicitly, owner messages are never intercepted (see docs/interventions.md)
 nyra admission <log|show|who-approved|policy-history|export>   enterprise admission ledger (G-P2-2): friend approvals, circle join/leave, policy changes and token issue/revoke all go into one append-only ledger; metadata and fingerprints only, no token plaintext (see docs/admission.md)
+nyra middleware <status|enable|disable|set|approval|cache-clear>   typed middleware chain (G-P2-4): composable chat / function / agent layers with validation, retry, caching and token counting; only validation and token counting are on by default, retry and caching are off; per-tool approval modes (see docs/middleware.md)
 nyra delegate "<task>" [--preset <preset>] [--max-turns <1-12>] [--model <model>] [--agent <member>] [--json]   one-off delegation: run a sub-agent on a task and print the summary; --preset picks a named preset (review is read-only), otherwise resolved as project default, then user default, then general-purpose (see docs/subagent-presets.md)
 nyra template <list|show|builtin|import|trial|activate|run|dry-run|remove|publish|install>   business process template library (gap 46): workflow DSL + connectors + acceptance criteria + trial data, distributed through the robot market; activation needs a real-data trial run + human confirmation (see docs/templates.md)
 nyra script check <file> [--language python|javascript|lua|php]   judge whether a script is pure (allowlist static analysis): exit 0 if pure, 1 if not
@@ -7275,6 +7277,11 @@ export async function main(argv: string[]): Promise<number> {
   if (args.subcommand === "admission") {
     const { handleAdmission } = await import("./admissionCli.ts");
     return handleAdmission(args.subArgs ?? [], home);
+  }
+  // G-P2-4：类型化中间件链（nyra middleware <status|enable|disable|set|approval|cache-clear>）。
+  if (args.subcommand === "middleware") {
+    const { handleMiddleware } = await import("./middlewareCli.ts");
+    return handleMiddleware(args.subArgs ?? []);
   }
   // G-P2-3：一次性委派（nyra delegate "<任务>" --preset review）。
   if (args.subcommand === "delegate") return handleDelegateCommand(args, home);

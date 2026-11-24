@@ -19,6 +19,7 @@ import { CREATOR_SKILL_NAME, CREATOR_SKILL_TEXT } from "./creator.ts";
 import {
   TOOL_SCHEMAS, POPPY_TOOL_SCHEMA, POPPY_PERMISSION_SCHEMA, POPPY_IDENTITY_SCHEMA,
   newToolContext, executeTool, executeToolIdempotent, resumeWriteAlreadyDone, ToolError, checkApproval,
+  READONLY_TOOLS,
   type ToolContext, type DelegateOptions, type ApproveResult,
 } from "./tools.ts";
 import { RepeatGuard } from "./repeatGuard.ts";
@@ -43,6 +44,32 @@ import { nextMonthlyResetDate } from "./usageLedger.ts";
 import { t } from "./i18n.ts";
 import type { AuxTask } from "./modelRouting.ts";
 import { selectTools, describeDeferred, searchDeferredTools, formatSearchResults, SEARCH_TOOLS_SCHEMA } from "./toolSearch.ts";
+
+/**
+ * G-P2-4：从 TOOL_SCHEMAS 现场拼某工具的参数 schema（校验中间件用）。
+ * 工具不在 TOOL_SCHEMAS 里（mcp_* 等）回 null——校验放行，审批门仍在。
+ */
+function toolArgSchemaLookup(tool: string): ToolArgSchema | null {
+  for (const s of TOOL_SCHEMAS) {
+    const fn = (s as Record<string, unknown>).function as Record<string, unknown> | undefined;
+    if (!fn || fn.name !== tool) continue;
+    const params = fn.parameters as Record<string, unknown> | undefined;
+    if (!params || typeof params !== "object") return { required: [], properties: {} };
+    const props: Record<string, { type?: string }> = {};
+    const rawProps = params.properties as Record<string, unknown> | undefined;
+    if (rawProps && typeof rawProps === "object") {
+      for (const [k, v] of Object.entries(rawProps)) {
+        const t = (v as Record<string, unknown>)?.type;
+        props[k] = typeof t === "string" ? { type: t } : {};
+      }
+    }
+    const required = Array.isArray(params.required)
+      ? params.required.filter((x): x is string => typeof x === "string")
+      : [];
+    return { required, properties: props };
+  }
+  return null;
+}
 import { buildDashboardSnapshot } from "./dashboard.ts";
 import { runHooks, type RunHooksContext } from "./hooks.ts";
 import type { ReviewerLike } from "./reviewer.ts";
@@ -56,6 +83,17 @@ import {
   resolveSubagentPreset,
   type SubagentPreset,
 } from "./subagentPresets.ts";
+// G-P2-4：类型化中间件链——middleware.ts 是叶模块，只引 node 内置，
+// 这里静态导入不会形成循环导入。
+import {
+  buildMiddlewareSet,
+  defaultMiddlewareConfig,
+  resolveApprovalMode,
+  runMiddlewareChain,
+  type FunctionResultCache,
+  type MiddlewareSet,
+  type ToolArgSchema,
+} from "./middleware.ts";
 import { buildSoulSection, loadSoul } from "./soul.ts";
 import { getTeam, requireCharter, verifyCharterCompliance, formatCharterCheckLine, ORCHESTRATOR_TOOLS } from "./team.ts";
 import { normalizeGateFile, transferWriteLease, releaseAllWriterLeases } from "./writeGate.ts";
@@ -597,6 +635,13 @@ export class Agent {
   private runSignal: AbortSignal | null = null;
   /** 停止监视定时器（runLoop 开始时起，结束时清；500ms 一查）。 */
   private stopWatch: ReturnType<typeof setInterval> | null = null;
+  /**
+   * G-P2-4：类型化中间件链——本轮的链装配（runLoop 开始时按配置文件
+   * 现读；配置每轮重读，CLI 改完下一轮即生效）与跨运行复用的进程内
+   * 缓存（store 翻转须重启才生效）。
+   */
+  private middlewareSet: MiddlewareSet | null = null;
+  private middlewareCache: FunctionResultCache | null = null;
   /** 缺口 29：月度上限与本月已花（不含本次运行）；见 AgentOptions。 */
   private monthlyCostLimitUsd: number | null;
   private monthlySpentBeforeUsd: AgentOptions["monthlySpentBeforeUsd"];
@@ -840,6 +885,9 @@ export class Agent {
       interactive: this.interactive,
       // 缺口 8：无人值守标志透传给工具层（checkApproval 的硬拒绝）。
       unattended: this.unattended,
+      // G-P2-4：审批模式解析——ToolContext.approvalMode 闭包，fallback
+      // 为默认 require；写工具配了 never_require 也按 require 算。
+      approvalMode: (tool) => this.resolveMiddlewareApprovalMode(tool),
       home: this.home,
       memoryPath: this.memoryPath,
       // 缺口 28：Soul invariant 拦截要知道当前用哪个 Soul（checkApproval 里按它读规则）。
@@ -1607,6 +1655,53 @@ export class Agent {
   }
 
   /**
+   * G-P2-4：按工具配的审批模式（ToolContext.approvalMode 闭包的落点）。
+   * 链还没装配时（runLoop 之前）按默认配置算——默认全部 require。
+   */
+  private resolveMiddlewareApprovalMode(tool: string): "require" | "never_require" {
+    const config = this.middlewareSet?.config ?? defaultMiddlewareConfig();
+    return resolveApprovalMode(config, tool, READONLY_TOOLS);
+  }
+
+  /**
+   * G-P2-4：装配本轮的中间件链（配置每轮现读；memory 缓存实例跨运行
+   * 复用，file 缓存由同一个 FunctionResultCache 实例读写）。
+   */
+  private getMiddlewareSet(): MiddlewareSet {
+    const set = buildMiddlewareSet(this.home, {
+      emit: (kind, data) => this.emit(kind, data),
+      getSchema: (tool) => toolArgSchemaLookup(tool),
+      cacheableTools: READONLY_TOOLS,
+      readOnlyTools: READONLY_TOOLS,
+    }, this.middlewareCache ?? undefined);
+    this.middlewareCache = set.cache;
+    this.middlewareSet = set;
+    return set;
+  }
+
+  /** G-P2-4：chat 层链（模型调用前后）；层空了直接调 terminal。 */
+  private runChatMiddleware(
+    model: string | null,
+    turn: number,
+    terminal: () => Promise<Record<string, unknown>>,
+  ): Promise<Record<string, unknown>> {
+    const mw = this.middlewareSet ?? this.getMiddlewareSet();
+    if (mw.chat.length === 0) return terminal();
+    return runMiddlewareChain(mw.chat, { model, turn }, terminal);
+  }
+
+  /** G-P2-4：function 层链（工具调用前后）；层空了直接调 terminal。 */
+  private runFunctionMiddleware(
+    tool: string,
+    args: Record<string, unknown>,
+    terminal: () => Promise<string>,
+  ): Promise<string> {
+    const mw = this.middlewareSet ?? this.getMiddlewareSet();
+    if (mw.function.length === 0) return terminal();
+    return runMiddlewareChain(mw.function, { tool, args }, terminal);
+  }
+
+  /**
    * 运行循环外壳（可靠性打磨第 1 项第一批）：建当轮取消控制器、合并
    * 外部信号、起停止监视；CancelError 在这里收敛成“已取消”的部分成果
    * 文本（不往上抛），底层确认停下后才释放执行槽位（endRun 在 finally
@@ -1625,7 +1720,9 @@ export class Agent {
     let spanStatus: { code: "ok" | "error"; message?: string } = { code: "ok" };
     let cancelled = false;
     try {
-      return await this.runLoopInner(task, resume);
+      // G-P2-4：agent 层链包住整轮（try/catch/finally 不动；层空了直调）。
+      const mw = this.getMiddlewareSet();
+      return await runMiddlewareChain(mw.agent, { task, resume }, () => this.runLoopInner(task, resume));
     } catch (err: unknown) {
       if (isCancelError(err)) {
         cancelled = true;
@@ -2135,7 +2232,13 @@ export class Agent {
         // 可靠性打磨第 1 项第一批：当轮取消信号传给模型请求——abort 时
         // 在途请求断开并抛 CancelError（不是 ProviderError，原样上抛，
         // 外壳 runLoop 收敛成“已取消”的部分成果文本）。
-        resp = await actModel.chat(current as never, schemas as never, undefined, { signal: this.runSignal ?? undefined });
+        // G-P2-4：chat 层链包住模型调用（只挂 token 计数；重试归 provider
+        // 链管，940/2575 两处 provider.chat 不接）。
+        resp = await this.runChatMiddleware(
+          actModel.model,
+          turnOffset + i + 1,
+          () => actModel.chat(current as never, schemas as never, undefined, { signal: this.runSignal ?? undefined }),
+        );
       } catch (err: unknown) {
         this.releaseReservation(reservation, isCancelError(err) ? "cancelled" : "call-failed");
         emitLlmSpan(false);
@@ -2269,18 +2372,24 @@ export class Agent {
           const mcp = this.mcpManager;
           if (mcp === null || mcp === undefined) {
             // 无 MCP 管理器时走 worker 桥；桥未接则明确报错，不假装执行。
-            result = await executeTool(fnName, args, this.ctx);
+            // G-P2-4：function 层链包住这条直接执行路径（与常规分支同款）。
+            result = await this.runFunctionMiddleware(fnName, args, () => executeTool(fnName, args, this.ctx));
           } else {
-            try {
-              await checkApproval(this.ctx, "mcp", `调用外部 MCP 工具：${fnName}（可能产生外部副作用）`);
-              result = await mcp.execute(fnName, args);
-            } catch (err: unknown) {
-              result = `错误：${err instanceof Error ? err.message : String(err)}`;
-            }
+            // G-P2-4：function 层链包住 MCP 执行（审批仍在里面先跑，链不改审批语义）。
+            result = await this.runFunctionMiddleware(fnName, args, async () => {
+              try {
+                await checkApproval(this.ctx, "mcp", `调用外部 MCP 工具：${fnName}（可能产生外部副作用）`);
+                return await mcp.execute(fnName, args);
+              } catch (err: unknown) {
+                return `错误：${err instanceof Error ? err.message : String(err)}`;
+              }
+            });
           }
         } else {
           // OpenMausBot C 项：工具失败重试须幂等（只读直接重试、写操作先查状态）。
-          result = await executeToolIdempotent(fnName, args, this.ctx);
+          // G-P2-4：function 层链包住常规工具执行（校验/缓存/重试在链里，
+          // 审批仍在 executeToolIdempotent 内部先跑，链不改审批语义）。
+          result = await this.runFunctionMiddleware(fnName, args, () => executeToolIdempotent(fnName, args, this.ctx));
         }
         // G-P1-15：工具 span 收尾（执行分支走完即结束；被拒/跳过的调用也记一笔，
         // ok 按 tool_result 同款口径：结果不以“错误：”开头即成功）。

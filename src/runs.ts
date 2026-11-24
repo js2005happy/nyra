@@ -691,6 +691,17 @@ media_ingested: ["host", "title_hash", "duration_seconds", "bytes", "source", "t
 delegate_start: ["task_id", "model", "max_turns", "depth", "layer_remaining"],
 // G-P2-3：委派时用的具名预设（只记预设名、定义来源与生效后的工具限制摘要，不记任务原文）。
 delegate_preset_applied: ["task_id", "preset", "source", "tools"],
+// G-P2-4：类型化中间件链的运行事件。middleware_retry 记重试轮次与退避；
+// middleware_cache_hit 只记工具名与参数指纹（哈希前 16 位），不记参数
+// 与结果原文；middleware_validation_failed 只记工具名与字段名，不记
+// 参数值；middleware_tokens / middleware_tokens_total 只记模型实报的
+// 用量，缺失为 null、不编 0；middleware_approval_mode 只记工具名与模式。
+middleware_retry: ["layer", "tool", "attempt", "delay_ms", "kind"],
+middleware_cache_hit: ["tool", "args_hash"],
+middleware_validation_failed: ["tool", "fields"],
+middleware_tokens: ["model", "prompt_tokens", "completion_tokens", "total_tokens", "missing_calls"],
+middleware_tokens_total: ["prompt_tokens", "completion_tokens", "total_tokens", "missing_calls", "calls"],
+middleware_approval_mode: ["tool", "mode"],
 delegate_end: ["task_id", "ok", "turns", "spent_usd", "verification"],
 delegate_rejected: ["task_id", "reason", "depth"],
 llm_span: ["model", "duration_ms", "prompt_tokens", "completion_tokens", "total_tokens", "ok", "trace_id", "span_id"],
