@@ -65,6 +65,15 @@ Then run `nyra setup`. The scripts verify each download against the release `SHA
 
 The full documentation is in Chinese: see [README.md](README.md) and [GUIDE.md](GUIDE.md). Contributions: [CONTRIBUTING.md](CONTRIBUTING.md) · Security: [SECURITY.md](SECURITY.md).
 
+## Contributing
+
+Nyra is in beta. Try it, tell us what works and what doesn't, and help improve it:
+
+- **Feedback**: [beta sign-up & feedback hub](https://github.com/js2005happy/nyra/issues/131) (pinned) · [report a bug / share feedback](https://github.com/js2005happy/nyra/issues/new/choose) (never paste API keys)
+- **Discussions**: [Discussions](https://github.com/js2005happy/nyra/discussions) for beta feedback, ideas and show-and-tell
+- **Start small**: [good first issues](https://github.com/js2005happy/nyra/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) are self-contained tasks; comment to claim one
+- **How to submit**: development setup, test commands and commit conventions are in [CONTRIBUTING.md](CONTRIBUTING.md)
+
 ## License
 
 [MIT](LICENSE)

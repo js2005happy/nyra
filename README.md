@@ -276,6 +276,15 @@ bash scripts/build-binaries.sh --only linux-x64   # 编单文件二进制到 dis
 - API Key 存在本机密码箱或 `~/.nyra/keys.json`，不写进项目文件和日志；网页版不输入也不保存 Key。
 - 模型请求从你的电脑直接发给你选的提供商，提示词与上下文受该提供商的条款约束。详见 [隐私政策](https://js2005happy.github.io/nyra/privacy.html)。
 
+## 参与共创
+
+Nyra 正在内测，欢迎来试、来提意见，也欢迎一起改进：
+
+- **反馈入口**：[内测招募 & 反馈入口](https://github.com/js2005happy/nyra/issues/131)（置顶）· [提 Bug / 体验反馈](https://github.com/js2005happy/nyra/issues/new/choose)（请勿贴 API Key）
+- **讨论**：[Discussions](https://github.com/js2005happy/nyra/discussions)——「内测反馈」「想法」「展示」分类
+- **上手做点事**：[good first issue](https://github.com/js2005happy/nyra/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) 里是可以独立完成的小任务，留言认领即可
+- **怎么提交**：开发流程、测试命令和提交约定见 [CONTRIBUTING.md](CONTRIBUTING.md)
+
 ## 参与贡献
 
 欢迎 PR 和 issue。开发流程、测试命令和提交约定见 [CONTRIBUTING.md](CONTRIBUTING.md)；安全问题请按 [SECURITY.md](SECURITY.md) 私下报告；参与即表示同意 [行为准则](CODE_OF_CONDUCT.md)。
