@@ -6706,6 +6706,16 @@ async function runRepl(args: CliArgs): Promise<number> {
       });
     process.stdout.write(lines.join("\n") + "\n");
   };
+  // 非 TTY（管道）下审批借用会话自己的 readline 提问，不再另开一个——另开的那个
+  // 关闭时会暂停 stdin，会话随后以 exit 0 退出。
+  let rlClosed = false;
+  rl.once("close", () => { rlClosed = true; });
+  approvalHooks.ask = (question: string): Promise<string | null> => new Promise((resolveAsk) => {
+      if (rlClosed) { resolveAsk(null); return; }
+      const onClose = (): void => resolveAsk(null);
+      rl.once("close", onClose);
+      rl.question(question, (answer) => { rl.off("close", onClose); resolveAsk(answer); });
+    });
   approvalHooks.after = () => {
     approvalOpen = false;
     pet.setMood("thinking");
@@ -7071,6 +7081,7 @@ async function runRepl(args: CliArgs): Promise<number> {
     pet.stop();
     approvalHooks.before = undefined;
     approvalHooks.after = undefined;
+    approvalHooks.ask = undefined;
     rl.close();
     await endSessionHooks();
     process.removeListener("SIGINT", onReplSigint);
