@@ -13,8 +13,8 @@ import {
 import { VERSION } from "../../src/config.ts";
 
 test("CliTest.test_version_string", () => {
-  expect(VERSION).toBe("0.5.13");
-  expect(USAGE).toContain("0.5.13");
+  expect(VERSION).toBe("0.5.14");
+  expect(USAGE).toContain("0.5.14");
 });
 
 test("CliTest.test_parse_args_flags", () => {
@@ -166,7 +166,7 @@ test("CliTest.test_binary_help_and_version", () => {
   expect(help.out).toContain("nyra");
   const ver = runCli(["--version"], home);
   expect(ver.code).toBe(0);
-  expect(ver.out).toContain("0.5.13");
+  expect(ver.out).toContain("0.5.14");
 });
 
 test("CliTest.test_binary_list_providers_skills_sessions", () => {
