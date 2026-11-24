@@ -1569,6 +1569,11 @@ function writeFileNoFollow(path: string, content: string): void {
   }
 }
 
+/** 相对真实工作目录的路径。macOS 的 /tmp 是 /private/tmp 的符号链接，两边都先 realpath。 */
+function workdirRelative(ctx: ToolContext, absolute: string): string {
+  return relative(canonicalizePath(resolve(ctx.workdir)), canonicalizePath(absolute)).split(sep).join("/");
+}
+
 /**
  * 读写前再看一眼最终分量。若是符号链接，改对真实目标重跑越界/受保护/禁读检查，
  * 然后只打开那个真实路径（O_NOFOLLOW）。检查和打开之间若被换成符号链接，打开失败。
@@ -1582,15 +1587,15 @@ function resolveIoTarget(ctx: ToolContext, lexical: string, kind: "read" | "writ
     throw new ToolError("符号链接目标无法解析");
   }
   // 传相对路径：Bun 的 join(root, 绝对路径) 不会丢掉前半段，会拼出双重目录。
-  const rel = relative(resolve(ctx.workdir), real);
+  const rel = workdirRelative(ctx, real);
   return kind === "write" ? workspaceWritePath(ctx, rel) : workspaceReadPath(ctx, rel);
 }
 
 function linkedTargetLabel(ctx: ToolContext, requested: string, absolute: string): string {
   try {
     if (existsSync(absolute) && lstatSync(absolute).isSymbolicLink()) {
-      const rel = relative(resolve(ctx.workdir), realpathSync(absolute)).split(sep).join("/");
-      if (rel && !rel.startsWith("..")) return `${requested} → ${rel}`;
+      const rel = workdirRelative(ctx, realpathSync(absolute));
+      if (rel && !rel.startsWith("..") && !rel.startsWith("/")) return `${requested} → ${rel}`;
     }
   } catch { /* 解析失败时仍用调用方给出的路径 */ }
   return requested;
@@ -1628,13 +1633,13 @@ export function changePreview(ctx: ToolContext, target: string, newContent: stri
     if (existsSync(target) && lstatSync(target).isSymbolicLink()) label = realpathSync(target);
   } catch { /* 预览标签解析失败时用调用方路径 */ }
   if (!existsSync(label)) {
-    const rel = relative(resolve(ctx.workdir), resolve(label)).split(sep).join("/");
+    const rel = workdirRelative(ctx, label);
     return unifiedPreview(rel, null, Buffer.from(newContent, "utf-8"));
   }
   if (!statSync(label).isFile()) throw new ToolError("只能修改普通文件");
   if (statSync(label).size > 2 * 1024 * 1024) return "（原文件超过 2 MiB，无法展示完整预览）";
   const oldBytes = readFileSync(label);
-  const rel = relative(resolve(ctx.workdir), resolve(label)).split(sep).join("/");
+  const rel = workdirRelative(ctx, label);
   return unifiedPreview(rel, oldBytes, Buffer.from(newContent, "utf-8"));
 }
 
