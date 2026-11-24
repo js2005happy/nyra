@@ -26,18 +26,17 @@ macOS 上从程序坞 / 访达打开的 App 拿不到终端里 `~/.zshrc` 设置
 
 ## 安装
 
-### 先决条件：先装好 Nyra 命令行版
+### 先决条件：安装包已内嵌命令行
 
-- **Nyra 本体（Node 单文件二进制）**：macOS 见 [macos-install.md](macos-install.md)（`bash scripts/install-node-macos.sh`），Windows 见 [windows-install.md](windows-install.md)（`irm https://raw.githubusercontent.com/js2005happy/nyra/main/scripts/install-node.ps1 | iex`）。装好后 `nyra --version` 应输出 `nyra 0.5.2 (node runtime)`。
-- 不需要 Python、不需要 Node、不需要 Bun：桌面端只启动已装好的 `nyra` 二进制（`nyra ui ...`），自己不带运行时。
-- 想让桌面端用指定位置的二进制，设环境变量 `NYRA_BIN=<完整路径>`。
-- 模型 Key 和命令行一样只从环境变量读（见 GUIDE“配置模型”）。
+- **安装包里已带同版本 Nyra 命令行**（`tauri.conf.json` 的 `externalBin`：`binaries/nyra-cli`）：装好桌面 App 就能直接用，不用再单独装命令行版。想让桌面端改用指定位置的二进制，设环境变量 `NYRA_BIN=<完整路径>`。
+- 不需要 Python、不需要 Node、不需要 Bun。
+- 模型 Key 可以从环境变量读，也可以在桌面 App 的首次设置页粘贴保存（见 README“配置模型”）。
 
 ### 下载安装包
 
 | 产物 | 怎么拿 |
 | --- | --- |
-| `Nyra_<版本>_x64_en-US.msi` 与 `Nyra_<版本>_x64-setup.exe`（Windows，NSIS，装到当前用户，不需要管理员） | **Release v0.5.2 里直接下载**：[Releases](https://github.com/js2005happy/nyra/releases) |
+| `Nyra_<版本>_x64_en-US.msi` 与 `Nyra_<版本>_x64-setup.exe`（Windows，NSIS，装到当前用户，不需要管理员） | **Release 里直接下载**：[Releases](https://github.com/js2005happy/nyra/releases) |
 | `Nyra_<版本>_universal.dmg`（macOS，Apple 芯片与 Intel 通用） | **Release 里直接下载**：[Releases](https://github.com/js2005happy/nyra/releases)（0.5.3 起发版时自动挂进 Release；0.5.2 的 `.dmg` 仍只在 Actions 产物里：打开仓库的 **Actions → Build desktop app**，选 `v0.5.2` 标签那次运行，在页面底部 **Artifacts** 下载 `Nyra-macos-universal`，需要登录 GitHub，下载下来是 zip，先解压） |
 
 两个安装包都是**未签名**的（见下文打开步骤）。
@@ -91,7 +90,7 @@ cd src-tauri && cargo test                      # 外壳的单元测试
 ## 已知限制 / 待办
 
 - **未签名**：没有 Apple Developer ID 签名与公证、没有 Windows 代码签名证书，所以有上面的 Gatekeeper / SmartScreen 提示。
-- **不内置 Nyra 本体**：桌面端只是一个外壳，需要本机先装好 Nyra 命令行版（见“先决条件”）；没装或找不到时只显示引导页。
+- **内嵌同版本命令行**：安装包里已带 `binaries/nyra-cli`，外壳优先用它；`NYRA_BIN` 指定的二进制优先于内嵌的；都找不到时只显示引导页。
 - **没有自动更新**：新版本需要重新下载安装。
 - **没有在真机上手动验证**：只在 CI 上构建通过、在 Linux 上编译并跑过外壳单元测试；macOS / Windows 上的实际启动、Python 查找、退出清理还没在真机上点过。
 - 没有菜单栏 / 托盘、没有多窗口；网页界面里 `target="_blank"` 的同源链接不会打开新窗口。
