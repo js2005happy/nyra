@@ -153,20 +153,24 @@ nyra_expected_hash_for() {
   printf '%s\n' "$found"
 }
 
+# Git for Windows 的 sha256sum 在 /usr/bin，不一定在 Windows 的 PATH 里。
 nyra_file_sha256() {
-  local file="$1"
+  local file="$1" out
   if [ ! -f "$file" ]; then
     printf '%s\n' "找不到要校验的文件：$file" >&2
     return 1
   fi
   if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$file" | awk '{ print tolower($1) }'
+    out="$(sha256sum "$file")" || return 1
+  elif [ -x /usr/bin/sha256sum ]; then
+    out="$(/usr/bin/sha256sum "$file")" || return 1
   elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "$file" | awk '{ print tolower($1) }'
+    out="$(shasum -a 256 "$file")" || return 1
   else
     printf '%s\n' "需要 sha256sum 或 shasum 才能校验产物，拒绝继续" >&2
     return 1
   fi
+  printf '%s\n' "$out" | awk '{ print tolower($1) }'
 }
 
 # 发布者：cosign 验 SHA256SUMS。没有 cosign、没有签名材料、验签失败都拒绝。
@@ -178,7 +182,14 @@ nyra_verify_sums_signature() {
   local repo="${NYRA_REPO:-js2005happy/nyra}"
   local ident
   ident="$(nyra_publisher_identity_regexp "$repo")"
-  if [ ! -x "$cosign" ] && ! command -v "$cosign" >/dev/null 2>&1; then
+  # 显式 NYRA_COSIGN 指向一个文件时直接用它。Windows 上看不到 Unix
+  # 可执行位，不能只靠 -x。没指定时才在 PATH 里找 cosign。
+  if [ -n "${NYRA_COSIGN:-}" ]; then
+    if [ ! -f "$cosign" ] && ! command -v "$cosign" >/dev/null 2>&1; then
+      printf '%s\n' "无法验证发布者：NYRA_COSIGN=$cosign 不存在。SHA256 对上只说明文件和清单一致，不能证明清单来自 ${repo} 的 release-sign 工作流。" >&2
+      return 1
+    fi
+  elif ! command -v "$cosign" >/dev/null 2>&1; then
     printf '%s\n' "无法验证发布者：没有可用的 cosign。SHA256 对上只说明文件和清单一致，不能证明清单来自 ${repo} 的 release-sign 工作流。安装 cosign 后再试。" >&2
     return 1
   fi

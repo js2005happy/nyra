@@ -1,6 +1,7 @@
 // 安装脚本的发布校验：本地夹具与 cosign 替身，不下载、不运行网络上的二进制。
 import { test, expect } from "bun:test";
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -8,12 +9,20 @@ import { spawnSync } from "node:child_process";
 const root = join(import.meta.dir, "../..");
 const lib = join(root, "scripts/release-verify-lib.sh");
 
+function toBashPath(p: string): string {
+  return p.replace(/\\/g, "/");
+}
+
 function bash(script: string, env: Record<string, string> = {}) {
   return spawnSync("bash", ["-c", script], {
     cwd: root,
     encoding: "utf8",
     env: { ...process.env, ...env },
   });
+}
+
+function sha256Hex(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
 }
 
 function fixtureDir(): string {
@@ -82,12 +91,12 @@ test("InstallerVerifyTest.test_happy_path_signature_then_hash", () => {
   const cosign = mockCosign(dir, 0);
   const body = "hello release\n";
   writeFileSync(join(dir, "nyra-linux-x64"), body);
-  const hash = bash(`sha256sum "${join(dir, "nyra-linux-x64")}" | awk '{print $1}'`).stdout.trim();
+  const hash = sha256Hex(body);
   writeFileSync(join(dir, "SHA256SUMS"), `${hash}  nyra-linux-x64\n`);
   writeFileSync(join(dir, "SHA256SUMS.bundle"), "fixture-bundle\n");
   const run = bash(
-    `. "${lib}"; nyra_verify_asset_dir "${dir}" nyra-linux-x64 "${join(dir, "nyra-linux-x64")}"`,
-    { NYRA_COSIGN: cosign, NYRA_COSIGN_LOG: log },
+    `. "${toBashPath(lib)}"; nyra_verify_asset_dir "${toBashPath(dir)}" nyra-linux-x64 "${toBashPath(join(dir, "nyra-linux-x64"))}"`,
+    { NYRA_COSIGN: toBashPath(cosign), NYRA_COSIGN_LOG: toBashPath(log) },
   );
   expect(run.status, run.stderr).toBe(0);
   const recorded = readFileSync(log, "utf8");
@@ -95,7 +104,7 @@ test("InstallerVerifyTest.test_happy_path_signature_then_hash", () => {
   expect(recorded).toContain("SHA256SUMS.bundle");
   expect(recorded).toContain("certificate-identity-regexp");
   expect(recorded).toContain("release-sign");
-  expect(recorded).toContain(join(dir, "SHA256SUMS"));
+  expect(recorded).toContain(toBashPath(join(dir, "SHA256SUMS")));
 });
 
 test("InstallerVerifyTest.test_tamper_mismatch_missing_and_bad_signature", () => {
@@ -105,23 +114,23 @@ test("InstallerVerifyTest.test_tamper_mismatch_missing_and_bad_signature", () =>
   const cosign = mockCosign(dir, 0);
   const file = join(dir, "nyra-linux-x64");
   writeFileSync(file, "hello release\n");
-  const hash = bash(`sha256sum "${file}" | awk '{print $1}'`).stdout.trim();
+  const hash = sha256Hex("hello release\n");
   writeFileSync(join(dir, "SHA256SUMS"), `${hash}  nyra-linux-x64\n`);
   writeFileSync(join(dir, "SHA256SUMS.bundle"), "fixture-bundle\n");
 
   writeFileSync(file, "hello releasf\n");
-  const tamper = bash(`. "${lib}"; nyra_verify_asset_dir "${dir}" nyra-linux-x64 "${file}"`, {
-    NYRA_COSIGN: cosign,
-    NYRA_COSIGN_LOG: log,
-  });
+  const tamper = bash(
+    `. "${toBashPath(lib)}"; nyra_verify_asset_dir "${toBashPath(dir)}" nyra-linux-x64 "${toBashPath(file)}"`,
+    { NYRA_COSIGN: toBashPath(cosign), NYRA_COSIGN_LOG: toBashPath(log) },
+  );
   expect(tamper.status).toBe(1);
   expect(tamper.stderr).toContain("哈希不匹配");
 
   const missingSums = fixtureDir();
   writeFileSync(join(missingSums, "nyra-linux-x64"), "x");
   const noSums = bash(
-    `. "${lib}"; nyra_verify_asset_dir "${missingSums}" nyra-linux-x64 "${join(missingSums, "nyra-linux-x64")}"`,
-    { NYRA_COSIGN: cosign, NYRA_COSIGN_LOG: log },
+    `. "${toBashPath(lib)}"; nyra_verify_asset_dir "${toBashPath(missingSums)}" nyra-linux-x64 "${toBashPath(join(missingSums, "nyra-linux-x64"))}"`,
+    { NYRA_COSIGN: toBashPath(cosign), NYRA_COSIGN_LOG: toBashPath(log) },
   );
   expect(noSums.status).toBe(1);
   expect(noSums.stderr).toContain("没有 SHA256SUMS");
@@ -131,8 +140,8 @@ test("InstallerVerifyTest.test_tamper_mismatch_missing_and_bad_signature", () =>
   writeFileSync(join(malformed, "SHA256SUMS"), `not-a-hash  nyra-linux-x64\n${hash}  nyra-linux-x64\n`);
   writeFileSync(join(malformed, "SHA256SUMS.bundle"), "fixture-bundle\n");
   const badLine = bash(
-    `. "${lib}"; nyra_verify_asset_dir "${malformed}" nyra-linux-x64 "${join(malformed, "nyra-linux-x64")}"`,
-    { NYRA_COSIGN: cosign, NYRA_COSIGN_LOG: log },
+    `. "${toBashPath(lib)}"; nyra_verify_asset_dir "${toBashPath(malformed)}" nyra-linux-x64 "${toBashPath(join(malformed, "nyra-linux-x64"))}"`,
+    { NYRA_COSIGN: toBashPath(cosign), NYRA_COSIGN_LOG: toBashPath(log) },
   );
   expect(badLine.status).toBe(1);
   expect(badLine.stderr).toContain("格式不对");
@@ -141,8 +150,8 @@ test("InstallerVerifyTest.test_tamper_mismatch_missing_and_bad_signature", () =>
   writeFileSync(join(unsigned, "nyra-linux-x64"), "hello release\n");
   writeFileSync(join(unsigned, "SHA256SUMS"), `${hash}  nyra-linux-x64\n`);
   const noSig = bash(
-    `. "${lib}"; nyra_verify_asset_dir "${unsigned}" nyra-linux-x64 "${join(unsigned, "nyra-linux-x64")}"`,
-    { NYRA_COSIGN: cosign, NYRA_COSIGN_LOG: log },
+    `. "${toBashPath(lib)}"; nyra_verify_asset_dir "${toBashPath(unsigned)}" nyra-linux-x64 "${toBashPath(join(unsigned, "nyra-linux-x64"))}"`,
+    { NYRA_COSIGN: toBashPath(cosign), NYRA_COSIGN_LOG: toBashPath(log) },
   );
   expect(noSig.status).toBe(1);
   expect(noSig.stderr).toContain("缺少签名材料");
@@ -154,8 +163,8 @@ test("InstallerVerifyTest.test_tamper_mismatch_missing_and_bad_signature", () =>
   writeFileSync(join(reject, "SHA256SUMS"), `${hash}  nyra-linux-x64\n`);
   writeFileSync(join(reject, "SHA256SUMS.bundle"), "fixture-bundle\n");
   const denied = bash(
-    `. "${lib}"; nyra_verify_asset_dir "${reject}" nyra-linux-x64 "${join(reject, "nyra-linux-x64")}"`,
-    { NYRA_COSIGN: rejecting, NYRA_COSIGN_LOG: log },
+    `. "${toBashPath(lib)}"; nyra_verify_asset_dir "${toBashPath(reject)}" nyra-linux-x64 "${toBashPath(join(reject, "nyra-linux-x64"))}"`,
+    { NYRA_COSIGN: toBashPath(rejecting), NYRA_COSIGN_LOG: toBashPath(log) },
   );
   expect(denied.status).toBe(1);
   expect(denied.stderr).toContain("签名验证失败");
@@ -166,19 +175,27 @@ test("InstallerVerifyTest.test_verify_release_script_local_fixture", () => {
   const log = join(dir, "cosign.log");
   writeFileSync(log, "");
   const binDir = join(dir, "bin");
-  spawnSync("mkdir", ["-p", binDir]);
+  mkdirSync(binDir);
   const cosign = mockCosign(dir, 0);
   // 替身要叫在 PATH 里，verify-release.sh 的 need 走 command -v。
-  spawnSync("cp", [cosign, join(binDir, "cosign")]);
+  copyFileSync(cosign, join(binDir, "cosign"));
+  chmodSync(join(binDir, "cosign"), 0o755);
   const file = join(dir, "nyra-linux-x64");
-  writeFileSync(file, "hello release\n");
-  const hash = bash(`sha256sum "${file}" | awk '{print $1}'`).stdout.trim();
+  const body = "hello release\n";
+  writeFileSync(file, body);
+  const hash = sha256Hex(body);
   writeFileSync(join(dir, "SHA256SUMS"), `${hash.toUpperCase()}  nyra-linux-x64\n`);
   writeFileSync(join(dir, "SHA256SUMS.bundle"), "fixture-bundle\n");
-  const run = spawnSync("bash", [join(root, "scripts/verify-release.sh")], {
+  const pathSep = process.platform === "win32" ? ";" : ":";
+  const run = spawnSync("bash", [toBashPath(join(root, "scripts/verify-release.sh"))], {
     cwd: dir,
     encoding: "utf8",
-    env: { ...process.env, PATH: `${binDir}:${process.env.PATH}`, NYRA_COSIGN_LOG: log },
+    env: {
+      ...process.env,
+      PATH: `${toBashPath(binDir)}${pathSep}${process.env.PATH}`,
+      NYRA_COSIGN: toBashPath(join(binDir, "cosign")),
+      NYRA_COSIGN_LOG: toBashPath(log),
+    },
   });
   expect(run.status, `${run.stdout}\n${run.stderr}`).toBe(0);
   expect(run.stdout).toContain("哈希通过");

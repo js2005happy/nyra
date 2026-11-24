@@ -26,7 +26,13 @@ REPO="${NYRA_REPO:-js2005happy/nyra}"
 TAG="${1:-}"
 WORKDIR="$(mktemp -d)"
 
-need() { command -v "$1" >/dev/null 2>&1 || { echo "缺少依赖：$1" >&2; exit 1; }; }
+need() {
+  if [ -f "$1" ] || command -v "$1" >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "缺少依赖：$1" >&2
+  exit 1
+}
 need "${NYRA_COSIGN:-cosign}"
 
 if [[ -n "$TAG" ]]; then
