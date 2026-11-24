@@ -74,7 +74,7 @@
 | 命令 | 作用 |
 |---|---|
 | `nyra ui` | 启动 gateway 网页界面（含手机 PWA） |
-| `nyra gw <sessions\|send\|view\|approve…>` | 连正在跑的 gateway 当客户端 |
+| `nyra gw <sessions\|send\|view\|approve\|rewind\|info\|schedule\|mode-requests\|mode-confirm>` | 连正在跑的 gateway 当客户端（mode-requests / mode-confirm：在电脑上看/确认手机的完全模式请求） |
 | `nyra schedule <list\|add\|remove\|run\|daemon>` | 定时任务（`add` 可加 `--agent <名字>`，让任务跑在该 Bot 的电脑里） |
 | `nyra events <list\|add\|remove\|enable\|disable\|test\|poll>` | 事件触发任务：webhook 与新邮件触发进任务队列（详见 `docs/event-triggers.md`） |
 | `nyra thread <create\|list\|search\|show\|copy\|prune\|state\|history\|runs\|cron-add\|cron-remove\|crons\|archive\|unarchive\|remove>` | 远端线程操作 API：建线程、搜线程、复制接着跑、剪历史、读写状态、给线程绑 cron（详见 `docs/threads.md`） |
@@ -173,6 +173,7 @@
 | `nyra status` | 诊断清单：坏配置、不可用沙箱、被忽略的权限、永不匹配的 hook matcher |
 | `nyra setup` | 首次启动向导 |
 | `nyra vault` | 凭据保险箱（加密存储，权限 0600） |
+| `nyra update-check` | 手动检查一次新版本（默认关闭：须先把 `update_check_enabled` 设为 true，否则不联网） |
 
 ## 为什么需要这一页
 
