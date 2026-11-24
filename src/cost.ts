@@ -175,6 +175,15 @@ export function resolveMonthlyLimit(config: Record<string, unknown>, cliValue?: 
   return v;
 }
 
+/**
+ * 月度上限是否已明确选定（P0-3 首次运行诚实）：填过一个数字、或明确选过
+ * “不设上限”，都算已选定；从来没选过（monthly_cost_limit_decided 不是
+ * true）不算——null 的上限可能是“还没选”，不能当成“用户不要上限”。
+ */
+export function monthlyCapDecided(config: Record<string, unknown> | null | undefined): boolean {
+  return !!config && typeof config === "object" && (config as Record<string, unknown>).monthly_cost_limit_decided === true;
+}
+
 export interface MonthlyCapCheck {
   /** 是否已超月度上限（只有三个数都齐全时才可能为 true）。 */
   exceeded: boolean;

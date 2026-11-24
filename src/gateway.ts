@@ -40,9 +40,9 @@ import {
   getThreadHistory, listThreadRuns, setThreadStatus, threadPublic,
 } from "./threads.ts";
   // 缺口 30：网关入口此前完全不接成本硬顶与用量账本——Web UI 一跑等于绕过 --max-cost。
-import { resolvePricing, resolveMonthlyLimit } from "./cost.ts";
+import { resolvePricing, resolveMonthlyLimit, monthlyCapDecided } from "./cost.ts";
 import { recordModelSwitch, switchTimeShort } from "./modelSwitch.ts";
-import { UsageLedger, monthKeyString } from "./usageLedger.ts";
+import { UsageLedger, monthKeyString, nextMonthlyResetDate } from "./usageLedger.ts";
 import type { UsageSnapshot } from "./usage.ts";
 import { resolveSandboxBackend, type SandboxMode } from "./sandbox.ts";
 import { loadSession, saveSession, newSessionId, listSessions, resolveNyraHome, sessionPath, MemoryDeleteError } from "./memory.ts";
@@ -95,7 +95,12 @@ import {
 
 export const GATEWAY_DEFAULT_HOST = "127.0.0.1";
 export const GATEWAY_DEFAULT_PORT = 8765;
-export const APPROVAL_TIMEOUT = 600.0;
+/** 审批卡自动拒绝的等待秒数：默认 600（约 10 分钟）；运维可用
+ *  NYRA_APPROVAL_TIMEOUT_S 覆盖（测试用短超时验证超时路径时也走它）。 */
+export const APPROVAL_TIMEOUT = (() => {
+  const v = Number(process.env.NYRA_APPROVAL_TIMEOUT_S ?? 600);
+  return Number.isFinite(v) && v > 0 ? v : 600;
+})();
 export const MAX_BODY = 256 * 1024;
 export const MAX_EVENT_TEXT = 4000;
 export const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/;
@@ -134,6 +139,8 @@ export interface PendingApproval {
   tool: string;
   summary: string;
   always: boolean;
+  /** 挂起时刻（Date.now() 毫秒）：审批卡倒计时与 expires_at 由它算。 */
+  createdAt: number;
   /** shell 命令原文（手机审批卡等宽显示）；非 shell 为 null。 */
   command?: string | null;
   /** “允许并不再询问”的建议规则；null = 只能单次允许（复合/危险命令）。 */
@@ -160,6 +167,10 @@ export interface SessionRun {
   lastLedgerSnapshot?: UsageSnapshot | null;
   /** 缺口 30：上一次写账本时的已花金额（算增量用；不落盘）。 */
   lastLedgerSpent?: number | null;
+  /** P0-3：已收到停止请求、底层正在收尾（还没落定，不谎报已停）。 */
+  stopping?: boolean;
+  /** P0-3：最近一轮是被停止打断的（lastCancelledReason === "stop"）。 */
+  interrupted?: boolean;
 }
 
 export interface GatewayOptions {
@@ -438,6 +449,44 @@ export class Gateway {
     return "closed";
   }
 
+  /**
+   * P0-3 窗口停止按钮（POST /api/sessions/:id/stop）：对正在跑的会话发
+   * 取消信号（复用可靠性第 1 项的 Agent.requestStop，原因 stop），不等底
+   * 层收尾就返回 { stopping: true }——界面先显示“正在停止”，底层真的停
+   * 了（doWork 落定）才把 stopping 清掉、把 interrupted 标上。不在跑时
+   * 返回 ok: false，不抛错（停止是幂等的）。
+   * 等审批卡住时：先把挂起的审批按拒绝解开，agent 才会继续走到下一轮
+   * 模型调用、撞上已 abort 的信号停下；否则会卡满 600 秒等超时。
+   */
+  stopSession(sessionId: string): { ok: boolean; status: string; stopping: boolean } {
+    const run = this.getRun(sessionId, false);
+    if (!run || run.status !== "running") return { ok: false, status: run?.status ?? "idle", stopping: false };
+    if (run.pending) {
+      try { this.decide(run.pending.id, false); } catch { /* 审批解不开也不拦停止 */ }
+    }
+    if (run.agent) run.agent.requestStop();
+    run.stopping = true;
+    return { ok: true, status: "running", stopping: true };
+  }
+
+  /**
+   * P0-3 花钱之前先看见上限：第一次花钱的任务开始前，月度上限必须已明
+   * 确选定（填过数字、或明确选过“不设上限”）。没选定时、且当前 provider
+   * 是要 Key 的付费模型，直接拦下并指去设置；本地/免 Key 模型不花钱，
+   * 不拦。CLI 与 plan() 走同一道门（executePlan 复用 send()）。
+   */
+  private requireMonthlyCapDecision(): void {
+    if (monthlyCapDecided(this.config)) return;
+    let name: string | null = null;
+    try { name = (this.provider() as unknown as { name?: string }).name ?? null; } catch { name = null; }
+    if (!name) name = typeof this.config.provider === "string" ? this.config.provider : null;
+    if (!name) return;
+    const presets = getProviderPresets(this.config);
+    const preset = presets[name] as unknown as { envKey?: string | null } | undefined;
+    if (!preset || !preset.envKey) return;
+    throw new Error("请先在设置里选定月度上限（填一个数字，或明确选“不设上限”），再开始花钱的任务。设置 → 通用 → 月度上限。");
+  }
+
   sessionKnown(sid: string): boolean {
     if (this.getRun(sid, false)) return true;
     return loadSession(sid, this.home) !== null;
@@ -475,6 +524,15 @@ export class Gateway {
       evidence: this.listEvidence(sessionId),
       plan,
       usage: run?.agent ? run.agent.usage.snapshot() : null,
+      // P0-3：停止状态（正在停止 / 最近一轮被打断）、本次金额、本月预算。
+      // cost 没调过用时为 null；status 是 unpriced/missing 时 spent_usd 为
+      // null，不编数字——界面据此显示“金额未知，已暂停”。
+      stopping: run?.stopping ?? false,
+      interrupted: run?.interrupted ?? false,
+      cost: run?.agent?.lastCost
+        ? { status: run.agent.lastCost.status, spent_usd: run.agent.lastCost.spentUsd }
+        : null,
+      budget: this.budgetSummary(),
       // 调研报告第 3 项：上下文补齐（学 Claude Code）——/context 可视化的
       // 网页端接口：沿用 sessionView 的返回体，加 context breakdown 字段；
       // 无 live agent 时为 null（读会话文件时不拼系统提示，不编造数字）。
@@ -639,6 +697,30 @@ export class Gateway {
     };
   }
 
+  /**
+   * P0-3：月度预算摘要（设置页与会话视图共用）：上限、本月已花、是否已
+   * 明确选定、下次重置日。账本读失败时已花记 null，不当 0 用。
+   */
+  budgetSummary(): Record<string, unknown> {
+    const cfg = this.config as Record<string, unknown>;
+    let spent: number | null = null;
+    let incomplete = false;
+    try {
+      const ledger = new UsageLedger(this.home);
+      const llm = ledger.monthTotal(monthKeyString());
+      const mcp = new McpCostTracker(this.home).monthTotalUsd(monthKeyString());
+      spent = llm.spentUsd + mcp;
+      incomplete = llm.incomplete;
+    } catch { spent = null; }
+    return {
+      monthly_cost_limit_usd: resolveMonthlyLimit(cfg, null),
+      monthly_cost_limit_decided: monthlyCapDecided(cfg),
+      monthly_spent_usd: spent,
+      monthly_spent_incomplete: incomplete,
+      monthly_reset_at: nextMonthlyResetDate(),
+    };
+  }
+
   /** 缺口 30：把网关运行的用量增量写进账本（热力图与月度硬顶的事实源）。 */
   private flushUsageToLedger(run: SessionRun, kind: string, data: Record<string, unknown>): void {
     try {
@@ -706,6 +788,10 @@ export class Gateway {
       profiles: Object.keys((this.config.profiles as Record<string, unknown>) ?? {}).sort(),
     };
     out.mcp_tools = this.mcpManager ? this.mcpManager.toolSchemas.length : 0;
+    // P0-3：桌面页启动时按这里的语言渲染（未设时跟随系统）；月度预算摘要
+    // 供状态栏显示“未选月度上限”提示用（每 15 秒随 loadInfo 刷新）。
+    out.language = typeof this.config.language === "string" ? this.config.language : null;
+    out.budget = this.budgetSummary();
     out.providers = Object.entries(presets).map(([name, preset]) => ({
       provider: name, model: preset.defaultModel ?? null, env_key: preset.envKey ?? null,
     }));
@@ -784,6 +870,9 @@ export class Gateway {
       out.push({
         id, session: run.sessionId, tool: pending.tool, summary: pending.summary, always: pending.always,
         command: pending.command ?? null, suggestion: pending.suggestion ?? null,
+        // P0-3：审批卡倒计时用——过期时刻与等待秒数，界面据此写明“约 10 分钟内不处理将自动拒绝”。
+        expires_at: new Date(pending.createdAt + APPROVAL_TIMEOUT * 1000).toISOString(),
+        timeout_seconds: APPROVAL_TIMEOUT,
       });
     }
     return out;
@@ -816,6 +905,7 @@ export class Gateway {
     const waiter = new Promise<ApproveResult>((resolve) => { resolveFn = resolve; });
     const pending: PendingApproval = {
       id: approvalId, tool, summary, always: canAlways, command, suggestion, decision: null, resolve: resolveFn,
+      createdAt: Date.now(),
     };
     this.approvals.set(approvalId, { run, pending });
     run.pending = pending;
@@ -934,6 +1024,8 @@ export class Gateway {
     if (run.status === "running") throw new Error("这个会话正在执行任务，请等它完成");
     run.events = [];
     run.error = "";
+    run.interrupted = false;
+    run.stopping = false;
     // G-P1-32 对话转人工坐席：会话转人工期间 bot 不再自动回复——这条消息
     // 不建 agent、不调模型，只记事件与收件箱，等真人接手或接回。账本损坏、
     // 状态不明时也不回（fail-closed，见 hitl.ts 的 isBotMutedForSession）。
@@ -947,6 +1039,15 @@ export class Gateway {
       return run;
     }
     run.status = "running";
+    // P0-3：花钱之前先看见上限——月度上限没选定时，付费模型不开始跑。
+    // 转人工静默（上面已 return）不调模型，不拦；本地/免 Key 模型不拦。
+    try {
+      this.requireMonthlyCapDecision();
+    } catch (err) {
+      run.status = "error";
+      run.error = err instanceof Error ? err.message : String(err);
+      return run;
+    }
     try {
       if (!run.agent) {
         const provider = this.provider();
@@ -1038,6 +1139,11 @@ export class Gateway {
     } catch (err) {
       run.status = "error";
       run.error = err instanceof Error ? err.message : String(err);
+    } finally {
+      // P0-3：底层落定了才清 stopping（“正在停止”→已停）；因停止取消的
+      // 轮次标 interrupted——刷新后会话视图仍能看到是被打断的。
+      run.stopping = false;
+      if (run.agent?.lastCancelledReason === "stop") run.interrupted = true;
     }
   }
 
@@ -1046,11 +1152,15 @@ export class Gateway {
     if (run.status === "running") throw new Error("这个会话正在执行任务，请等它完成");
     run.events = [];
     run.error = "";
+    run.interrupted = false;
+    run.stopping = false;
     run.status = "running";
     run.baseMessages = run.agent ? [...run.agent.messages] : (loadSession(sessionId, this.home) ?? []);
     this.record(run, "user", { content: text, plan: true });
     void (async () => {
       try {
+        // P0-3：规划也要调付费模型，花钱之前先看见上限（与 send() 同款门）。
+        this.requireMonthlyCapDecision();
         const provider = this.provider();
         // 缺口 24：Plan 阶段用强推理模型（配了 plan_model 时）；没配沿用主模型。
         const planModel = this.planActModels().plan
@@ -1393,6 +1503,8 @@ export class Gateway {
         default_model: typeof cfg.model === "string" ? cfg.model : null,
       },
       mcp: { enabled: Boolean(cfg.mcp_enabled), active: Boolean(this.mcpManager), mode_allows: this.mode === "full", servers },
+      // P0-3：月度预算（设置页“通用”分区用）：上限、本月已花、是否已明确选定、下次重置日。
+      budget: this.budgetSummary(),
       paths: { home: this.home, config: configPath(this.home), keys: keysPath(this.home) },
     };
   }
@@ -1444,9 +1556,24 @@ export class Gateway {
       const model = typeof body.default_model === "string" && body.default_model.trim() ? body.default_model.trim().slice(0, 180) : presets[name].defaultModel ?? null;
       patch.model = model;
     }
+    if ("monthly_cost_limit_usd" in body) {
+      // P0-3：月度上限必选其一——数字（≥0）或明确的 null（不设上限）。
+      // 只要这个键出现，就算“已明确选定”（monthly_cost_limit_decided 记
+      // true）；不传这个键时不改旧值、不算选过。空串、NaN、负数都拒绝。
+      const v = body.monthly_cost_limit_usd;
+      if (v !== null) {
+        const n = Number(v);
+        if (v === "" || !Number.isFinite(n) || n < 0) throw new Error("monthly_cost_limit_usd 必须是大于等于 0 的数字，或 null（不设上限）");
+        patch.monthly_cost_limit_usd = n;
+      } else {
+        patch.monthly_cost_limit_usd = null;
+      }
+      patch.monthly_cost_limit_decided = true;
+    }
     const unknown = Object.keys(body).filter((k) => ![
       "default_mode", "max_turns", "reasoning_effort", "language", "auto_compact_enabled", "auto_compact_threshold",
       "tool_search_enabled", "mcp_enabled", "default_provider", "default_model",
+      "monthly_cost_limit_usd",
     ].includes(k));
     if (unknown.length) throw new Error(`不支持的设置项：${unknown.join(", ")}`);
     if (!Object.keys(patch).length) throw new Error("没有要保存的设置");
@@ -2415,6 +2542,15 @@ export class Gateway {
         } catch (err) { this.sendError(res, 409, err instanceof Error ? err.message : String(err)); }
         return;
       }
+      const stopMatch = /^\/api\/sessions\/([^/]+)\/stop$/.exec(path);
+      if (stopMatch) {
+        const sid = this.validSid(stopMatch[1]);
+        if (!sid) { this.sendError(res, 400, "会话 id 无效"); return; }
+        // P0-3 窗口停止按钮：不在跑时不抛错（停止是幂等的）；在跑时发取
+        // 消信号就返回，界面先显示“正在停止”，底层落定后再变已停止。
+        this.sendJson(res, 200, this.stopSession(sid));
+        return;
+      }
       const planMatch = /^\/api\/sessions\/([^/]+)\/plan$/.exec(path);
       if (planMatch) {
         const sid = this.validSid(planMatch[1]);
@@ -2446,6 +2582,8 @@ export class Gateway {
       if (rewindMatch) {
         const sid = this.validSid(rewindMatch[1]);
         if (!sid) { this.sendError(res, 400, "会话 id 无效"); return; }
+        const run = this.getRun(sid, false);
+        if (run && run.status === "running") { this.sendError(res, 409, "会话正在执行，先停下再回退"); return; }
         const messageId = Number(body.message_id);
         const action = String(body.action ?? "") as RewindAction;
         if (!Number.isInteger(messageId) || messageId <= 0) { this.sendError(res, 400, "message_id 无效"); return; }

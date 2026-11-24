@@ -1661,6 +1661,19 @@ export class Agent {
     return this.runLoop(task, false, opts?.signal ?? null);
   }
 
+  /**
+   * P0-3 窗口停止按钮：对当前正在跑的 run 发取消信号（原因 stop）。只有
+   * 底层真的停了（模型请求已 abort、子进程已退出、工具已收尾），runLoop
+   * 才以 cancelledText 收尾并把 lastCancelledReason 记成 stop——这里只
+   * 发信号，不谎报已停。当前没在跑时返回 false。
+   */
+  requestStop(): boolean {
+    const c = this.runCancel;
+    if (!c || c.aborted) return false;
+    c.abort("stop");
+    return true;
+  }
+
   async resume(task: string, opts?: { signal?: AbortSignal }): Promise<string> {
     return this.runLoop(task, true, opts?.signal ?? null);
   }
@@ -1747,7 +1760,17 @@ export class Agent {
     } catch (err: unknown) {
       if (isCancelError(err)) {
         cancelled = true;
-        return this.cancelledText(err as CancelError);
+        const text = this.cancelledText(err as CancelError);
+        // P0-3：被打断的轮次也要留在内存对话与会话文件里——否则窗口刷新
+        // 后看不到这段对话。用户消息已在每轮开始前同步（见 runLoopInner），
+        // 这里只补：取消发生在首轮模型调用之前时，先把本轮用户消息补上。
+        if (!resume) {
+          const last = this.messages[this.messages.length - 1];
+          if (!last || last.role !== "user" || last.content !== task) this.messages.push({ role: "user", content: task });
+        }
+        this.messages.push({ role: "assistant", content: text });
+        try { saveSession(this.sessionId, this.messages, this.home); } catch { /* 存档失败不改变取消结论 */ }
+        return text;
       }
       spanStatus = { code: "error", message: (err instanceof Error ? err.message : String(err)).slice(0, 256) };
       throw err;
@@ -2192,6 +2215,10 @@ export class Agent {
     // 意图理解由 system prompt + 任务文本承载，不单独再开一个主模型轮。
     const actModel = this.actProvider();
     for (let i = 0; i < this.maxTurns; i++) {
+      // P0-3：每轮开始前先把已走完的对话同步进 this.messages——中途被取消
+      // 时（模型调用不响应信号、工具执行中被掐断），内存对话也不丢本轮，
+      // 窗口刷新后仍能看到被打断的那段对话（取消收敛里再补助手收尾并落盘）。
+      this.messages = messages.slice(1);
       let current = messages;
       if (this.autoCompactEnabled && !attemptedAutoCompact &&
         shouldAutoCompact(this.usage.snapshot(), current.length - 1, this.autoCompactThreshold)) {
@@ -2270,6 +2297,10 @@ export class Agent {
       this.usage.record(resp as never);
       emitLlmSpan(true);
       this.settleReservation(reservation, spentBeforeCall);
+      // P0-3：模型调用不响应取消信号时（假 provider / 顽固上游），调用返回后
+      // 再查一次——用户已点停止就不该继续按这轮结果跑工具，直接收敛成已取消
+      // （runLoop 的 catch 把 CancelError 收成 cancelledText，记 run_cancelled）。
+      if (this.runSignal?.aborted) throw cancelErrorFromSignal(this.runSignal, "stop");
       this.checkCost();
       if (resp && typeof resp === "object" && typeof (resp as Record<string, unknown>).usage === "object") {
         this.emit("usage", this.usage.snapshot() as unknown as Record<string, unknown>);
