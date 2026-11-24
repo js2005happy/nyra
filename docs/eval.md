@@ -175,3 +175,33 @@ bun run scripts/eval.ts run --out <报告.json> --probe <名>   # 跑一个探�
 ## 可复现清单（G-P1-30）
 
 `nyra eval manifest <报告.json> [--out <文件>]` 把一份报告钉成可复现清单：suite、报告 id、源码版本（sourceRevision）、源码摘要（sourceHash）、评测 harness 摘要（harnessHash）、任务目录摘要（catalogHash）、评测条件、环境、摘要、结果哈希（resultsHash，按 taskId 排序后算）。同一份报告每次出的清单逐字相同；改动任意一题的结果，结果哈希就变。换一台机器照单重跑时，逐项比对清单就能知道“跑的是不是同一套东西”。
+
+## 脚本化行为评测（M5）
+
+不调模型、不花钱的回放评测：脚本是一串固定的工具调用（tool + args +
+预期），在临时 workdir/home 里真跑工具，把每步的结果哈希、终态文件树
+哈希记成金标（`evals/golden/<任务>.json`）。下次重跑时逐步比对——
+工具序列、参数哈希、结果哈希、终态哈希有一处对不上就失败。它是回归
+哨兵，只管“工具行为有没有悄悄变了”；20 题真模型基线仍是金标准，
+脚本化评测不替代它（真基线在 `docs/eval-results/`）。
+
+```bash
+nyra eval scripted                        # 列脚本化任务与金标状态（只读）
+bun run scripts/eval.ts scripted                      # 列脚本化任务
+bun run scripts/eval.ts scripted --mode record --out <报告.json>   # 录金标
+bun run scripts/eval.ts scripted --mode replay --out <报告.json>   # 对金标重放
+bun run scripts/eval.ts scripted --mode replay --out <报告.json> --task scripted-file-ops  # 只重放一题
+```
+
+规则：
+
+- 脚本只许只读 + 工作区写工具（read_file、write_file、edit_file、
+  apply_patch、list_dir、shell）。联网、发信、电脑操作、委派一律不许
+  进脚本（preflight 就拦）。
+- 步骤参数里不要写绝对路径、日期、随机数——结果哈希前会把当次运行的
+  绝对路径换成占位符再算，但日期与随机数换不掉，重放一定对不上。
+- 金标只录通过的回放：步骤没全过时不写金标文件。
+- shell 那步（`scripted-shell-count`）用 cat/wc/tr，Windows 上跑不了；
+  在 Windows 上跑脚本化评测时跳过这一题（测试里已按平台守卫）。
+- 报告的 suite 是 `nyra-scripted-v1`，三项指标都是 0（没调模型、没花钱、
+  没人工介入），不是未知。

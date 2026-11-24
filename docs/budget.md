@@ -89,6 +89,15 @@ nyra budget strict [--on | --off] [--yes]
 
 `nyra cost --show` 同样多一行在途预留 + 严格模式；`--show --json` 的 `budget` 字段（追加在 `monthly` 之后）：`active_reserved_usd`、`strict_unknown_amount`。
 
+## 每日上限与用量仪表（M1：学 OMB 的 usage_limits）
+
+只借“按 Bot 分 + 界面可见”，不借 OMB 的宽松语义——Nyra 的硬顶不变：
+调用前预留、未知单价暂停、日/月上限触顶就停。
+
+- 每 Bot 每天也能单独设上限：`nyra governance caps set --scope agent:<id> --day-usd <美元> --day-tokens <token 数> --reason <原因>`（与月上限 `--usd` / `--tokens` 同款，只 agent 层可用；其他层传了直接拒绝）。每日上限在本地自然日 0 点重置，触顶时的恢复办法写“等明天 0 点重置”。
+- 用到 80% 就告警：每日/每月任一窗口的美元或 token 用到 80% 以上，`nyra governance caps eval` 与用量仪表都会标出来（分层判定里的 `warnings`，kind 是 `approaching_limit`）；没超限只是提醒，不停。
+- 用量仪表：`nyra usage [--agent <id>] [--json]`，按 Bot 列当日/当月两行用量条（已花/上限、百分比、80% 告警、触顶暂停状态）。`usage` 模型工具是同一份数，Bot 自己查还剩多少额度，不用问机主。数字只来自用量账本与分层判定；没设上限的窗口写“不限”，不编数；美元数是下界——未归属（CLI 交互运行与网关会话的花费，分不下去，只算组织级总数）与未计价的调用不摊到任何 Bot。
+
 ## 事件
 
 6 个新运行事件（`src/runs.ts` 的 `EVENT_FIELDS` 已注册，时间线有渲染）：`budget_reserved`（reservation_id、owner、amount_usd）、`budget_settled`（reservation_id、reserved_usd、actual_usd）、`budget_released`（reservation_id、amount_usd、reason）、`budget_rejected`（owner、amount_usd、reason）、`budget_paused`（pause_id、agent、reason）、`budget_resumed`（pause_id、agent）。

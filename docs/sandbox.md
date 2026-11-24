@@ -102,7 +102,45 @@ bwrap 沙箱默认断网（`--unshare-net`）：沙箱内的命令连不上外�
 
 用 `nyra doctor` 看当前生效的隔离级别（“隔离级别”一项恒为通过，
 bwrap 缺失是预期内的降级，不算故障；该行同时列出 bwrap / Seatbelt /
-Job Object 三个后端的可用性，auto 会选谁一眼可见）。
+Job Object 三个后端的可用性，auto 会选谁一眼可见；seccomp 拒单的
+可用性也在同一行）。
+
+## bot-box 纵深（M4，只 Linux）
+
+bwrap 盒子再加三道：seccomp 拒单、出口代理、凭证经纪人。三道默认
+都不开，用时由调用方显式打开；不开时行为与原来一模一样。
+
+- **seccomp 拒单**（`src/seccomp.ts`）：经典 BPF 程序，35 个系统调用
+  一律返回 EPERM——mount、chroot、ptrace、bpf、userfaultfd、setns、
+  kexec、keyctl 这些能越狱的都禁了；日常的 open/read/write/execve
+  不动。刻意没禁 clone3（现代运行时派生线程/进程要用它，盒子里的
+  user+pid 命名空间已经把它关住了）与 unshare（盒内挂载命名空间本来
+  就是私有的，再 unshare 也逃不出去，嵌套沙箱工具还要用它）。
+  只在 Linux x86-64 上可用；`runSandboxed` 传 `seccomp: true` 就加载，
+  本机不支持时直接抛错、不进沙箱也不裸奔（fail-closed）。程序经 fd
+  传进 bwrap（`--seccomp 3`），调用方不用管 fd 的事。
+- **出口代理**（`src/egressGate.ts`）：沙箱里只认一个 HTTP 代理
+  （`runSandboxed` 传 `egressProxy: "http://127.0.0.1:<端口>"`，只设
+  http_proxy/https_proxy 环境变量，代理本身由调用方起停）。
+  代理只放公网地址：内网、loopback、链路本地、云元数据（169.254.169.254）、
+  组播、文档地址一律拒掉并计数；DNS 由代理自己解析，逐个验 IP（有一个
+  不公开就拒，DNS 重绑定也逃不过去），连解析到的 IP、不连主机名；
+  只放 80/443 端口；只接 CONNECT 隧道与绝对 URI 的 http://；
+  转发时剥掉客户端的 authorization / proxy-authorization / cookie /
+  x-api-key / api-key 请求头。
+- **凭证经纪人**（`src/credentialBroker.ts`）：沙箱里的 Bot 拿不到真凭
+  证。宿主先在 Broker 上登记授权（名字 → 固定上游 + 真请求头，只在
+  宿主内存里），再给 Bot 发一个短命 token（`nyra_brk_…`，默认 1 小时，
+  绑 botId/threadId）。Bot 拿 token 到 Broker 的
+  `/b/<token>/<grant>/<path>` 来换：Broker 验 token（只存 sha256 哈希、
+  算哈希查表，不比明文）、剥掉客户端自己带的凭证头、加上 grant 的
+  真头、转发到 grant 绑定的固定上游。token 可吊销（单个 / 按 Bot 全吊 /
+  过期清理）；真凭证只在宿主进程内存里，绝不进沙箱环境变量、不进磁盘、
+  不进事件。上游一律 https（http 只许本机回环的测试上游）。
+
+三道都不接线到 CLI 默认路径：现在只是库 + `runSandboxed` 两个可选
+参数 + doctor 自检行。哪条 Bot 线要开，由那条线的调用方在代码里
+显式打开（开 seccomp、起 gate、登记 grant、发 token）。
 
 ## 与 Hooks 的职责分工
 

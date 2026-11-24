@@ -22,6 +22,7 @@
 | `watch` | `watch.enabled`<br>`watch.default_interval_seconds` | 关（只手动检查） | Watch 本身只读（抓页面、读文件），不调模型、不对外发；enqueue-task 动作入队后执行时照常走审批；download 动作须人显式批准才执行 |
 | `budget` | `budget.strict_unknown_amount`<br>`nyra budget strict --on/--off` | 开（金额未知则暂停） | 未配单价或调用缺用量时，运行暂停并建暂停记录等人工处理（恢复走 nyra governance caps resume） |
 | `update_check` | `update_check_enabled`<br>`nyra update-check` | 关（不联网） | 默认关闭：不联网、不检查；开后才由 `nyra update-check` 联网查一次 |
+| `jev_router` | `jev_router_enabled`<br>`jev_model`<br>`jev_confidence_threshold`<br>`nyra group route` | 关（没 @ 谁时全员回答） | 默认关闭：群消息没 @ 谁时所有机器人都回答；干跑看分流结果用 nyra group route |
 
 ## 生效优先级（通用）
 

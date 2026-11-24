@@ -67,7 +67,7 @@
 | `nyra style <learn\|show\|list\|delete…>` | 分应用文风学习 |
 | `nyra skills <status\|enable\|disable\|draft\|drafts\|show\|approve\|reject\|archive\|sweep>` | 技能自沉淀：成功任务自动起草技能草稿，人工批准后才安装，低质自动归档（详见 `docs/skill-sedimentation.md`） |
 | `nyra bughunt <install\|status\|scope\|template\|check>` | 授权漏洞挖掘技能包：范围卡 + 证伪验证 + 提交前七问 + 证据卫生，提交前核对（详见 `docs/bughunt.md`） |
-| `nyra market <list\|show\|source\|install\|update\|uninstall\|installed\|publish\|template>` | 内置机器人市场：浏览、安装、更新、发布技能包与机器人配置，三道门审查 + Bot Ready 评分 + 安装账本（详见 `docs/marketplace.md`） |
+| `nyra market <list\|show\|source\|install\|install-team\|update\|uninstall\|installed\|publish\|template>` | 内置机器人市场：浏览、安装、更新、发布技能包与机器人配置，三道门审查 + Bot Ready 评分 + 安装账本；`install-team` 一个 Markdown 装一整队（详见 `docs/marketplace.md`） |
 
 ## 后台与协作
 
@@ -110,7 +110,7 @@
 | `nyra fanout <list\|show\|recover>` | H-5 + H-6：后台扇出——顶层委派默认后台跑，跑完单条 consolidated 消息回填；合并步合成为一份交付物（详见 `docs/merge-fanout.md`） |
 | `nyra team <create\|list\|show\|add\|remove\|dissolve\|dispatch\|handover\|writer\|lead>` | GROK 批（新缺口 52）：团队模式——参谋长独占入口，只拆解、分派、汇总；成员须有完整 Charter 才能接单；交接走 inbox/outbox/变更日志；对外动作一律回参谋长/人批；单写者门（同一文件同一时间只一个 agent 写，名额由参谋长移交）与零工具编排者（参谋长只剩委派工具）见 `docs/write-gate.md`；第 2 批 G-P1-3：lead 租约 + 纪元（`lead <status\|acquire\|release\|transfer>`，换 lead 纪元 +1，旧纪元指令不路由，详见 `docs/team.md`） |
 | `nyra sfu <create\|rooms\|status\|join\|leave\|turn\|record\|close\|reclaim\|video>` | 第 2 批 G-P0-2：群组语音 SFU——选型 mediasoup（Node 原生库，不另起服务），本地实现不走网络；一个 agent + N 个说话者（上限 8，听众 32）、闲置 60 秒回收；TURN 凭据带 TTL（默认 3600 秒）；录制全体同意门（详见 `docs/sfu.md`）；第 3 批：`video` 群组视频——Producer/Consumer、按需看帧、带宽自适应、10 分钟模拟（详见 `docs/group-video.md`） |
-| `nyra group <room\|chat\|plan>` | 第 2 批 G-P1-1/G-P1-2：群聊 swarm + 群组计划——`room` 建群聊房（顺序发言，round-robin/selector/handoff 三种模式）；`chat run/send` 跑群聊（终止条件可 AND/OR 组合：消息数/关键词/token 预算/超时/交接/外部叫停）；`plan` 建分工计划（每步有负责人与验收项，步骤走隔离 worktree、验收独立，详见 `docs/group-chat.md` 与 `docs/group-plan.md`） |
+| `nyra group <room\|chat\|plan\|route>` | 第 2 批 G-P1-1/G-P1-2：群聊 swarm + 群组计划——`room` 建群聊房（顺序发言，round-robin/selector/handoff 三种模式）；`chat run/send` 跑群聊（终止条件可 AND/OR 组合：消息数/关键词/token 预算/超时/交接/外部叫停）；`plan` 建分工计划（每步有负责人与验收项，步骤走隔离 worktree、验收独立，详见 `docs/group-chat.md` 与 `docs/group-plan.md`）；M2：`route` 干跑 Jev 路由（便宜模型先判该谁接，判不出来回落全员回答；`chat send` 里的分流默认关闭，config.json 里 `jev_router_enabled: true` 才开） |
 | `nyra meeting <create\|list\|join\|reconnect\|transcript\|minutes\|record\|dispatch>` | 第 3 批：进外部会议——Meet/Zoom 受控浏览器进会（只认 meet.google.com 与 zoom.us）、听字幕出纪要；进会、录制、发言都要机主批；断线重连纪元 +1、字幕去重、待办不重复派（详见 `docs/meeting.md`） |
 | `nyra rendezvous <register\|nodes\|route\|status\|remove\|epoch>` | 第 3 批 G-P1-13：Rendezvous 多节点路由——HRW 一致性哈希把任务 key 路由到节点（只认本机/局域网端点，无 active 节点时拒绝路由，不静默本地执行；节点变更纪元 +1，详见 `docs/mesh.md`） |
 | `nyra queue <enqueue\|list\|show\|claim\|complete\|fail>` | 第 3 批 G-P1-13：队列驱动底座——幂等键入队（重复提交回已有任务）、节点认领 + 租约（默认 60 秒）、完成须节点 + 租约令牌对得上、纪元防旧指令重执行（详见 `docs/mesh.md`） |
@@ -125,7 +125,7 @@
 | `nyra governance audit <export\|verify>` | 缺口 43 第三批：审计导出——治理审计日志导出给 SIEM（JSONL + 哈希链，可验证；详见 `docs/governance.md`） |
 | `nyra kanban pause <id> "<原因>"` / `nyra kanban resume <id>` | 缺口 43 第三批：任务板 `paused` 状态——分层上限触顶暂停（可恢复，attempts 不动） |
 | `nyra optimize <propose\|list\|show\|edit\|approve\|reject\|apply\|verify\|revert\|loop\|arms>` | G-4：带人批的自优化环——只起草改指令建议，须人批才生效，三数据集 + holdout 定放行；G-P1-29：`loop` 读评测报告自动起草提议并按 UCB 排队，`arms` 看臂排行（详见 `docs/governance.md`） |
-| `nyra eval <scenarios\|scorecard\|benchmarks\|import\|benchmark\|remove\|probes\|probe\|manifest>` | G-P1-30：评测当一等公民——场景成绩单 + 外部基准集导入 + 仓内探针 + 可复现清单；跑评测走 `bun run scripts/eval.ts run --scenario/--benchmark/--probe`（详见 `docs/eval.md`） |
+| `nyra eval <scenarios\|scorecard\|benchmarks\|import\|benchmark\|remove\|probes\|probe\|manifest\|scripted>` | G-P1-30：评测当一等公民——场景成绩单 + 外部基准集导入 + 仓内探针 + 可复现清单 + 脚本化任务与金标状态（M5）；跑评测走 `bun run scripts/eval.ts run --scenario/--benchmark/--probe`，脚本化走 `bun run scripts/eval.ts scripted --mode <record\|replay> --out <报告.json>`（详见 `docs/eval.md`） |
 | `nyra review <list\|show\|approve\|reject\|apply…>` | 审阅队列：逐项批准并行线程与定时任务结果 |
 | `nyra hitl <start\|takeover\|handback\|cancel\|status\|list>` | 对话转人工坐席（G-P1-32）：会话转给真人、真人接手、再接回 bot；转人工期间 bot 不自动回（详见 `docs/hitl.md`） |
 
@@ -154,6 +154,7 @@
 | `nyra session <create\|list\|show\|join\|leave\|delegate\|accept\|verify\|complete\|share\|frame\|record\|end\|join-request\|join-approve\|join-decline\|join-list>` | 跨 agent 联合会话：多人多 agent 视频会（本地扇出模型），会内委派 + 共享任务产物（allowlist），画面默认不留存、录制须全体同意；第 2 批 G-P1-5：好友进会要批（待批请求，批准时重查准入闸）；39-40 后续：交活即按契约跑验收（`verify` 看逐项结论，`complete` 须 `--confirm`/`--fail` 逐项确认，全通过才标 completed，详见 `docs/sessions.md`） |
 | `nyra call <ledger\|show <通话 id>\|summary [--by-person]>` | 通话成本与隐私仪表：每通电话的三本账（传输/媒体/token，本地与云端分开记）+ 录制仪表 + 通话纪要进证据链；39-40 后续：`summary --by-person` 按人分摊（费用与 token 按参与人数平分，时长按各人实际在场时间，录制按各人同意且在场的时间，详见 `docs/call-ledger.md`） |
 | `nyra budget <list\|show\|reserve\|settle\|release\|strict>` | 并发预算预留：模型调用前先预留额度、超上限不发请求；金额未知默认暂停等人工处理（详见 `docs/budget.md`） |
+| `nyra usage [--agent <id>] [--json]` | M1：每 Bot 用量仪表——按 Bot 列当日/当月已花多少、上限是多少、到 80% 了没有、是不是已超限停了；数字来自用量账本与分层判定（详见 `docs/budget.md`） |
 | `nyra agui <register\|list\|show\|link\|connect\|disconnect\|send\|exec\|accept-write\|revoke-write\|a2a\|serve>` | 协议中立接入：接任意 AG-UI endpoint 当 Bot（只读先行，写操作须机主显式接受），A2A 复用名片 + 交接；`serve` 把 Nyra 对外暴露成 AG-UI endpoint（详见 `docs/agui.md`） |
 | `nyra acp <serve\|status\|grant\|revoke-grant>` | ACP 服务端：编辑器经 stdio 用 JSON-RPC 驱动 Nyra（只读先行，写操作进 peer 提议门，须机主逐条批）（详见 `docs/acp.md`） |
 | `nyra a2a <serve\|card>` | A2A 服务端：别的 agent 经 HTTP 用 JSON-RPC 2.0 调用 Nyra（只读先行，写操作进 peer 提议门，须机主逐条批）（详见 `docs/a2a.md`） |

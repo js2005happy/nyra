@@ -138,6 +138,70 @@ nyra market install <git URL>
 临时克隆目录在 `~/.nyra/marketplace-tmp/` 下，不在 `/tmp` 上（有的
 机器 `/tmp` 只有 512M，装到一半写满就装不上），装完或失败都清掉。
 
+## 一个 Markdown 装一整队（M3）
+
+```
+nyra market install-team <队伍包文件 | https 的 .md 链接>
+```
+
+队伍包是一个 Markdown 文件：前面是 YAML frontmatter（队伍、版本、
+队长、机器人、频道、打法、连接器），后面是给人看的说明正文。
+不建中央目录——包就是文件本身，走同一策展仓库机制：每个 Bot 物化
+成 `bot.json` + `routines.json` 后过市场三道门再安装，队伍本身只记
+一本 `team-packs.json` 账本。
+
+```yaml
+---
+team: support-squad
+version: 0.1.0
+chief: lead
+description: 客服小队：队长分工，查资料的跟进
+bots:
+  - name: lead
+    role: 队长：分工与汇总
+    instructions: 你是客服小队队长。收到工单先分给合适的队员，最后汇总回复。
+    skills: [triage]
+    mode: readonly
+    routines:
+      - name: daily-brief
+        kind: schedule
+        schedule: "0 9 * * *"
+        task: 汇总昨日工单处理情况
+  - name: researcher
+    role: 查资料：翻手册与历史工单
+    instructions: 你是客服小队的研究员。只查资料、给结论，不直接回复客户。
+    skills: [research]
+    mode: readonly
+channels:
+  - name: support-room
+    bots: [lead, researcher]
+playbook: |
+  客服小队的打法：队长接单、分工、汇总；研究员只查资料。
+connectors: [gmail]
+---
+```
+
+- 队伍 2–6 台 Bot；队长（`chief`）必须是队里的一台；机器人名字
+  只许小写字母、数字、`-`、`_`，不能重复。
+- 每台 Bot 都要写 `role`、`instructions`、`skills`（`bot.json` 的
+  必填项）；`skills` 引用的技能须已装在本地
+  （`~/.nyra/skills/<名>.md`，队伍包不自带技能文件、不编内容，
+  没装就先装技能再装队伍包）；`model` 钉了就必须是已配置的模型，
+  否则拒绝安装；`mode` 只许 `readonly`/`auto`；`env_requires`
+  只声明、不带值；`hands_off_to` 的目标只认队内成员。
+- `channels` 里的频道装完建成群聊房（房间 id 即频道名，成员即包里
+  对应的 Bot）；建房失败只警告，不推翻已装好的队伍。
+- `routines` 到达即暂停：routine 不自动执行，须手动启用。
+- 整包先过确定性规则扫描（拒密钥与破坏性命令），再逐台过三道门；
+  中途任何一台失败都整队回滚（已装的卸掉、队伍账本不记），失败进
+  证据链（`team_pack_install_failed` 事件）。
+- URL 只接 `https` 的 `.md` 文件（原始 Markdown，如 GitHub raw 链接，
+  1MB 上限、30 秒超时）；不接 git 仓库（单个 Bot 走
+  `nyra market install <git URL>`）。
+- 安装确认不能用 `--yes` 跳过（市场内容是不受信任的第三方配置）。
+- 卸载整队：逐个 `nyra market uninstall <机器人名>`（队伍账本只记
+  队伍装过谁，不代劳整队卸载）。
+
 ## 装完进花名册（B6）
 
 机器人装完后自动转成一份 `nyra-agent-v1` 声明 + 一段常驻会话：
