@@ -806,6 +806,8 @@ function approvalCard(a, fbText, compact){
   box.appendChild(el('div', 'cl', t('d.appr.timeout', { sec: Math.round((a.timeout_seconds || 600) / 60) })));
   if (compact) {
     box.appendChild(el('div', 'cl', t('d.scope.compact', { what: info.compact })));
+    // 短行只是标题。允许按钮前面必须能滚完摘要全文，截断不能代替审批。
+    const full = el('div', 'appr-full'); full.appendChild(scopeBox(info)); box.appendChild(full);
     box.appendChild(apprActs(a, info, 'compact'));
     return box; // 展开区（拒绝反馈 / 记规则）这时在右侧面板里
   }
@@ -923,7 +925,10 @@ function renderReview(){
     }
   }
   // 有待确认的请求时：展开区（拒绝反馈 / 记规则）在别的分段也要看得到；底栏放同一组按钮。
-  if (pend && !((tab === 'diff' && pendInfo.isEdit) || (tab === 'terminal' && pendInfo.isShell))) { const more = apprMore(pend, pendInfo, fbText); if (more) body.appendChild(more); }
+  if (pend && !((tab === 'diff' && pendInfo.isEdit) || (tab === 'terminal' && pendInfo.isShell))) {
+    if (!(pendInfo.isEdit || pendInfo.isShell)) body.appendChild(scopeBox(pendInfo));
+    const more = apprMore(pend, pendInfo, fbText); if (more) body.appendChild(more);
+  }
   const foot = $('rfoot'); foot.innerHTML = '';
   const showActs = !!pend;
   foot.classList.toggle('hidden', !showActs);
