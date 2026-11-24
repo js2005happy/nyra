@@ -67,7 +67,7 @@
 | `nyra style <learn\|show\|list\|delete…>` | 分应用文风学习 |
 | `nyra skills <status\|enable\|disable\|draft\|drafts\|show\|approve\|reject\|archive\|sweep>` | 技能自沉淀：成功任务自动起草技能草稿，人工批准后才安装，低质自动归档（详见 `docs/skill-sedimentation.md`） |
 | `nyra bughunt <install\|status\|scope\|template\|check>` | 授权漏洞挖掘技能包：范围卡 + 证伪验证 + 提交前七问 + 证据卫生，提交前核对（详见 `docs/bughunt.md`） |
-| `nyra market <list\|show\|source\|install\|uninstall\|installed\|publish\|template>` | 内置机器人市场：浏览、安装、发布技能包与机器人配置，三道门审查 + Bot Ready 评分 + 安装账本（详见 `docs/marketplace.md`） |
+| `nyra market <list\|show\|source\|install\|update\|uninstall\|installed\|publish\|template>` | 内置机器人市场：浏览、安装、更新、发布技能包与机器人配置，三道门审查 + Bot Ready 评分 + 安装账本（详见 `docs/marketplace.md`） |
 
 ## 后台与协作
 
