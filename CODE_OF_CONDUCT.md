@@ -1,3 +1,5 @@
+**中文** · [English](#code-of-conduct)
+
 # 行为准则
 
 ## 我们的承诺
@@ -32,3 +34,42 @@
 ## 来源
 
 本准则参考了 [Contributor Covenant](https://www.contributor-covenant.org/) 2.1 版。
+
+---
+
+# Code of Conduct
+
+[中文](#行为准则) · **English**
+
+## Our pledge
+
+So that everyone can take part with peace of mind, we pledge to make participation in the Nyra community a harassment-free experience for everyone, regardless of age, body size, disability, ethnicity, gender identity and expression, level of experience, education, socio-economic status, nationality, personal appearance, race, religion or sexual orientation.
+
+## Behavior we expect
+
+- Be kind and patient, and respect differing viewpoints and experiences;
+- Focus on the issue, and give and accept constructive feedback;
+- Own your mistakes and learn from them;
+- Focus on what is best for the community as a whole.
+
+## Unacceptable behavior
+
+- Sexualized language or imagery, and unwelcome sexual attention;
+- Trolling, insulting or derogatory comments, and personal or political attacks;
+- Public or private harassment;
+- Publishing others' private information (such as addresses, contact details or keys) without explicit permission;
+- Other conduct that would clearly be inappropriate in a professional setting.
+
+## Scope
+
+This Code applies in all project spaces (issues, PRs, discussions, review comments), and also when someone represents the project in public.
+
+## Enforcement
+
+Maintainers have the right to remove, edit or reject comments, commits, issues and other contributions that don't follow this Code, and may temporarily or permanently ban anyone who violates it.
+
+If you see a violation, open an issue **without details** asking for a private contact, or reach the maintainers through the repository's private channels. All reports will be handled seriously and confidentially.
+
+## Attribution
+
+This Code is adapted from version 2.1 of the [Contributor Covenant](https://www.contributor-covenant.org/).
