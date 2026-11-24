@@ -321,9 +321,10 @@ nyra --execute-plan --approve-plan <完整 SHA-256>
 | glm（智谱） | `ZHIPU_API_KEY` | `glm-5.3` |
 | gemini | `GEMINI_API_KEY` | `gemini-2.5-flash` |
 | ollama（本地） | 无需 Key | `qwen2.5:7b` |
+| openlux（中转） | `OPENLUX_API_KEY` | `deepseek-v4.1-flash` |
 | codex | 无需 Key（本机 Codex 登录） | `codex-default` |
 
-另有 openrouter、mistral、groq、together 与 `custom`（`NYRA_API_KEY` + `NYRA_BASE_URL` + `NYRA_MODEL`）。`nyra --list-providers` 查看全部，详见 [完整手册](GUIDE.md#配置模型)。
+另有 openlux、openrouter、mistral、groq、together 与 `custom`（`NYRA_API_KEY` + `NYRA_BASE_URL` + `NYRA_MODEL`）。OpenLux 是一个 Key 调 300+ 模型的中转站（`https://api.openlux.ai/v1`，按量计费走你自己的 OpenLux 余额；Key 按建 Key 时选的分组计费，不同分组带的模型不同）。`nyra --list-providers` 查看全部，详见 [完整手册](GUIDE.md#配置模型)。
 
 ## 网页界面
 

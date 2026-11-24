@@ -254,6 +254,7 @@ Nyra 支持任何 OpenAI 兼容接口。配置方式按优先级：命令行参�
 | deepseek（默认） | `DEEPSEEK_API_KEY` | `deepseek-flash` | 便宜，适合日常任务；`deepseek-v4-pro` 更强 |
 | xai（Grok） | `XAI_API_KEY` | `grok-4.3` | |
 | openrouter | `OPENROUTER_API_KEY` | `nousresearch/hermes-4-14b` | 可用 Hermes 等开源权重模型 |
+| openlux | `OPENLUX_API_KEY` | `deepseek-v4.1-flash` | 中转站，一个 Key 调 300+ 模型（Claude/GPT/Gemini/DeepSeek/Qwen）；Key 按建 Key 时选的分组计费，不同分组带的模型不同，`--model` 可透传任意模型名 |
 | ollama（本地） | 无需 Key | `qwen2.5:7b` | 需本地跑 Ollama |
 | openai | `OPENAI_API_KEY` | `gpt-4o-mini` | |
 | qwen（通义千问） | `DASHSCOPE_API_KEY` | `qwen-plus` | 阿里 DashScope 兼容模式 |
