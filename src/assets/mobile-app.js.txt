@@ -12,7 +12,7 @@ document.documentElement.classList.add(IS_IOS ? 'ios' : 'android');
 document.documentElement.lang = LANG === 'zh' ? 'zh-CN' : 'en';
 const EDIT_TOOLS = ['write_file', 'edit_file', 'apply_patch'];
 let currentSession = null, currentTab = 'threads', currentGroup = null, poll = null, lastFeedKey = '', sheetKey = '', cardState = {};
-let pendingText = '', lastInfo = null, fullStep = 0, lastApprovals = [], lastSessions = null, searchQ = '', lastReviewJson = '';
+let pendingText = '', lastInfo = null, fullStep = 0, fullPending = null, fullPendingTimer = null, lastApprovals = [], lastSessions = null, searchQ = '', lastReviewJson = '';
 let online = null, lastOkAt = 0, chiefMeta = null, reviewPending = 0, sheetMode = null, failedAction = null;
 
 function token(){
@@ -142,16 +142,53 @@ function syncCodeBoxes(){
   const boxes = $('pair-boxes').querySelectorAll('i');
   boxes.forEach((b, i) => { b.textContent = v[i] || ''; b.classList.toggle('cur', i === Math.min(v.length, 5) && document.activeElement === $('pair-code')); });
 }
+// base64url 编解码（配对加密用；btoa/atob 只认标准 base64）。
+function b64urlEncode(bytes){ let s = ''; for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
+function b64urlDecode(s){ const bin = atob(s.replace(/-/g, '+').replace(/_/g, '/')); const out = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i); return out; }
+
+// 加密配对（POST /api/pair/encrypted）：手机生成临时 ECDH 密钥，把公钥随配对码
+// 发去，网关用它把设备 token 加密后发回。WebCrypto 只在安全上下文可用；
+// 明文 HTTP 下 crypto.subtle 是 undefined，调用方回落明文 /api/pair。
+async function pairEncrypted(code){
+  const kp = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveBits']);
+  const raw = new Uint8Array(await crypto.subtle.exportKey('raw', kp.publicKey)); // 65 字节 0x04||x||y
+  const res = await fetch('/api/pair/encrypted', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, name: deviceName(), public_key: b64urlEncode(raw.slice(1)) }) });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.envelope) throw new Error(data.error || t('m.pair.failed'));
+  const env = data.envelope;
+  const epkBytes = b64urlDecode(env.epk);
+  const epkRaw = new Uint8Array(65); epkRaw[0] = 4; epkRaw.set(epkBytes, 1);
+  const epk = await crypto.subtle.importKey('raw', epkRaw, { name: 'ECDH', namedCurve: 'P-256' }, false, []);
+  const secret = await crypto.subtle.deriveBits({ name: 'ECDH', public: epk }, kp.privateKey, 256);
+  const baseKey = await crypto.subtle.importKey('raw', secret, 'HKDF', false, ['deriveKey']);
+  const aesKey = await crypto.subtle.deriveKey(
+    { name: 'HKDF', hash: 'SHA-256', salt: epkBytes, info: new TextEncoder().encode('nyra-pair-v1') },
+    baseKey, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+  const ct = b64urlDecode(env.ct), tag = b64urlDecode(env.tag);
+  const buf = new Uint8Array(ct.length + tag.length); buf.set(ct); buf.set(tag, ct.length);
+  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64urlDecode(env.iv), tagLength: 128 }, aesKey, buf);
+  return new TextDecoder().decode(pt);
+}
+
 async function pair(){
   const code = $('pair-code').value.replace(/\D/g, '');
   $('pair-error').textContent = '';
   if (code.length !== 6) { $('pair-error').textContent = t('m.pair.need6'); return; }
   $('pair-btn').disabled = true;
   try {
-    const res = await fetch('/api/pair', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, name: deviceName() }) });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.token) { $('pair-error').textContent = data.error || t('m.pair.failed'); return; }
-    try { localStorage.setItem('nyra-device-token', data.token); } catch(e){}
+    let token;
+    if (window.crypto && window.crypto.subtle) {
+      try { token = await pairEncrypted(code); }
+      catch (e) { if (e instanceof TypeError) throw e; $('pair-error').textContent = e.message || t('m.pair.failed'); return; }
+    } else {
+      // 明文回落：当前连接不是安全上下文，WebCrypto 不可用。配对页会显示
+      // 未加密提示（m.pair.plainNote），不假装这条通道是加密的。
+      const res = await fetch('/api/pair', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, name: deviceName() }) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.token) { $('pair-error').textContent = data.error || t('m.pair.failed'); return; }
+      token = data.token;
+    }
+    try { localStorage.setItem('nyra-device-token', token); } catch(e){}
     history.replaceState(null, '', '/m');
     $('pair-code').value = ''; syncCodeBoxes();
     $('pair-lost').classList.add('hidden'); $('pair-title').textContent = t('m.pair.title');
@@ -923,6 +960,16 @@ function renderModes(){
     go.onclick = () => { if (fullStep === 1) { fullStep = 2; renderModes(); } else setMode('full'); };
     row.appendChild(no); row.appendChild(go); w.appendChild(row); c.appendChild(w);
   }
+  // 电脑确认门：请求已发、等电脑确认时，在这里显示待确认态。
+  if (fullPending) {
+    const w = el('div', 'warnbox');
+    w.appendChild(el('b', '', t('m.full.pendingTitle')));
+    w.appendChild(el('p', '', t('m.full.pendingBody')));
+    const row = el('div', 'row'); row.style.gap = '8px';
+    const no = el('button', 'btn sm', t('m.cancel')); no.style.flex = '1'; no.onclick = () => { clearFullPending(); renderModes(); };
+    const refresh = el('button', 'btn sm', t('m.full.pendingRefresh')); refresh.style.flex = '1.4'; refresh.onclick = () => { checkFullPending(); };
+    row.appendChild(no); row.appendChild(refresh); w.appendChild(row); c.appendChild(w);
+  }
 }
 function chooseMode(m){
   if (lastInfo && m === lastInfo.mode) return;
@@ -931,10 +978,41 @@ function chooseMode(m){
 }
 async function setMode(m){
   try {
-    await api('/api/mode', { method: 'POST', body: JSON.stringify(m === 'full' ? { mode: m, confirm: 'full' } : { mode: m }) });
-    fullStep = 0; await loadInfo(); renderModes(); renderCPills();
+    const data = await api('/api/mode', { method: 'POST', body: JSON.stringify({ mode: m }) });
+    fullStep = 0;
+    if (data && data.pending) {
+      // 电脑确认门：请求已发给电脑，模式还没变；轮询 /api/info 等电脑确认。
+      fullPending = { id: data.request_id, expiresAt: Date.parse(data.expires_at || '') };
+      startFullPendingPoll();
+      renderModes();
+      return;
+    }
+    clearFullPending();
+    await loadInfo(); renderModes(); renderCPills();
     toast(t('m.set.switched', { mode: modeLabel(m) }));
   } catch (e) { if (e instanceof NetError) actionFailed(e, () => setMode(m)); else toast(t('m.set.switchFailed', { msg: e.message })); }
+}
+// 待确认请求轮询：电脑批了就切过去，过期就提示重来。
+function startFullPendingPoll(){
+  if (fullPendingTimer) clearInterval(fullPendingTimer);
+  fullPendingTimer = setInterval(() => { checkFullPending(); }, 5000);
+}
+function clearFullPending(){
+  fullPending = null;
+  if (fullPendingTimer) { clearInterval(fullPendingTimer); fullPendingTimer = null; }
+}
+async function checkFullPending(){
+  if (!fullPending) return;
+  try { await loadInfo(); } catch (e) { return; }
+  if (lastInfo && lastInfo.mode === 'full') {
+    clearFullPending(); renderModes(); renderCPills();
+    toast(t('m.set.switched', { mode: modeLabel('full') }));
+    return;
+  }
+  if (Date.now() > fullPending.expiresAt) {
+    clearFullPending(); renderModes();
+    toast(t('m.full.pendingExpired'));
+  }
 }
 async function loadRules(){
   const data = await api('/api/rules');
@@ -1228,6 +1306,13 @@ window.addEventListener('load', async () => {
   runSplash();
   loadFonts();
   renderConn();
+  // 明文 HTTP 下 WebCrypto 不可用（crypto.subtle 只在安全上下文里有），
+  // 配对走明文通道时在配对页明说，不假装加密。
+  const plainNote = $('pair-plain-note');
+  if (plainNote) {
+    if (!window.crypto || !window.crypto.subtle) { plainNote.textContent = t('m.pair.plainNote'); plainNote.classList.remove('hidden'); }
+    else plainNote.classList.add('hidden');
+  }
   $('pair-btn').onclick = pair;
   $('pair-code').oninput = syncCodeBoxes; $('pair-code').onfocus = syncCodeBoxes; $('pair-code').onblur = syncCodeBoxes;
   $('pair-cloud').onclick = cloudSoon;
