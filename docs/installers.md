@@ -10,7 +10,8 @@
 | --- | --- | --- | --- |
 | 5 个 Node 二进制 | `node-binaries.yml` | tag / main 推送 / PR / 手动 | `release` 作业：建 Release（写正文、生成 notes）并挂 `dist/*` |
 | macOS 通用 `.dmg`、Windows `.msi` / NSIS `-setup.exe` | `desktop.yml` | tag / 手动 | `release` 作业：只挂文件，不写正文（正文归 node-binaries 管） |
-| 安卓 debug APK（`nyra-android-debug.apk`） | `mobile.yml` | tag / 手动 | `release` 作业：只挂文件，不写正文 |
+| 安卓 APK（稳定名 `nyra-android.apk`；debug 签名时另有旧名 `nyra-android-debug.apk`） | `mobile.yml` | tag / 手动 | `release` 作业：只挂文件，不写正文 |
+| 桌面安装包的稳定名副本（`Nyra-windows-x64-setup.exe`、`Nyra-windows-x64.msi`、`Nyra-macos-universal.dmg`、`Nyra-linux-x86_64.AppImage`、`Nyra-linux-amd64.deb`） | `desktop.yml` | tag | `release` 作业：内容与带版本号的同一文件相同，供 `releases/latest/download/<稳定名>` 下载链接用 |
 | `SHA256SUMS` + `.sig` + `.pem` + `.bundle`、SLSA 证明 | `release-sign.yml` | Node binaries 跑完自动（`workflow_run`）/ Release 手动建后 / 手动填 tag | 等齐全部 9 项产物再下载、算哈希、签名、回挂；等不到就失败，不签不全的清单 |
 
 时序注意：三个构建工作流是并行的，Release 由最先跑完的那个创建；
@@ -88,5 +89,6 @@ v0.5.11 的 `SHA256SUMS` 与签名是 2026-11-24 手动跑签名工作流补上�
   “没有 SHA256SUMS”并退出码 1，不指向不存在的文件。
 - 安装包本身的**代码签名**是另一回事，见 `docs/SIGNING.md`：证书没买，
   Windows `.msi` / `.exe` 与 macOS `.dmg` 目前未签名、未公证；安卓 APK
-  是 Gradle 自动生成的 debug 签名（正式 keystore 待用户决定后再接）；
+  从 0.5.13 起接好了正式签名：仓库配了 `ANDROID_KEYSTORE_*` secrets 时出正式签名的
+  release APK，没配时仍退回 debug 签名并在构建里给警告（见 `docs/SIGNING.md` 第 4 层）；
   iOS 没有安装包（要 Apple Developer 账号与证书，与桌面签名同一笔待办）。

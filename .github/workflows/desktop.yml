@@ -319,6 +319,20 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: Add stable-name copies
+        # README / 官网的「下载」按钮链 releases/latest/download/<稳定名>，
+        # 不随版本号变：每个安装包另挂一份不带版本号的副本（内容完全相同，SHA256SUMS 一并覆盖）。
+        run: |
+          set -euo pipefail
+          mkdir -p dist/stable
+          one(){ local pat="$1" out="$2"; local f; f=$(find dist -type f -name "$pat" ! -path 'dist/stable/*' | head -1); [ -n "$f" ] || { echo "::error::找不到 $pat"; exit 1; }; cp "$f" "dist/stable/$out"; echo "$f -> $out"; }
+          one '*_x64-setup.exe' Nyra-windows-x64-setup.exe
+          one '*_x64_en-US.msi' Nyra-windows-x64.msi
+          one '*_universal.dmg' Nyra-macos-universal.dmg
+          one '*_amd64.AppImage' Nyra-linux-x86_64.AppImage
+          one '*_amd64.deb' Nyra-linux-amd64.deb
+          ls -l dist/stable
+
       - name: Attach to Release
         # 只挂文件，不写 body / 不生成 notes：Release 正文归 node-binaries
         # 的 release 作业管；这边先挂上也不会被后挂的覆盖。
