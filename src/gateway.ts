@@ -203,6 +203,11 @@ export interface GatewayOptions {
   shell?: string | null;
 }
 
+/** 群聊机器人 / 总指挥团队成员的内部会话 id（groups.ts runBot：group-<房间>-<成员>）。 */
+export function isGroupMemberSessionId(id: string): boolean {
+  return /^group-[a-z][a-z0-9_-]*-[A-Za-z0-9_.-]+$/.test(id);
+}
+
 export class Gateway {
   home: string;
   workdir: string;
@@ -592,6 +597,11 @@ export class Gateway {
     // 设计稿 v8（手机列表副标题写结果）：最近 40 个会话附上最后一轮的真实汇总（改了几个文件、跑了几条命令、
     // 有没有 git push）；会话文件超过 4 MiB 的不读，outcome 记 null，界面退回原来的副标题。
     const recentIds = new Set([...byId.values()].sort((a, b) => String(b.mtime).localeCompare(String(a.mtime))).slice(0, 40).map((x) => x.id));
+    // 群聊 / 总指挥团队成员各自的内部会话（id = group-<房间>-<成员>，首条是
+    // 「以下是共享群聊记录…」提示词）不是用户自己的对话：从列表里拿掉，
+    // 归到所属总指挥任务下（member_sessions），会话本身照旧能按 id 打开。
+    const memberSessions = this.groupMemberSessions([...byId.values()]);
+    for (const id of memberSessions.ids) byId.delete(id);
     const sessions = [...byId.values()].map((item) => {
       const workdir = projects[item.id];
       // status：手机列表的状态点用（运行中 / 出错 / 空闲）；没有 live run 的会话一律 idle。
@@ -601,8 +611,35 @@ export class Gateway {
     });
     return {
       sessions,
+      member_sessions: memberSessions.byRun,
       project: { name: this.workdir.split("/").pop() ?? this.workdir, workdir: this.workdir },
     };
+  }
+
+  /**
+   * 找出群聊成员的内部会话：ids 是要从会话列表隐藏的全部 id；byRun 把属于
+   * 总指挥任务的那些按任务归组（总指挥 run id → 成员会话摘要）。
+   */
+  private groupMemberSessions(items: { id: string; count: number; mtime: string }[]): {
+    ids: Set<string>;
+    byRun: Record<string, { id: string; member: string; count: number; mtime: string }[]>;
+  } {
+    const ids = new Set<string>();
+    const byRun: Record<string, { id: string; member: string; count: number; mtime: string }[]> = {};
+    const owner = new Map<string, { run: string; member: string }>();
+    try {
+      for (const run of listChiefRuns(this.home)) {
+        for (const m of run.members ?? []) owner.set(`group-${run.room_id}-${m.id}`, { run: run.id, member: m.id });
+      }
+    } catch { /* 总指挥记录读不了时只隐藏，不归组 */ }
+    for (const item of items) {
+      if (!isGroupMemberSessionId(item.id)) continue;
+      ids.add(item.id);
+      const o = owner.get(item.id);
+      if (!o) continue;
+      (byRun[o.run] ??= []).push({ id: item.id, member: o.member, count: item.count, mtime: item.mtime });
+    }
+    return { ids, byRun };
   }
 
   private lastTurnOutcome(sessionId: string): TurnSummary | null {
