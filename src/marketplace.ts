@@ -224,6 +224,21 @@ export function isMarketGitUrl(input: string): boolean {
 }
 
 /**
+ * B5 修复（Windows CI #792 实败）：file:// 地址先规范化再用。Windows 上手写
+ * `file://D:\repos\bot`（反斜杠、两斜杠盘符）直接喂给 git clone 会失败；
+ * 这里把反斜杠换成斜杠、盘符补成三斜杠（`file:///D:/repos/bot`）。
+ * 非 file:// 地址原样返回；`file://主机名/...`（UNC 或误拼的主机名）不动，
+ * 交给 git 去报错。纯字符串操作，不依赖平台，Linux 上也能测。
+ */
+export function normalizeMarketGitUrl(input: string): string {
+  const trimmed = input.trim();
+  if (!trimmed.startsWith("file://")) return trimmed;
+  let rest = trimmed.slice("file://".length).replace(/\\/g, "/");
+  if (/^[A-Za-z]:\//.test(rest)) rest = `/${rest}`;
+  return `file://${rest}`;
+}
+
+/**
 * 登记一个市场源：本地目录（须含 index.json）或 git 地址（https / git@ /
 * .git 结尾，git clone --depth 1 到 ~/.nyra/marketplace-sources/<名>/）。
 * 已登记同名源先 remove 再 add；登记本身不拉取更新。
@@ -1305,7 +1320,7 @@ export async function prepareMarketplaceInstallFromUrl(
   url: string,
   opts: { config: Record<string, unknown>; runner?: ReviewerLike | null },
 ): Promise<InstallPrepared> {
-  const trimmed = url.trim();
+  const trimmed = normalizeMarketGitUrl(url);
   if (!isMarketGitUrl(trimmed)) {
     throw new MarketplaceError(`不是 git 地址：${trimmed}（单个 Bot 安装只接 git 仓库地址，裸 .zip 不支持）`);
   }
