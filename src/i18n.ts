@@ -228,7 +228,6 @@ const zh = {
   "cost.monthlyLine": "月度上限：${limit}（本月已花 ${spent}，其中 MCP ${mcp}；{reset} 重置）",
   "cost.monthlyUnset": "月度上限：未设置（本月已花 ${spent}，其中 MCP ${mcp}）",
   // 无 Key
-  "setup.noCreds": "未找到可用的 API 凭据。\n设置方法（二选一）：\n  1. 环境变量：export DEEPSEEK_API_KEY=<redacted>\n     或通用：export NYRA_API_KEY=<redacted>\n  2. 已保存的连接器：如果 DeepSeek / xAI 的 Key 已通过安全流程保存，直接用 --provider deepseek 或 --provider xai 即可，无需再填 Key。\n当前 provider：{provider}",
   // 手机 PWA（/m）：语言跟随手机 navigator.language，回落 en
   "m.tab.threads": "对话",
   "m.tab.review": "审阅",
@@ -671,7 +670,7 @@ const zh = {
   "d.key.test": "测试连接",
   "d.key.testing": "正在连接…",
   "d.key.testOk": "连接成功 · {mask} · {n} 个模型可用",
-  "d.key.testBad": "连接失败",
+  "d.key.testBad": "连接失败：没收到服务端的错误说明，请确认服务已启动、地址与 Key 无误，再点一次「测试连接」",
   "d.key.modelMissing": "（列表里没有当前模型）",
   "d.key.save": "保存",
   "d.key.savedVault": "已存进密码箱：{mask}",
@@ -727,7 +726,7 @@ const zh = {
   "d.about.platform": "平台",
   "d.about.desktopShell": "桌面应用",
   "d.about.doctor": "遇到问题先在终端里跑体检：",
-  "d.setup.title": "开始使用 Nyra",
+  "d.setup.title": "设置 Nyra",
   "d.setup.lead": "选一个模型提供商并填入它的 API Key。Key 只存在这台电脑上。",
   "d.setup.step1": "选择提供商",
   "d.setup.step2": "粘贴 API Key，然后测试连接",
@@ -1064,7 +1063,6 @@ const en: Record<MsgKey, string> = {
   "cost.monthlyRelax": "To relax: raise monthly_cost_limit_usd in config.json, or use --monthly-max-cost <USD>; set it to null to remove the monthly cap",
   "cost.monthlyLine": "Monthly cap: ${limit} (spent ${spent} this month, MCP ${mcp}; resets {reset})",
   "cost.monthlyUnset": "Monthly cap: not set (spent ${spent} this month, MCP ${mcp})",
-  "setup.noCreds": "No usable API credentials found.\nSet one up (either way):\n  1. Environment variable: export DEEPSEEK_API_KEY=<redacted>\n     or generic: export NYRA_API_KEY=<redacted>\n  2. Saved connector: if your DeepSeek / xAI key was saved through the secure flow, just use --provider deepseek or --provider xai.\nCurrent provider: {provider}",
   // Phone PWA (/m)
   "m.tab.threads": "Threads",
   "m.tab.review": "Review",
@@ -1507,7 +1505,7 @@ const en: Record<MsgKey, string> = {
   "d.key.test": "Test connection",
   "d.key.testing": "Connecting…",
   "d.key.testOk": "Connected · {mask} · {n} models available",
-  "d.key.testBad": "Connection failed",
+  "d.key.testBad": "Connection failed: no error detail from the server. Check the service is running and the address and key are right, then test again.",
   "d.key.modelMissing": "(current model not in the list)",
   "d.key.save": "Save",
   "d.key.savedVault": "Saved to your vault: {mask}",

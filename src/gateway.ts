@@ -1347,7 +1347,9 @@ export class Gateway {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       const status = (err as { status?: unknown })?.status;
-      return { ok: false, provider, masked, status: typeof status === "number" ? status : null, error: scrub(msg).slice(0, 300) };
+      // Ollama 没启动是最常见的失败：只报“网络错误”用户不知道怎么办，直接写清。
+      const hint = provider === "ollama" ? "（Ollama 可能没启动：先在终端跑 ollama serve，再点一次「测试连接」）" : "";
+      return { ok: false, provider, masked, status: typeof status === "number" ? status : null, error: scrub(msg + hint).slice(0, 300) };
     }
   }
 

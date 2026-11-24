@@ -7,6 +7,8 @@
 // 后面的项本次不查（不是“通过”，是没查到）。
 // 网络检查只发一个不带 Key 的连通性请求（HEAD 到 provider base_url 的根），
 // 超时 5 秒；失败时明确说“网络不通”，不把模型报错当网络故障。
+// Ollama 另加一次连通性实测（GET base_url/models，收到任何 HTTP 响应就算在跑），
+// 没启动时“模型配置”一项直接失败，不再全绿。
 import { existsSync, statSync, writeFileSync, rmSync, statfsSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig, resolveProvider, VERSION } from "./config.ts";
@@ -58,6 +60,23 @@ async function checkNetwork(url: string, fetchFn: typeof fetch): Promise<{ ok: b
   }
 }
 
+/** Ollama 是否在跑：GET {baseUrl}/models，收到任何 HTTP 响应就算在跑（404 也算——
+// 老版本 Ollama 没有 /v1/models，但服务本身在）；只有连不上/超时才算没启动。 */
+async function checkOllama(baseUrl: string, fetchFn: typeof fetch): Promise<{ ok: boolean; detail: string }> {
+  const url = `${baseUrl.replace(/\/+$/, "")}/models`;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 5000);
+  try {
+    const resp = await fetchFn(url, { method: "GET", signal: ctrl.signal, redirect: "manual" });
+    return { ok: true, detail: `Ollama 已启动（${url} 返回 HTTP ${resp.status}）` };
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    return { ok: false, detail: `Ollama 未启动：连不上 ${url}：${reason}` };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function runDoctor(opts: DoctorOptions): Promise<{ checks: DoctorCheck[]; allOk: boolean }> {
   const { home } = opts;
   const checks: DoctorCheck[] = [];
@@ -69,7 +88,7 @@ export async function runDoctor(opts: DoctorOptions): Promise<{ checks: DoctorCh
   const runtimeOk = runtimeVersionOk(runtime);
   checks.push({
     name: "运行时", ok: runtimeOk,
-    detail: `${runtime}（nyra ${VERSION}，Node 运行时第 1 阶段）${runtimeOk ? "" : "（版本太低）"}`,
+    detail: `${runtime}（nyra ${VERSION}）${runtimeOk ? "" : "（版本太低）"}`,
     fix: runtimeOk ? undefined : "升级 Bun 到 1.4+（bun upgrade），或改用 Node 24+ 运行；Node 22 及以下没有开箱即用的 node:sqlite，示例任务会失败。",
   });
 
@@ -135,23 +154,16 @@ export async function runDoctor(opts: DoctorOptions): Promise<{ checks: DoctorCh
   if (provider.auth === "cli") {
     checks.push({ name: "模型配置", ok: true, detail: `provider=${provider.name}（Codex CLI，复用本机登录，不需要 Key）${winText}` });
   } else if (provider.name === "ollama") {
-    checks.push({ name: "模型配置", ok: true, detail: `provider=ollama（本地模型，不需要 Key，默认 ${provider.baseUrl}）${winText}` });
+    // Ollama 是本地模型，不需要 Key，但必须先确认它在跑：以前这里直接通过，
+    // 11434 没启动也是全绿（假绿灯）。现在实测一次连通性。
+    const probe = await checkOllama(provider.baseUrl, opts.fetchFn || fetch);
+    checks.push({
+      name: "模型配置", ok: probe.ok,
+      detail: `provider=ollama（本地模型，不需要 Key，默认 ${provider.baseUrl}）${winText}；${probe.detail}`,
+      fix: probe.ok ? undefined : "先启动 Ollama（终端跑 ollama serve，确认能打开 http://127.0.0.1:11434），再重跑 nyra doctor；或换一个需要 Key 的 provider：nyra setup。",
+    });
   } else if (provider.hasKey) {
     checks.push({ name: "模型配置", ok: true, detail: `provider=${provider.name}，模型 ${provider.model}，Key 已配置（来源：${provider.keySource === "file" ? "界面保存（keys.json）" : provider.keySource === "vault" ? "密码箱" : `环境变量 ${provider.envKey}`}）${winText}` });
-  } else if (provider.keySource === "vault") {
-    checks.push({
-      name: "模型配置", ok: false,
-      detail: `provider=${provider.name}，模型 ${provider.model}，环境变量里没有 Key；检测到密码箱 vault.json，但第 1 阶段还不能解密它${winText}`,
-      fix: provider.envKey
-        ? `先用环境变量提供 Key：export ${provider.envKey}=你的Key（第 2 阶段恢复密码箱读取后就不用每次 export）。`
-        : `先用环境变量 NYRA_API_KEY 提供 Key。`,
-    });
-  } else if (provider.auth === "connector") {
-    checks.push({
-      name: "模型配置", ok: false,
-      detail: `provider=${provider.name}，模型 ${provider.model}，环境变量里没有 Key；该 provider 在 Python 版走连接器注入，Node 版第 1 阶段尚未接连接器${winText}`,
-      fix: provider.envKey ? `先用环境变量提供 Key：export ${provider.envKey}=你的Key。` : "先用环境变量 NYRA_API_KEY 提供 Key。",
-    });
   } else {
     checks.push({
       name: "模型配置", ok: false,

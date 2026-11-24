@@ -668,10 +668,6 @@ export function parseArgs(argv: string[]): CliArgs {
   return args;
 }
 
-function printSetupHelp(providerName: string): void {
-  process.stdout.write(t("setup.noCreds", { provider: providerName }) + "\n");
-}
-
 function fallbackEnabled(args: CliArgs): boolean | null {
   if (args.noFallback) return false;
   if (args.fallback) return true;
@@ -833,7 +829,7 @@ async function buildAgent(args: CliArgs, opts?: { interactive: boolean; skillsDi
     },
   );
   if (!provider.hasCredentials()) {
-    printSetupHelp(primaryCfg.name);
+    printNoKeyAndExitCode(primaryCfg);
     throw new AgentError("__NO_CREDENTIALS__");
   }
   const mode = validateMode(args.mode ?? profile.mode ?? (config.mode as string) ?? "auto");

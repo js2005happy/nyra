@@ -331,9 +331,8 @@ export async function runWizard(opts: {
     }
     console.log("");
     if (exampleOk) {
-      console.log("向导完成！第一个任务已经跑通。");
-      console.log("下一步：有 Key 就跑模型任务（Node 版 agent 核心在第 2 阶段，现在请用 python3 -m nyra）；");
-      console.log("没 Key 就先跑 nyra doctor 看看缺什么，或跑 nyra --example 再练一次。");
+      console.log("向导完成：刚才跑的是本地示例任务（不调模型、不花钱），还不是模型任务。");
+      console.log("下一步：跑模型任务前，先确认 Key 已设好（本地模型先确认已启动）；没把握就先跑 nyra doctor 看看缺什么，或跑 nyra --example 再练一次。");
     } else {
       console.log("示例任务没跑通，按上面的报错处理，或跑 nyra doctor 自检。");
     }

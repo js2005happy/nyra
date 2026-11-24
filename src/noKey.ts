@@ -8,11 +8,6 @@ export function noKeyMessage(provider: ResolvedProvider): string {
   const lines: string[] = [];
   lines.push(`Nyra 还没有配置模型。当前 provider 是 ${provider.name}（模型 ${provider.model}），需要先设置 API Key 才能跑任务。`);
   lines.push("");
-  if (provider.keySource === "vault") {
-    lines.push("检测到 ~/.nyra/vault.json（密码箱）已存在，但 Node 版第 1 阶段还不能解密它。");
-    lines.push("请先用环境变量提供 Key（第 2 阶段会恢复密码箱读取）：");
-    lines.push("");
-  }
   if (provider.name === "ollama") {
     lines.push("Ollama 是本地模型，不需要 Key：请先确认本机装好并启动了 Ollama，");
     lines.push("再跑：nyra --provider ollama \"你的任务\"");
@@ -23,7 +18,8 @@ export function noKeyMessage(provider: ResolvedProvider): string {
     lines.push(`设置方法（任选其一）：`);
     lines.push(`  1）本次生效：export ${provider.envKey}=你的Key`);
     lines.push(`  2）长期生效：把上面这行加进 ~/.bashrc 或 ~/.zshrc，再重新打开终端`);
-    lines.push(`  3）不设 Key：先跑本地示例任务熟悉流程：nyra --example`);
+    lines.push(`  3）桌面窗口里粘贴：打开 Nyra 窗口 → 首次设置里粘贴 Key，点「测试连接」通过后再保存（只存在本机）`);
+    lines.push(`  4）不设 Key：先跑本地示例任务熟悉流程：nyra --example`);
     lines.push("");
     lines.push(`然后再跑：nyra --provider ${provider.name} "你的任务"`);
   } else {
