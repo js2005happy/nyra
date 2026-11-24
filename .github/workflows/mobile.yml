@@ -154,12 +154,24 @@ jobs:
           fi
           cat /tmp/certs.txt
           if grep -qi "CN=Android Debug" /tmp/certs.txt; then echo "::error::release APK 仍是 debug 证书"; exit 1; fi
-          if ! grep -q "Signer #1 certificate DN: CN=Nyra" /tmp/certs.txt; then echo "::error::签名者不是 CN=Nyra"; exit 1; fi
-          SHA="$(grep -m1 "Signer #1 certificate SHA-256 digest:" /tmp/certs.txt | awk '{print $NF}' | tr 'A-F' 'a-f')"
-          case "$SHA" in
-            "$EXPECTED_CERT_SHA256_PREFIX"*) echo "证书 SHA-256：$SHA（与正式证书一致）" ;;
-            *) echo "::error::证书 SHA-256 为 '$SHA'，不以 $EXPECTED_CERT_SHA256_PREFIX 开头，不是正式证书"; exit 1 ;;
-          esac
+          # apksigner 的输出格式随版本与 --verbose 不同（"Signer #1 certificate DN: CN=Nyra, ..."
+          # 或 "V2 Signer: certificate DN: C=CN, O=Nyra, CN=Nyra"），所以按行检查：
+          # 每一行证书 DN 都必须含 CN=Nyra，每一行证书 SHA-256 都必须以正式证书前缀开头
+          # （多出一个别的签名者也会被拦下）。
+          DNS="$(grep "certificate DN:" /tmp/certs.txt || true)"
+          SHAS="$(grep "certificate SHA-256 digest:" /tmp/certs.txt | awk '{print $NF}' | tr 'A-F' 'a-f' || true)"
+          [ -n "$DNS" ] || { echo "::error::apksigner 输出里没有证书 DN"; exit 1; }
+          [ -n "$SHAS" ] || { echo "::error::apksigner 输出里没有证书 SHA-256"; exit 1; }
+          while IFS= read -r line; do
+            echo "$line" | grep -Eq '(: |, )CN=Nyra(,|$)' || { echo "::error::签名者不是 CN=Nyra：$line"; exit 1; }
+          done <<< "$DNS"
+          while IFS= read -r sha; do
+            case "$sha" in
+              "$EXPECTED_CERT_SHA256_PREFIX"*) ;;
+              *) echo "::error::证书 SHA-256 为 '$sha'，不以 $EXPECTED_CERT_SHA256_PREFIX 开头，不是正式证书"; exit 1 ;;
+            esac
+          done <<< "$SHAS"
+          echo "证书 SHA-256：$(echo "$SHAS" | head -1)（签名者 CN=Nyra，与正式证书一致）"
           ls -l dist/
 
       - name: Build debug APK
