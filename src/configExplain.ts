@@ -274,6 +274,18 @@ export function explainAll(input: ExplainInput): CapabilityExplain[] {
     });
   }
 
+  // 更新检查：默认关闭的 opt-in（隐私政策承诺不联网回报）。
+  {
+    const enabled = pick(cfg, "update_check_enabled") === true;
+    out.push({
+      capability: "update_check",
+      effective: enabled ? "开（`nyra update-check` 会联网查新版本）" : "关（不联网）",
+      source: pick(cfg, "update_check_enabled") !== undefined ? "config" : "default",
+      keys: ["update_check_enabled", "nyra update-check"],
+      note: enabled ? "只查 GitHub Releases latest，不发任何本地数据" : "默认关闭：不联网、不检查；开后才由 `nyra update-check` 联网查一次",
+    });
+  }
+
   return out;
 }
 

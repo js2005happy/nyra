@@ -59,6 +59,8 @@ import { resolveAuxRouting, resolvePlanActRouting } from "./modelRouting.ts";
 import { MCPToolManager, NyraMcpServer, appendMcpServerAudit, buildMcpManager, mcpServerConfig } from "./mcp.ts";
 import { McpCostTracker, estimateToolCost, costLimitUsd } from "./mcpCost.ts";
 import { DeviceRegistry, defaultDevicesPath, startDiscoveryResponder, PairingError } from "./pairing.ts";
+import { FullModeRequests } from "./fullModeRequests.ts";
+import { assertValidPairingPublicKey, encryptTokenForPeer, PairingCryptoError } from "./pairingCrypto.ts";
 import { memoryScopes, memoryView, memorySave, deleteMemoryForScope, MemoryBrowserError } from "./memoryBrowser.ts";
 import { listArtifacts, getArtifact } from "./artifacts.ts";
 import { summarizeLastTurn, type TurnSummary } from "./turnSummary.ts";
@@ -227,6 +229,8 @@ export class Gateway {
   server: Server | null = null;
   runs: Map<string, SessionRun> = new Map();
   approvals: Map<string, { run: SessionRun; pending: PendingApproval }> = new Map();
+  /** 手机开完全模式的待确认请求（内存，10 分钟过期，网关重启清掉）。 */
+  fullModeRequests = new FullModeRequests();
   devices: DeviceRegistry;
   /** 缺口 41 下一批：账号目录 / 会话 / magic link 存储（文件版；Postgres 网关接线见已知局限）。 */
   accountsDirectory: AccountStore;
@@ -1499,6 +1503,7 @@ export class Gateway {
         max_turns: typeof cfg.max_turns === "number" ? cfg.max_turns : 20,
         reasoning_effort: typeof cfg.reasoning_effort === "string" ? cfg.reasoning_effort : null,
         language: typeof cfg.language === "string" ? cfg.language : null,
+        update_check_enabled: cfg.update_check_enabled === true,
       },
       context: {
         auto_compact_enabled: this.autoCompactEnabled,
@@ -1557,6 +1562,11 @@ export class Gateway {
       if (typeof body.mcp_enabled !== "boolean") throw new Error("mcp_enabled 必须是 true/false");
       patch.mcp_enabled = body.mcp_enabled;
     }
+    if ("update_check_enabled" in body) {
+      // 更新检查 opt-in：默认关闭；只有显式 true 时 `nyra update-check` 才联网。
+      if (typeof body.update_check_enabled !== "boolean") throw new Error("update_check_enabled 必须是 true/false");
+      patch.update_check_enabled = body.update_check_enabled;
+    }
     if ("default_provider" in body) {
       const name = String(body.default_provider);
       const presets = getProviderPresets(this.config);
@@ -1582,7 +1592,7 @@ export class Gateway {
     const unknown = Object.keys(body).filter((k) => ![
       "default_mode", "max_turns", "reasoning_effort", "language", "auto_compact_enabled", "auto_compact_threshold",
       "tool_search_enabled", "mcp_enabled", "default_provider", "default_model",
-      "monthly_cost_limit_usd",
+      "monthly_cost_limit_usd", "update_check_enabled",
     ].includes(k));
     if (unknown.length) throw new Error(`不支持的设置项：${unknown.join(", ")}`);
     if (!Object.keys(patch).length) throw new Error("没有要保存的设置");
@@ -1968,6 +1978,27 @@ export class Gateway {
       return;
     }
 
+    // POST /api/pair/encrypted：配对加密版。手机先发临时 ECDH 公钥，网关用它
+    // 把设备 token 加密后发回，token 不再明文过网（见 src/pairingCrypto.ts）。
+    // 明文 /api/pair 保留：已装 APK 与经明文 HTTP 局域网 IP 加载的手机页上
+    // WebCrypto 不可用（crypto.subtle 只在安全上下文里有），仍靠它配对。
+    if (method === "POST" && path === "/api/pair/encrypted") {
+      let body: Record<string, unknown>;
+      try { body = await this.readBody(req); } catch (err) { this.sendError(res, 400, `请求无效：${err instanceof Error ? err.message : String(err)}`); return; }
+      try {
+        // 先验公钥再兑换：公钥非法不能烧掉一次性配对码。
+        assertValidPairingPublicKey(String(body.public_key ?? ""));
+        const device = this.devices.redeem(String(body.code ?? ""), String(body.name ?? ""));
+        const envelope = encryptTokenForPeer(device.token, String(body.public_key ?? ""));
+        this.sendJson(res, 200, { id: device.id, name: device.name, envelope });
+      } catch (err) {
+        if (err instanceof PairingError) this.sendError(res, 401, err.message);
+        else if (err instanceof PairingCryptoError) this.sendError(res, 400, "public_key 不合法");
+        else this.sendError(res, 500, `配对失败：${err instanceof Error ? err.message : String(err)}`);
+      }
+      return;
+    }
+
     // 缺口 41 下一批：magic link 兑换端点（无鉴权：用户点邮件链接时还没有会话 token）。
     // token 从 query 或 body 里拿（邮件链接用 query，CLI 轮询用 body）；redeem 一次性、
     // 15 分钟有效、重放必失败。成功返回账号 + 会话 token（只此一次返回原文）。
@@ -2048,6 +2079,16 @@ export class Gateway {
 
     if (method === "GET" && path === "/api/approvals") {
       this.sendJson(res, 200, { approvals: this.pendingApprovals() });
+      return;
+    }
+    if (method === "GET" && path === "/api/mode/requests") {
+      if (!isOwner) { this.sendError(res, 403, "只能在电脑上查看完全模式请求"); return; }
+      const requests = this.fullModeRequests.list().map((r) => ({
+        id: r.id, device: r.device,
+        created_at: new Date(r.createdAt * 1000).toISOString(),
+        expires_at: new Date(r.expiresAt * 1000).toISOString(),
+      }));
+      this.sendJson(res, 200, { requests });
       return;
     }
     // 缺口 3b：审阅队列（供手机 PWA 的“审阅”标签页消费）。fail-closed：队列只
@@ -2486,10 +2527,38 @@ export class Gateway {
         } catch (err) { this.sendError(res, 400, err instanceof Error ? err.message : String(err)); }
         return;
       }
+      if (method === "POST" && path === "/api/mode/confirm") {
+        if (!isOwner) { this.sendError(res, 403, "只能在电脑上确认完全模式请求"); return; }
+        const requestId = String(body.request_id ?? "");
+        const approve = body.approve === true;
+        const decision = this.fullModeRequests.decide(requestId, approve);
+        if (decision === null) { this.sendError(res, 404, "请求不存在或已过期"); return; }
+        if (!decision) { this.sendJson(res, 200, { rejected: true }); return; }
+        try {
+          const mode = this.setMode("full");
+          this.sendJson(res, 200, { mode });
+        } catch (err) {
+          if (err instanceof Error && err.message.includes("正在执行")) this.sendError(res, 409, err.message);
+          else this.sendError(res, 400, err instanceof Error ? err.message : String(err));
+        }
+        return;
+      }
       if (path === "/api/mode") {
-        // 手机切到全权模式要带二次确认标记（手机设置页两步确认后才发）；电脑端不变。
-        if (!isOwner && String(body.mode ?? "") === "full" && body.confirm !== "full") {
-          this.sendError(res, 400, "手机切换到全权模式需要二次确认");
+        // 手机切到全权模式：手机自己的两次确认不够，须电脑上再确认一次。
+        // 非机主请求 full 只记一笔待确认请求（202），模式不动；机主在电脑上
+        // 用 `nyra gw mode-confirm <id>` 批了才生效。手机发来的 confirm 标记
+        // 不再采信（手机自己断言的不算确认）。已经是 full 时直接回 200。
+        if (!isOwner && String(body.mode ?? "") === "full") {
+          if (this.mode === "full") { this.sendJson(res, 200, { mode: "full" }); return; }
+          const deviceName = typeof who === "object" && who !== null && typeof (who as Record<string, unknown>).name === "string"
+            ? String((who as Record<string, unknown>).name) : "手机";
+          const req = this.fullModeRequests.request(deviceName);
+          this.sendJson(res, 202, {
+            pending: true,
+            request_id: req.id,
+            expires_at: new Date(req.expiresAt * 1000).toISOString(),
+            message: "已发送给电脑确认，请在电脑上确认（10 分钟内有效）",
+          });
           return;
         }
         try {

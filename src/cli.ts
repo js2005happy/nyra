@@ -128,6 +128,7 @@ import { listHookEntries, runHooks, HOOK_EVENTS } from "./hooks.ts";
 import { runStatusChecks, formatStatusReport } from "./status.ts";
 import { Gateway } from "./gateway.ts";
 import { GatewayClient } from "./gatewayClient.ts";
+import { checkForUpdates, isUpdateCheckEnabled } from "./updateCheck.ts";
 import { ConversationStore } from "./conversations.ts";
 import { rewindTo, rewindEdit, rewindFork, storeHistoryToAgentMessages } from "./rewind.ts";
 import { ShadowSnapshotStore, buildRestoreNote, type RestoreMode, type RestoreResult, type SnapshotRecord } from "./shadowSnapshots.ts";
@@ -182,7 +183,8 @@ nyra --list-sessions           列出历史会话
 nyra --list-mcp                列出已配置的 MCP 服务器与预置
 nyra ui [--host 127.0.0.1] [--port 8765] [--pair] [--open]   启动 gateway 网页界面
 nyra ui --print-url-json --exit-on-stdin-close   桌面外壳模式：stdout 首行一行 JSON，stdin 关闭即退出
-nyra gw <sessions|send|view|approve|rewind|info|schedule>   连正在跑的 gateway 当客户端
+nyra gw <sessions|send|view|approve|rewind|info|schedule|mode-requests|mode-confirm>   连正在跑的 gateway 当客户端
+nyra update-check   手动检查一次新版本（默认关闭：须先在设置里开启更新检查，否则不联网）
 nyra --compact <会话 ID>       压缩指定会话后退出
 REPL：/context 查看上下文占用；/compact focus <关键词> 按重点压缩会话（详见 docs/context.md）
 nyra --resume <会话 ID>        继续指定会话
@@ -343,7 +345,8 @@ nyra --list-sessions           list past sessions
 nyra --list-mcp                list configured MCP servers and presets
 nyra ui [--host 127.0.0.1] [--port 8765] [--pair] [--open]   start the gateway web UI
 nyra ui --print-url-json --exit-on-stdin-close   desktop shell mode: one JSON line on stdout, exits when stdin closes
-nyra gw <sessions|send|view|approve|rewind|info|schedule>   talk to a running gateway as a client
+nyra gw <sessions|send|view|approve|rewind|info|schedule|mode-requests|mode-confirm>   talk to a running gateway as a client
+nyra update-check   check for a new version once (off by default: enable update checks in settings first, otherwise no network)
 nyra --compact <session id>    compact a session and exit
 REPL: /context shows context usage; /compact focus <keyword> compacts around a topic (see docs/context.md)
 nyra --resume <session id>     continue a session
@@ -1227,12 +1230,51 @@ async function handleGw(argv: string[]): Promise<number> {
       else for (const t of data.tasks) process.stdout.write(`- ${t.name}${t.enabled === false ? "（已停用）" : ""}\n`);
       return 0;
     }
-    process.stderr.write("用法：nyra gw <sessions|send|view|approve|rewind|info|schedule>\n");
+    if (action === "mode-requests") {
+      const data = await client.modeRequests();
+      if (!data.requests.length) process.stdout.write("暂无待确认的完全模式请求\n");
+      else for (const r of data.requests) process.stdout.write(`- ${r.id}（${r.device}，${r.expires_at} 前有效）\n`);
+      return 0;
+    }
+    if (action === "mode-confirm") {
+      const id = rest[1];
+      if (!id) { process.stderr.write("用法：nyra gw mode-confirm <请求 id> [--deny]\n"); return 2; }
+      const deny = argv.includes("--deny");
+      const out = await client.modeConfirm(id, !deny) as { mode?: string; rejected?: boolean };
+      if (out.rejected) process.stdout.write(`已拒绝 ${id}\n`);
+      else process.stdout.write(`已批准 ${id}，模式：${out.mode ?? "full"}\n`);
+      return 0;
+    }
+    process.stderr.write("用法：nyra gw <sessions|send|view|approve|rewind|info|schedule|mode-requests|mode-confirm>\n");
     return 2;
   } catch (err) {
     process.stderr.write(`gateway 调用失败：${err instanceof Error ? err.message : String(err)}\n`);
     return 1;
   }
+}
+
+// ---- 子命令：update-check ----
+async function handleUpdateCheck(home: string): Promise<number> {
+  const cfg = loadConfig(home);
+  if (!isUpdateCheckEnabled(cfg)) {
+    process.stdout.write("更新检查未开启（默认关闭）。在设置里打开更新检查开关，或在 config.json 里把 update_check_enabled 设为 true，再跑 nyra update-check。\n");
+    return 0;
+  }
+  const result = await checkForUpdates({ enabled: true, currentVersion: VERSION });
+  if (!result.checked) {
+    process.stdout.write("更新检查未执行。\n");
+    return 0;
+  }
+  if (result.latestVersion === null) {
+    process.stdout.write(`检查失败：${result.reason ?? "未知错误"}\n`);
+    return 1;
+  }
+  if (result.updateAvailable) {
+    process.stdout.write(`有新版本：${result.latestVersion}（当前 ${result.currentVersion}）。${result.url ?? ""}\n`);
+  } else {
+    process.stdout.write(`已是最新：${result.currentVersion}\n`);
+  }
+  return 0;
 }
 
 // ---- 子命令：schedule ----
@@ -7800,6 +7842,9 @@ export async function main(argv: string[]): Promise<number> {
   }
   if (args.subcommand === "gw") {
     return handleGw(args.subArgs ?? []);
+  }
+  if (args.subcommand === "update-check") {
+    return handleUpdateCheck(home);
   }
   if (args.subcommand === "permissions") return handlePermissions(args.subArgs ?? [], home);
   if (args.subcommand === "eigenflux") return handleEigenflux(args.subArgs ?? [], home);

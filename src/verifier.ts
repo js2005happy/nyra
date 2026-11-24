@@ -195,7 +195,7 @@ function containsMarker(text: string, markers: string[]): string | null {
 
 function isUiFile(f: string): boolean {
   const p = f.replace(/\\/g, "/");
-  if (p.startsWith("desktop/ui/") || p.startsWith("docs/design/")) return true;
+  if (p.startsWith("desktop/ui/")) return true;
   const dot = p.lastIndexOf(".");
   const ext = dot >= 0 ? p.slice(dot) : "";
   return UI_EXTS.has(ext);

@@ -210,6 +210,7 @@ export const MOBILE_V2_HTML = `<!doctype html><html lang="en"><head><meta charse
 <button id="pair-btn" class="btn pri full" style="height:52px;margin-bottom:8px" data-i="m.pair.btn"></button>
 <button id="pair-cloud" class="btn ghost full" style="height:48px">${IC.cloud}<span data-i="m.pair.useAccount"></span><span class="tag soon" data-i="m.soon"></span></button>
 <p data-i="m.pair.foot" class="note" style="padding:10px 2px 0"></p>
+<p id="pair-plain-note" class="note hidden" style="padding:6px 2px 0"></p>
 </div></section>
 <section id="threads-view" class="view tabview hidden">
 ${head("m.tab.threads", `<button id="search-btn" class="ib" data-ia="m.search">${IC.search}</button>`, "conn-threads")}
