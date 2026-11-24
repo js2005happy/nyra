@@ -316,6 +316,16 @@ export interface ToolContext {
   /** 同上：例行里的哪一步（工作流步骤 id）。摘要预授权按步钉死，
    * 摘要对不上时只拦这一步，不拦别的步骤。 */
   routineStepId?: string | null;
+  /**
+   * O1：策略网关用的调用方身份与触发方（未设时 actor 取 soulAgent、
+   * initiator 取 routineId 在则 routine、否则 person；page 由浏览器
+   * 动作的调用方填）。只读字段，不持久化。
+   */
+  actorId?: string;
+  actorRole?: string;
+  initiatorKind?: string;
+  pageUrl?: string;
+  pageHost?: string;
   delegateFn?: ((task: string, maxTurns?: number, opts?: DelegateOptions) => Promise<string>) | null;
   /** 缺口 3a：并行委派入口（Agent.delegateParallel 的格式化版，返回汇总文本）。 */
   delegateParallelFn?: ((tasks: import("./parallelDelegate.ts").ParallelTaskSpec[], opts?: { maxConcurrency?: number; timeoutMs?: number; merge?: boolean; mergeTitle?: string; mergeFormat?: "plan" | "report" | "file" }) => Promise<string>) | null;
@@ -559,6 +569,12 @@ export const TOOL_SCHEMAS: Record<string, unknown>[] = [
   // 与 nyra usage 同一份数；agent 不给时查当前 Soul agent 的。
   schema("usage", "查自己还剩多少用量：当日/当月已花多少、每 Bot 上限是多少、还剩多少、到 80% 了没有、是不是已超限停了。只读，不需审批；agent 不给时查当前机器人自己的；数字来自用量账本与分层判定，未归属/未计价的部分不摊到任何 Bot",
     { agent: { type: "string", description: "要查的 Bot（agent id，如不填查当前机器人自己的）" } }),
+  // O7：生成式 UI——只读渲染白名单组件（table / card / list / code / chart-bar）。
+  // props 只接受字面数据，不拼 HTML、不执行代码、不做新的工具调用；返回一段可读文本
+  //（CLI 直接看这段文本，网页端按组件名另行渲染）。组件不存在、没发布、被该 Bot 屏蔽、
+  // props 不合规时直接报错，不编内容。
+  schema("render_component", "把结构化内容渲染成一个只读组件给用户看：table 表格、card 卡片、list 列表、code 代码块、chart-bar 柱状图。只接受白名单里的组件名与字面 props；写操作不要用这个工具，仍走审批",
+    { component: { type: "string", description: "组件名：table / card / list / code / chart-bar" }, props: { type: "object", description: "组件属性（字面数据）：table 要 columns 与 rows；card 要 title；list 要 items；code 要 code；chart-bar 要 labels 与 values" } }, ["component", "props"]),
   // 缺口 2：删除长期记忆（memory_forget 与 memory_delete 同义，两个名字都留着：
   // 别家 MCP 叫 forget_session，用户口语也常说“忘记这条”）。与 write_file
   // 同级审批；删错 owner 的不删、进行中会话的记忆拒绝删除；删除本身记进证据链。
@@ -1205,6 +1221,52 @@ export async function checkApproval(
     ? `[${escalationLabel}：风险 ${escalated.riskScore} 分，${escalated.reason}——本次须人工确认]`
     : null;
 
+  // O1：CEL 风格策略网关——在权限规则之前拦：deny 直接拒绝（命中记事件
+  // 与审计），ask 强制走人工审批链（不走 allow 快路与幂等短路），allow 与
+  // 权限规则的 allow 同款处理（受保护路径仍须每次审批）。dry-run 只记不拦。
+  // 位置在硬门（红线/Soul/信任阶梯/团队）之后：硬拒绝仍优先；无 home 时
+  // 不读账本，行为与以前一致。
+  let policyDecision: { decision: "allow" | "ask" | "deny" | null; rule: { id: string; when: string; description: string } | null } | null = null;
+  let policyForceAsk = false;
+  if (ctx.home) {
+    const policy = await import("./policy.ts");
+    const mcpParts = toolName.startsWith("mcp__") ? toolName.slice(5).split("__") : null;
+    const result = policy.evaluatePolicyCall(ctx.home, {
+      tool: toolName,
+      target: opts?.command ?? opts?.fileTarget ?? opts?.cwd ?? "",
+      botId: ctx.soulAgent ?? "default",
+      actorId: ctx.actorId,
+      actorRole: ctx.actorRole,
+      filePath: opts?.fileTarget,
+      initiatorKind: ctx.initiatorKind ?? (ctx.routineId ? "routine" : "person"),
+      command: opts?.command,
+      pageUrl: ctx.pageUrl,
+      pageHost: ctx.pageHost,
+      mcpServer: mcpParts?.[0] ?? "",
+      mcpTool: mcpParts ? mcpParts.slice(1).join("__") : "",
+      mode: ctx.mode,
+    });
+    policyDecision = result;
+    if (result.decision !== null && result.rule) {
+      const ruleLabel = result.rule.description || result.rule.when;
+      if (result.dryRun) {
+        try { ctx.onEvent?.("policy_dry_run", { tool: toolName, rule: result.rule.id, would: result.decision }); } catch { /* ignore */ }
+        try { policy.appendPolicyAudit(ctx.home, { kind: "dry_run", tool: toolName, rule: result.rule.id, would: result.decision }); } catch { /* ignore */ }
+      } else if (result.decision === "deny") {
+        observeApproval(ctx, toolName, false);
+        try { ctx.onEvent?.("policy_denied", { tool: toolName, rule: result.rule.id, action: "deny" }); } catch { /* ignore */ }
+        try { policy.appendPolicyAudit(ctx.home, { kind: "denied", tool: toolName, rule: result.rule.id, when: result.rule.when }); } catch { /* ignore */ }
+        throw new ToolError(`策略网关拒绝了 ${toolName}：规则 ${result.rule.id}（${ruleLabel}）`);
+      } else if (result.decision === "ask") {
+        policyForceAsk = true;
+        try { ctx.onEvent?.("policy_ask", { tool: toolName, rule: result.rule.id }); } catch { /* ignore */ }
+        try { policy.appendPolicyAudit(ctx.home, { kind: "asked", tool: toolName, rule: result.rule.id }); } catch { /* ignore */ }
+      } else if (result.decision === "allow") {
+        try { policy.appendPolicyAudit(ctx.home, { kind: "allowed", tool: toolName, rule: result.rule.id }); } catch { /* ignore */ }
+      }
+    }
+  }
+
   // P0-5：权限规则语言。deny > ask > allow，空规则集时行为与之前完全一致。
   // 注意 readonly 的拒绝在上面已经发生——规则**不能**放开只读模式，这是刻意的硬约束。
   const decision = evaluate(permissionRulesFor(ctx.home), {
@@ -1216,7 +1278,7 @@ export async function checkApproval(
     observeApproval(ctx, toolName, false);
     throw new ToolError(`已被权限规则拒绝：${decision.rule.raw}`);
   }
-  const preApproved = decision?.action === "allow";
+  const preApproved = decision?.action === "allow" || policyDecision?.decision === "allow";
   // 受保护路径（AGENTS.md、配置、账本类）每次写都必须重新审批：
   // 权限规则的 allow、网页端“始终允许”、终端“始终允许”三条记住的放行
   // 在这里全部失效（第四份审计 P0）。注意幂等重试不在此列：重试是同一
@@ -1227,7 +1289,7 @@ export async function checkApproval(
         ? isProtectedWritePath(relative(resolve(ctx.workdir), resolve(String(opts.fileTarget))))
         : isProtectedWriteTarget(ctx.workdir, String(opts.fileTarget))
       : false;
-  if (preApproved && !escalated && !protectedFileTarget) {
+  if (preApproved && !escalated && !policyForceAsk && !protectedFileTarget) {
     // 规则显式 allow：跳过弹窗，但仍然记录一次审批事件，便于审计。
     observeApproval(ctx, toolName, true);
     return;
@@ -1239,7 +1301,7 @@ export async function checkApproval(
   // 只读拒绝与权限规则 deny 之后：重试仍受这两条硬控制约束，跳过的只是
   // 人工弹窗 / approveFn 这一层。judge 转人工时不走这条短路：首次调用被转
   // 人工还没批过，重试不能当成“已批”直接执行。
-  if (ctx.idempotentRetry === true && !escalated) return;
+  if (ctx.idempotentRetry === true && !escalated && !policyForceAsk) return;
 
   // Pi Bot 借鉴第 1 条：纯脚本 + 摘要预授权快路径——只在例行上下文里
   // 生效（ctx.routineId 已设，工作流步骤）；聊天/单次运行不设 routineId，
@@ -1248,7 +1310,7 @@ export async function checkApproval(
   // 变了则直接拒绝（fail-closed：非交互例行里没人可问，停下比悄悄跑
   // 改过的脚本安全）。判定结果走 ctx.onEvent 进证据链（script_pure /
   // script_preauth_used），预授权的使用与拒绝另记脚本审计。
-  if (toolName === "shell" && opts?.command !== undefined && ctx.routineId && !escalated) {
+  if (toolName === "shell" && opts?.command !== undefined && ctx.routineId && !escalated && !policyForceAsk) {
     const fast = checkScriptFastPath({
       home: ctx.home ?? null,
       routineId: ctx.routineId,
@@ -1277,7 +1339,7 @@ export async function checkApproval(
     // 已记下的“允许并不再询问”规则：匹配时会重新做简单命令检查，
     // `; && | $() 反引号 换行` 一律匹配不上（见 approvalRules.prefixMatches）。
     const ruleHit = findApprovalRule(ctx, toolName, opts?.command);
-    if (ruleHit && !escalated && !protectedFileTarget) {
+    if (ruleHit && !escalated && !policyForceAsk && !protectedFileTarget) {
       observeApproval(ctx, toolName, true);
       try { ctx.onEvent?.("approval_rule_applied", { tool: toolName, rule: ruleHit.label, scope: ruleHit.scope, id: ruleHit.id }); } catch { /* ignore */ }
       return;
@@ -1290,11 +1352,13 @@ export async function checkApproval(
       ? JSON.stringify([opts.command, opts.cwd, approvalRoot(ctx), opts.timeout ?? 60, backendKey(ctx.backend ?? null)])
       : null;
     // judge/启发式转人工时把风险分与理由写进审批摘要：人批的时候能看到为什么被转过来。
-    const approvalSummary = escalationNote ? `${summary}\n${escalationNote}` : summary;
+    const approvalSummary = policyForceAsk && policyDecision?.rule
+      ? `${summary}\n[策略网关：规则 ${policyDecision.rule.id} 要求人工确认]${escalationNote ? `\n${escalationNote}` : ""}`
+      : escalationNote ? `${summary}\n${escalationNote}` : summary;
 
     if (ctx.approveFn) {
       const grant = fileScope ?? shellScope;
-      if (grant !== null && ctx.approveFnGrants?.has(grant) && !escalated && !protectedFileTarget) return;
+      if (grant !== null && ctx.approveFnGrants?.has(grant) && !escalated && !policyForceAsk && !protectedFileTarget) return;
       observeApproval(ctx, toolName, null);
       // 第 3 阶段 smart approvals 需要命令原文做静态规则与评审：
       // 把 opts 原样透传给 approveFn（旧调用方忽略第 3 个参数）。
@@ -1313,8 +1377,8 @@ export async function checkApproval(
       if (approved === APPROVE_ALWAYS && grant !== null && !protectedFileTarget) ctx.approveFnGrants?.add(grant);
       return;
     }
-    if (fileScope !== null && ctx.approvedFileTools?.has(fileScope) && !escalated && !protectedFileTarget) return;
-    if (shellScope !== null && ctx.approvedShellCommands?.has(shellScope) && !escalated) return;
+    if (fileScope !== null && ctx.approvedFileTools?.has(fileScope) && !escalated && !policyForceAsk && !protectedFileTarget) return;
+    if (shellScope !== null && ctx.approvedShellCommands?.has(shellScope) && !escalated && !policyForceAsk) return;
 
     console.log(approvalSummary);
     observeApproval(ctx, toolName, null);
@@ -2849,6 +2913,26 @@ async function toolUsage(ctx: ToolContext, args: Record<string, unknown>): Promi
   }
 }
 
+// O7：生成式 UI——只读渲染白名单组件。动态 import（与 toolUsage 同款原因：
+// 静态 import 会在 tools.ts 初始化完之前跑对方的顶层代码、直接炸掉
+// TOOL_SCHEMAS 的 TDZ）。校验失败返回给模型的错误文本，不崩运行；
+// 校验通过时经 ctx.onEvent 发 component_rendered（AG-UI 层转 CUSTOM 事件推
+// 给网页端），工具返回值本身是 CLI 可直接看的文本 fallback。
+async function toolRenderComponent(ctx: ToolContext, args: Record<string, unknown>): Promise<string> {
+  const { appendComponentAudit, renderComponentText, validateRenderRequest } = await import("./components.ts");
+  const home = ctx.home ?? resolveHome();
+  const botId = ctx.soulAgent ?? "default";
+  try {
+    const { spec, props } = validateRenderRequest(home, botId, args.component, args.props);
+    const text = renderComponentText(spec.name, props);
+    appendComponentAudit(home, { action: "component_rendered", component: spec.name, bot: botId });
+    try { ctx.onEvent?.("component_rendered", { component: spec.name, bot: botId, props }); } catch { /* ignore */ }
+    return text;
+  } catch (err: unknown) {
+    return `错误：${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
 async function toolMemoryForget(ctx: ToolContext, toolName: string, args: Record<string, unknown>): Promise<string> {
   const ids = Array.isArray(args.ids)
     ? (args.ids as unknown[]).map((v) => String(v)).filter(Boolean)
@@ -3818,6 +3902,7 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
       case "session_search": return await toolSessionSearch(ctx, args);
       case "editor_context": return await toolEditorContext(ctx, args);
       case "usage": return await toolUsage(ctx, args);
+      case "render_component": return await toolRenderComponent(ctx, args);
       case "memory_forget": case "memory_delete": return await toolMemoryForget(ctx, name, args);
       case "gmail_search": return await toolGmailSearch(ctx, String(args.query), typeof args.limit === "number" ? args.limit : undefined, typeof args.page_token === "string" ? args.page_token : undefined);
       case "gmail_read": return await toolGmailRead(ctx, String(args.id));
@@ -3913,7 +3998,7 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
 /** 可安全直接重试的只读工具（无副作用）。截图类工具不在内：每次执行都会在本地多存一个截图文件。 */
 export const READONLY_TOOLS = new Set([
   "read_file", "list_dir", "grep_search", "git_status",
-  "web_fetch", "web_search", "read_skill", "memory_search", "knowledge_search", "session_search", "editor_context", "usage",
+  "web_fetch", "web_search", "read_skill", "memory_search", "knowledge_search", "session_search", "editor_context", "usage", "render_component",
   "poppy_discover", "poppy_identity_check", "poppy_permission_check",
   "lsp_diagnostics", "lsp_symbols",
   // 缺口 16：describe_image 只读（不写文件、不改状态）；每次执行都是一次计费

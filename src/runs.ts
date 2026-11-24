@@ -28,12 +28,18 @@ resumed: ["interrupted_tool_calls", "turn"],
 mode_override: ["from", "to"],
 verify_started: ["command"],
 verify_result: ["exit_code", "passed", "attempt", "tests_modified"],
-run_started: [],
+run_started: ["initiator"],
 turn: ["turn"],
 tool_start: ["id", "name", "args_hash"],
 tool_result: ["id", "name", "ok", "args_hash"],
 approval_wait: ["tool"],
 approval_done: ["tool", "approved"],
+// O1：策略网关命中进运行证据链（deny 记规则与动作，ask/dry-run 记规则）。
+policy_denied: ["tool", "rule", "action"],
+policy_ask: ["tool", "rule"],
+policy_dry_run: ["tool", "rule", "would"],
+// O6：例行连续失败满 10 次自动关闭（或间隔低于下限被停用），镜像进那次运行。
+routine_auto_disabled: ["workflow", "trigger_index", "failures"],
 // 缺口 9：影子快照与联合回滚进证据链——snapshot 记哪次批准写操作前拍了
 // 哪个快照（什么后端、拍了哪几个文件）；restore 记回滚到哪个检查点、谁触
 // 发的、恢复了什么文件与会话范围（files 为逗号分隔的相对路径）。
@@ -392,6 +398,13 @@ org_deleted: ["org_id", "by"],
 org_member_added: ["org_id", "account_id", "role", "by"],
 org_member_removed: ["org_id", "account_id", "by"],
 org_role_changed: ["org_id", "account_id", "role", "by"],
+org_sso_changed: ["org_id", "require_sso", "sso_provider", "by"],
+learning_proposed: ["learning_id", "kind"],
+learning_approved: ["learning_id", "kind"],
+learning_rejected: ["learning_id", "kind"],
+learning_published: ["learning_id", "kind"],
+learning_shared: ["learning_id", "kind", "org_id"],
+component_rendered: ["component", "bot"],
 // 缺口 49 第二批：共享 Bot / 租户隔离 / 组织内私有目录进证据链——
 // 共享与写授权、教学待审、隔离违反（越权访问被拦下）、工作区绑定、
 // 跨租户读授权、私有目录发布与安装。只记 id 与动作，不记内容原文与绝对路径。
@@ -982,6 +995,8 @@ workdir: string;
 mode: string;
 /** 缺口 8：无人值守巡查（daemon 巡查）；为 true 时写操作在工具层直接拒绝。 */
 unattended?: boolean;
+/** O2：触发方（person|routine|cron|webhook|handoff|group|gateway；旧运行没有该字段）。 */
+initiator?: string;
 status: string;
 turn: number;
 max_turns: number;
@@ -1057,7 +1072,7 @@ if (typeof state.status!== "string" ||!RUN_STATUSES.has(state.status)) {
 throw new Error("运行状态无效");
 }
 const required = new Set(["session_id", "task", "workdir", "mode", "turn", "max_turns", "created_at", "updated_at", "verify_cmd", "verify_result", "changed_files", "error", "pid", "host"]);
-const allowed = new Set([...required, "schema_version", "run_id", "status", "pending_approval", "file_hashes", "usage_summary", "unattended", "contract_id", "contract_hash", "contract_verdict", "contract_passed", "contract_total"]);
+const allowed = new Set([...required, "schema_version", "run_id", "status", "pending_approval", "file_hashes", "usage_summary", "unattended", "initiator", "contract_id", "contract_hash", "contract_verdict", "contract_passed", "contract_total"]);
 const keys = Object.keys(state);
 if (keys.some((k) =>!allowed.has(k)) || ![...required].every((k) => keys.includes(k)) ||!Array.isArray(state.changed_files)) {
 throw new Error("运行记录字段无效");
@@ -1080,6 +1095,7 @@ if (!strKeys.every((k) => typeof state[k] === "string") ||
 typeof (state.usage_summary as Record<string, unknown>).cost_status !== "string" && (state.usage_summary as Record<string, unknown>).cost_status !== null)) ||
 (state.pending_approval!== undefined && state.pending_approval!== null && (typeof state.pending_approval!== "object" || Array.isArray(state.pending_approval))) ||
 (state.unattended!== undefined && typeof state.unattended!== "boolean") ||
+(state.initiator!== undefined && typeof state.initiator!== "string") ||
 (state.contract_id!== undefined && state.contract_id!== null && typeof state.contract_id!== "string") ||
 (state.contract_hash!== undefined && state.contract_hash!== null && typeof state.contract_hash!== "string") ||
 (state.contract_verdict!== undefined && state.contract_verdict!== null && typeof state.contract_verdict!== "string") ||
@@ -1112,7 +1128,7 @@ try { rmSync(tmp, { force: true});} catch { /* ignore */}
 }
 }
 
-create(task: string, sessionId: string, workdir: string, mode: string, maxTurns: number, status = "running", verifyCmd?: string | null, extra?: { unattended?: boolean }): RunState {
+create(task: string, sessionId: string, workdir: string, mode: string, maxTurns: number, status = "running", verifyCmd?: string | null, extra?: { unattended?: boolean; initiator?: string }): RunState {
 if (!RUN_STATUSES.has(status)) throw new Error("运行状态无效");
 if (existsSync(this.baseDir) && lstatSync(this.baseDir).isSymbolicLink()) throw new Error("运行目录不安全");
 mkdirSync(this.baseDir, { recursive: true, mode: 0o700});
@@ -1137,13 +1153,14 @@ const state: RunState = {
 schema_version: 1, run_id: runId!, session_id: sessionId,
 task: redact(task)?? "", workdir: String(workdir), mode, status,
 unattended: extra?.unattended ?? false,
+initiator: extra?.initiator ?? "person",
 turn: 0, max_turns: maxTurns, created_at: nowIso(), updated_at: nowIso(),
 verify_cmd: verifyCmd?? null, verify_result: null, changed_files: [], file_hashes: {}, usage_summary: null, error: null,
 contract_id: null, contract_hash: null, contract_verdict: null, contract_passed: null, contract_total: null,
 pid: process.pid, host: hostname(),
 };
 this.write(state);
-this.appendEvent(runId!, "run_started");
+this.appendEvent(runId!, "run_started", { initiator: state.initiator });
 return state;
 }
 
@@ -1260,6 +1277,8 @@ workdir: string;
 mode: string;
 maxTurns: number;
 turn: number;
+/** O2：本次运行的触发方（Agent 提供；未提供时按 person 记）。 */
+initiator?: string;
 /** 缺口 20：用量快照与最近成本估算（Agent 真实提供；测试替身可不提供）。 */
 usage?: { snapshot(): { calls: number; prompt_tokens: number | null; completion_tokens: number | null; total_tokens: number | null } };
 lastCost?: { status: string; spentUsd: number | null } | null;
@@ -1324,7 +1343,7 @@ this.verifyRetries = opts?.verifyRetries?? DEFAULT_VERIFY_RETRIES;
 agent.turn = this.turn;
 this.position = agent.checkpoints? agent.checkpoints.recordPosition(): 0;
 if (!opts?.state) {
-this.runId = store.create(task, agent.sessionId, agent.workdir, agent.mode, agent.maxTurns, "running", opts?.verifyCmd?? null).run_id;
+this.runId = store.create(task, agent.sessionId, agent.workdir, agent.mode, agent.maxTurns, "running", opts?.verifyCmd?? null, { initiator: agent.initiator ?? "person" }).run_id;
 if (opts?.verifySkipReason) {
 store.update(this.runId, { verify_result: { skip_reason: opts.verifySkipReason}});
 }

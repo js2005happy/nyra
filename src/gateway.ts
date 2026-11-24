@@ -90,6 +90,8 @@ import { loadMcpServers } from "./mcp.ts";
 import { saveConfig, configPath, effectiveModelFor } from "./config.ts";
 import { listMarketplacePublic } from "./marketplace.ts";
 import { listDrafts } from "./skillDrafts.ts";
+import { listLearning, type LearningKind, type LearningStatus } from "./learning.ts";
+import { exportAudit } from "./costCaps.ts";
 import {
   AccountStore, AccountSessionStore, MagicLinkStore,
   loginWithMagicLink, AccountError, type Account,
@@ -1109,7 +1111,7 @@ export class Gateway {
         const provider = this.provider();
         run.agent = new Agent(provider, {
           workdir: this.workdir, mode: this.mode, maxTurns: this.maxTurns ?? 20,
-          sessionId, interactive: true,
+          sessionId, interactive: true, initiator: "gateway",
           messages: loadSession(sessionId, this.home),
           // 总指挥团队分派（POST /api/teams/:id/dispatch）：Soul = 参谋长、团队模式 chief 角色（工具只剩
           // delegate / delegate_parallel，见 team.ts ORCHESTRATOR_TOOLS）；成员的对外动作照常走下面的审批桥。
@@ -1384,7 +1386,7 @@ export class Gateway {
         const results = await runDueTasks(data, async (task) => {
           const agent = new Agent(this.primaryProvider(), {
             workdir: this.workdir, mode: this.mode, maxTurns: this.maxTurns ?? 20,
-            sessionId: `schedule-${task.name}`, interactive: false, home: this.home,
+            sessionId: `schedule-${task.name}`, interactive: false, home: this.home, initiator: "cron",
             // 缺口 30：定时任务是无人值守入口，更要受成本硬顶约束。
             ...this.costOptions(),
             mcpManager: null,
@@ -2188,6 +2190,78 @@ export class Gateway {
         }));
         this.sendJson(res, 200, { drafts });
       } catch (err) { this.sendError(res, 400, `技能草稿读取失败：${err instanceof Error ? err.message : String(err)}`); }
+      return;
+    }
+    // O5：学习队列只读面（供桌面端/手机 PWA 的学习页消费；只读，不含批准操作——
+    // 批准与发布走 CLI；owner 默认 default，可按 ?owner= 账号 id 看别人的队列，
+    // 网关本身只认机主 token，跨账号查看只在同一台机主电脑上发生）。
+    if (method === "GET" && path === "/api/learning") {
+      try {
+        const owner = query.get("owner") ?? "default";
+        const items = listLearning(this.home, owner, {
+          ...(query.get("status") ? { status: query.get("status") as LearningStatus } : {}),
+          ...(query.get("kind") ? { kind: query.get("kind") as LearningKind } : {}),
+          ...(query.get("shared") === "1" ? { shared: true } : {}),
+        }).map((p) => ({
+          id: p.id,
+          kind: p.kind,
+          owner: p.owner,
+          title: p.title,
+          summary: p.summary,
+          source: p.source,
+          evidence: p.evidence,
+          ref: p.ref,
+          status: p.status,
+          created_at: p.created_at,
+          decided_at: p.decided_at,
+          decision_reason: p.decision_reason,
+          published_ref: p.published_ref,
+          shared_to: p.shared_to,
+          shared_at: p.shared_at,
+        }));
+        this.sendJson(res, 200, { owner, proposals: items });
+      } catch (err) { this.sendError(res, 400, `学习队列读取失败：${err instanceof Error ? err.message : String(err)}`); }
+      return;
+    }
+    // O2：审计导出 API（只读）。与 CLI 的 `nyra governance audit export` 同一份
+    // 导出（JSONL + 哈希链），只是这里返回解析后的 JSON；审计导出本身照常记
+    // audit_exported。只限本机机主（已配对设备也不给）。
+    if (method === "GET" && path === "/api/audit/export") {
+      if (!isOwner) { this.sendError(res, 403, "审计导出只能在电脑上查看"); return; }
+      try {
+        const format = query.get("format") ?? "json";
+        if (format !== "json" && format !== "jsonl") { this.sendError(res, 400, "format 只支持 json 或 jsonl"); return; }
+        const limitRaw = query.get("limit") ?? "5000";
+        const limit = Number(limitRaw);
+        if (!Number.isInteger(limit) || limit < 1 || limit > 50000) { this.sendError(res, 400, "limit 须是 1–50000 的整数"); return; }
+        const sourcesRaw = query.get("sources") ?? "";
+        const result = exportAudit(this.home, {
+          from: query.get("from") ?? undefined,
+          to: query.get("to") ?? undefined,
+          sources: sourcesRaw ? sourcesRaw.split(",").map((s) => s.trim()).filter(Boolean) : undefined,
+          actor: query.get("actor") ?? undefined,
+          type: query.get("type") ?? undefined,
+          scope: query.get("scope") ?? undefined,
+          initiator: query.get("initiator") ?? undefined,
+        });
+        if (result.lines > limit) {
+          this.sendError(res, 400, `记录太多（${result.lines} 条，超过 limit ${limit}）：请加 from/to/source/actor/type/scope/initiator 过滤，或用 nyra governance audit export 导出到文件`);
+          return;
+        }
+        if (format === "jsonl") {
+          res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" });
+          res.end(result.text);
+          return;
+        }
+        const records = result.text.split("\n").filter(Boolean).map((line) => JSON.parse(line) as Record<string, unknown>);
+        this.sendJson(res, 200, {
+          ok: true,
+          lines: result.lines,
+          out_hash: result.outHash,
+          header_hash: result.headerHash,
+          records,
+        });
+      } catch (err) { this.sendError(res, 400, `审计导出失败：${err instanceof Error ? err.message : String(err)}`); }
       return;
     }
     if (method === "GET" && reviewGetMatch) {

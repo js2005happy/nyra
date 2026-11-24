@@ -24,6 +24,7 @@
 import { closeSync, copyFileSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { randomBytes } from "node:crypto";
+import { appendCronIncident, cronMinIntervalMinutes, MAX_CONSECUTIVE_FAILURES, MIN_CRON_INTERVAL_MINUTES } from "./cronMaturity.ts";
 
 export class ThreadError extends Error {
   constructor(message: string) { super(message); this.name = "ThreadError"; }
@@ -63,6 +64,10 @@ export interface ThreadCron {
   workflow: string;
   /** 上次触发的分钟（ISO，截到分钟），去重用。 */
   last_fired?: string;
+  /** O6：连续失败次数（成功清零；满 10 次自动停用，见 disabled）。 */
+  consecutive_failures?: number;
+  /** O6：已自动停用（连续失败满 10 次），不再触发，须手动恢复。 */
+  disabled?: boolean;
 }
 
 export interface Thread {
@@ -339,6 +344,12 @@ function validateCronShape(cron: string): void {
   if (parts.length !== 5 || parts.some((p) => !CRON_SHAPE_RE.test(p))) {
     throw new ThreadError("cron 须是 5 字段（分 时 日 月 周），只允许数字、*、,、-、/");
   }
+  // O6：例行最小间隔 15 分钟（与工作流触发器同款下限；太密的轮询既烧 token
+  // 又容易把失败放大成灾难）。
+  const interval = cronMinIntervalMinutes(cron.trim());
+  if (interval !== null && interval < MIN_CRON_INTERVAL_MINUTES) {
+    throw new ThreadError(`cron 间隔只有 ${interval} 分钟，低于例行下限 ${MIN_CRON_INTERVAL_MINUTES} 分钟`);
+  }
 }
 
 export function addThreadCron(home: string, id: string, cron: string, workflow: string): ThreadCron {
@@ -354,6 +365,25 @@ export function addThreadCron(home: string, id: string, cron: string, workflow: 
   touch(t);
   saveThreads(home, data);
   return binding;
+}
+
+/**
+ * O6：重新启用一条被自动关闭的线程 cron（事故账记 re_enabled，留审计痕迹）。
+ * 返回 false 表示它本来就没停用。
+ */
+export function reEnableThreadCron(home: string, id: string, cronId: string): boolean {
+  const data = loadThreads(home);
+  const t = data.threads.find((x) => x.id === id);
+  const c = t?.crons.find((x) => x.id === cronId);
+  if (!c || !c.disabled) return false;
+  delete c.disabled;
+  delete c.consecutive_failures;
+  saveThreads(home, data);
+  appendCronIncident(home, {
+    kind: "re_enabled", source: "thread", workflow: c.workflow, thread_id: id, cron_id: cronId,
+    note: "机主手动恢复（nyra thread cron-re-enable）",
+  });
+  return true;
 }
 
 export function removeThreadCron(home: string, id: string, cronId: string): boolean {
@@ -489,6 +519,8 @@ export async function fireDueThreadCrons(
     if (fired.length >= MAX_CRONS_PER_ROUND) break;
     for (const c of t.crons) {
       if (fired.length >= MAX_CRONS_PER_ROUND) break;
+      // O6：已自动停用的不跑（漏跑也不记）。
+      if (c.disabled) continue;
       const dueNow = cronMatches(c.cron, now);
       const prevLast = c.last_fired;
       // 漏跑：上次记过的分钟之后、当前分钟之前、窗口内的匹配分钟。
@@ -591,5 +623,39 @@ async function fireOneThreadCron(
       run_id: runId, error: (error ?? "").slice(0, 200),
     });
   }
+  // O6：记一次触发结果——成功清零连败，失败满 10 次自动停用（先记事故 +
+  // 运行事件再停）。状态存在 threads.json 里，重新读一份改。
+  try {
+    const data = loadThreads(home);
+    const live = data.threads.find((x) => x.id === t.id);
+    const liveCron = live?.crons.find((x) => x.id === c.id);
+    if (liveCron) {
+      if (status === "ok") {
+        if (liveCron.consecutive_failures) {
+          delete liveCron.consecutive_failures;
+          saveThreads(home, data);
+        }
+      } else {
+        const next = (liveCron.consecutive_failures ?? 0) + 1;
+        if (next >= MAX_CONSECUTIVE_FAILURES) {
+          liveCron.disabled = true;
+          delete liveCron.consecutive_failures;
+          saveThreads(home, data);
+          appendCronIncident(home, {
+            kind: "auto_disabled", source: "thread", workflow: c.workflow, thread_id: t.id, cron_id: c.id,
+            consecutive_failures: next, error: (error ?? "").slice(0, 200),
+            note: `连续失败 ${next} 次，已自动关闭（nyra thread cron-re-enable ${t.id} ${c.id} 恢复）`,
+            run_id: runId,
+          });
+          if (runId) {
+            await mirrorRunEvent(home, runId, "routine_auto_disabled", { workflow: c.workflow, trigger_index: -1, failures: next });
+          }
+        } else {
+          liveCron.consecutive_failures = next;
+          saveThreads(home, data);
+        }
+      }
+    }
+  } catch { /* 记账失败不破坏触发结果 */ }
   return { threadId: t.id, cronId: c.id, workflow: c.workflow, runId, status, ...(error ? { error } : {}) };
 }

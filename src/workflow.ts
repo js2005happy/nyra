@@ -94,6 +94,7 @@ import {
   InterruptError,
 } from "./interrupts.ts";
 import { RunStore } from "./runs.ts";
+import { cronMinIntervalMinutes, MAX_CONSECUTIVE_FAILURES, MAX_ENABLED_ROUTINES, MIN_CRON_INTERVAL_MINUTES } from "./cronMaturity.ts";
 import { enqueueReviewItem, getReviewItem } from "./reviewQueue.ts";
 import { UsageLedger, monthKeyString } from "./usageLedger.ts";
 import { resolvePricing, computeCostUsd, resolveMonthlyLimit, checkMonthlyCap } from "./cost.ts";
@@ -2355,6 +2356,40 @@ export async function trialWorkflow(home: string, name: string, inputOverrides: 
   return run;
 }
 
+/**
+ * O6：激活前检查 Routines 硬护栏——定时触发器间隔不得低于 15 分钟，
+ * 启用的例行总数不得超过 20 个。draft 只校验形状（import 时），激活才
+ * 是政策闸：已导入的老工作流不受影响，激活时才拦。
+ */
+export function checkRoutineGuardrailsForActivation(home: string, name: string): void {
+  const { def } = loadWorkflowDefinitionFile(home, name);
+  for (let i = 0; i < (def.triggers?.length ?? 0); i++) {
+    const trigger = def.triggers![i]!;
+    if (trigger.type !== "schedule" || !trigger.cron) continue;
+    const interval = cronMinIntervalMinutes(trigger.cron);
+    if (interval !== null && interval < MIN_CRON_INTERVAL_MINUTES) {
+      throw new WorkflowError(
+        `工作流 ${name} 的 triggers[${i}] 间隔只有 ${interval} 分钟，低于例行下限 ${MIN_CRON_INTERVAL_MINUTES} 分钟（改 cron 再激活）`,
+      );
+    }
+  }
+  // 20 条上限：数其他 active 工作流的触发器（自动停用的不算）+ 本工作流的。
+  const registry = loadWorkflowRegistry(home);
+  let enabled = def.triggers?.length ?? 0;
+  for (const entry of registry.workflows) {
+    if (entry.status !== "active" || entry.name === name) continue;
+    try {
+      const { def: other } = loadWorkflowDefinitionFile(home, entry.name);
+      enabled += other.triggers?.length ?? 0;
+    } catch { /* 定义读不出来不计入 */ }
+  }
+  if (enabled > MAX_ENABLED_ROUTINES) {
+    throw new WorkflowError(
+      `启用的例行已有 ${enabled - (def.triggers?.length ?? 0)} 个，再激活 ${name}（${def.triggers?.length ?? 0} 个触发器）就超过上限 ${MAX_ENABLED_ROUTINES} 个（先归档或停用一个工作流）`,
+    );
+  }
+}
+
 export function activateWorkflow(home: string, name: string, confirm: boolean, workdir?: string): WorkflowRegistryEntry {
   if (!confirm) throw new WorkflowError("激活须加 --yes 确认（激活前必须先试跑通过）");
   const registry = loadWorkflowRegistry(home);
@@ -2363,6 +2398,8 @@ export function activateWorkflow(home: string, name: string, confirm: boolean, w
   if (entry.status !== "trial_passed") {
     throw new WorkflowError(`工作流 ${name} 还没试跑通过（当前 ${entry.status}），先 nyra workflow trial ${name} --yes`);
   }
+  // O6：激活时拦 Routines 硬护栏（间隔下限 + 启用总数上限）。
+  checkRoutineGuardrailsForActivation(home, name);
   entry.status = "active";
   entry.activatedAt = nowIso();
   entry.updatedAt = nowIso();
@@ -2734,7 +2771,7 @@ const WORKFLOW_USAGE = [
   "  resume <运行 id>                     审批通过/拒绝后，从挂起的节点继续跑",
   "  trial <名字> --yes [--input k=v]...  拿真实数据试跑一遍（真执行），跑通才记 trial_passed",
   "  activate <名字> --yes                试跑通过后激活（只有 active 的工作流会被触发执行）",
-  "  triggers <status|enable|disable|run>  触发器执行总开关（默认关；enable 须 --yes）与到点触发器手动跑一轮",
+  "  triggers <status|enable|disable|run|re-enable <工作流> <序号>>  触发器执行总开关（默认关；enable 须 --yes）与到点触发器手动跑一轮；re-enable 恢复被自动关闭的触发器",
   "  remove <名字> --yes                  删除定义与注册（运行记录保留）",
   "  verify <运行 id>                     用定义快照重算 dry-run 计划、比哈希",
   "",
@@ -2909,6 +2946,12 @@ export async function handleWorkflow(argv: string[], home: string): Promise<numb
       if (sub === "status") {
         const st = describeWorkflowTriggers(resolvedHome);
         process.stdout.write(`触发器执行：${st.enabled ? "已开启" : "未开启（默认关，nyra workflow triggers enable --yes 开启）"}\n`);
+        process.stdout.write(`护栏：定时最小间隔 ${st.guardrails.minIntervalMinutes} 分钟，已启用 ${st.guardrails.enabledCount}/${st.guardrails.maxEnabled} 个例行，连续失败 ${st.guardrails.maxConsecutiveFailures} 次自动关闭\n`);
+        if (st.disabled.length > 0) {
+          for (const d of st.disabled) {
+            process.stdout.write(`已自动关闭：${d.workflow} #${d.triggerIndex}（连败 ${d.failures} 次，${d.error}，${d.at}；nyra workflow triggers re-enable ${d.workflow} ${d.triggerIndex} 恢复）\n`);
+          }
+        }
         process.stdout.write(`补跑策略：${st.policy.catchUp === "once" ? "once（漏掉的只补跑一次，其余记 missed）" : "skip（直接跳到下一档，漏掉的全记 missed）"}，窗口 ${st.policy.catchUpWindowMinutes} 分钟（nyra cron policy 改）\n`);
         if (st.hold.held) {
           process.stdout.write(`配额 hold：挂起中，至 ${st.hold.holdUntil ?? "未知"}（暂停 ${st.hold.pauseId ?? "未知"}，层 ${st.hold.scope ?? "未知"}）；期间定时与事件触发全部挂起（nyra cron hold 看）\n`);
@@ -2967,7 +3010,23 @@ export async function handleWorkflow(argv: string[], home: string): Promise<numb
         }
         return report.fired.every((f) => f.status === "ok") && threadFired.every((f) => f.status !== "failed") ? 0 : 1;
       }
-      process.stderr.write(`错误：未知动作 triggers ${sub}（应为 status|enable|disable|run）\n${WORKFLOW_USAGE}\n`);
+      if (sub === "re-enable") {
+        const name = argv[2] ?? "";
+        const idx = Number(argv[3] ?? "");
+        if (!name || !Number.isInteger(idx) || idx < 0) {
+          process.stderr.write("错误：用法 nyra workflow triggers re-enable <工作流> <触发器序号>\n");
+          return 2;
+        }
+        const { reEnableTrigger } = await import("./workflowTriggers.ts");
+        const ok = reEnableTrigger(resolvedHome, name, idx);
+        if (!ok) {
+          process.stdout.write(`触发器 ${name} #${idx} 本来就没停用，无须恢复。\n`);
+          return 0;
+        }
+        process.stdout.write(`触发器 ${name} #${idx} 已恢复（下次到点会再跑；仍连续失败 ${MAX_CONSECUTIVE_FAILURES} 次会再次自动关闭）。\n`);
+        return 0;
+      }
+      process.stderr.write(`错误：未知动作 triggers ${sub}（应为 status|enable|disable|run|re-enable）\n${WORKFLOW_USAGE}\n`);
       return 2;
     }
     if (action === "remove") {

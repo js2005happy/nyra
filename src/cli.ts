@@ -93,6 +93,9 @@ import { handleRoster } from "./roster.ts";
 import { handleSideEffects } from "./sideEffects.ts";
 import { handleHeartbeat } from "./heartbeat.ts";
 import { handleGovernance } from "./governance.ts";
+import { handlePolicy } from "./policy.ts";
+import { handleLearn } from "./learningCli.ts";
+import { handleComponents } from "./componentsCli.ts";
 import { handleTrust } from "./trustLadder.ts";
 import { makeTieredCapCheck, type TieredCtxHolder } from "./costCaps.ts";
 import { handleOptimize } from "./optimizer.ts";
@@ -208,6 +211,12 @@ nyra team <create|list|show|add|remove|dissolve|dispatch|handover|lead|writer>  
 nyra governance <policy|mandate|mode|dry-runs>   企业治理：版本化策略 + 不可变授权 + observe/auto 接单模式 + 干跑记录（详见 docs/governance.md）
 nyra governance caps <set|list|show|check|assign-team|pause|resume|discard|pauses>   分层成本上限：按 Bot/角色/团队/人设设月度上限，触顶进可恢复暂停态
 nyra governance audit <export|verify>   审计导出：治理审计日志导出给 SIEM（JSONL + 哈希链，可验证）
+nyra governance audit export [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--source <来源>] [--actor <主体>] [--type <事件类型>] [--scope <deployment|org>] [--initiator <触发方>]   审计导出：按时间/主体/事件类型/范围/触发方过滤导出给 SIEM（详见 docs/governance.md）
+nyra governance audit deployment [--all] [--json]   部署级审计：部署/升级/回滚记录（详见 docs/governance.md）
+nyra governance deploy <说明> [--kind deploy|upgrade|rollback]   部署：记一笔部署级审计（部署/升级/回滚，详见 docs/governance.md）
+nyra policy <list|add|remove|enable|disable|test|dry-run|status>   策略网关：CEL 风格规则表达式，执行前按规则放行/拒绝/要求审批，拒绝进证据链（详见 docs/policy.md）
+nyra learn <list|scan|show|propose|approve|reject|publish|share|remove>   学习队列：候选记忆/技能草稿/agent 声明的人工审核与发布，学习永远要人批（详见 docs/learning.md）
+nyra components <list|block|unblock>   生成式 UI：白名单组件（table/card/list/code/chart-bar）与每 Bot 屏蔽表（详见 docs/components.md）
 nyra optimize <propose|list|show|edit|approve|reject|apply|verify|revert|loop|arms>   带人批的自优化环：只起草改指令建议，须人批才生效，三数据集 + holdout 定放行；loop 读评测报告自动起草并按 UCB 排队（详见 docs/governance.md）
 nyra eval <scenarios|scorecard|benchmarks|import|benchmark|remove|probes|probe|manifest>   评测当一等公民：场景成绩单 + 外部基准集导入 + 仓内探针 + 可复现清单（只读为主，跑评测走 bun run scripts/eval.ts；详见 docs/eval.md）
 nyra trust <register|list|show|evidence|promote|demote|review|check>   信任阶梯（治理）：新 agent / 新技能默认只读，攒够 N 次连续成功且零违规才升一级；每次记成功有概率被随机抽查，抽中须复核才计入；降级随时可做（详见 docs/trust-ladder.md）
@@ -244,7 +253,7 @@ nyra connector <status|list|approve|revoke|auth|install|uninstall|usage|flows|fl
 nyra mcp server <status|enable|disable|allow-writes-on|allow-writes-off>   对外 MCP 服务开关：别的 agent 经网关 POST /mcp 调记忆与任务（默认关闭，详见 docs/mcp.md）
 nyra peer <status|enable|disable|list|auth|ask|handoff|card|code|add|request|accept|friends|block|circle|share|grant|proposal|branch|discover|token>   对端协作：问别的 Nyra 实例、交接运行上下文、名片加好友、带 scope 可吊销的 grant、对方写操作提议、外来分支合入、公开发现与 per-peer token、名片 JWS 签名（默认关闭，详见 docs/peer.md 与 docs/peer-discovery.md）
 nyra circle <create|list|show|invite|revoke|delete|bind|unbind|owner|check|bindings>   信任圈：谁能给 agent 发任务（默认全封闭，圈外消息网关直接丢弃，详见 docs/circles.md）
-nyra org <create|list|show|add|remove|role|delete|check|share|shared|grant-write|learnings|workspace|file-read|cross-access|catalog|tasks|task-add|violations|isolation|memory>   组织与团队 workspace：组织/成员/角色 admin/member/viewer，机主是超级管理员；共享 Bot 默认只读、租户隔离、组织内私有目录（详见 docs/orgs.md）
+nyra org <create|list|show|add|remove|role|delete|check|sso|share|shared|grant-write|learnings|workspace|file-read|cross-access|catalog|tasks|task-add|violations|isolation|memory>   组织与团队 workspace：组织/成员/角色 admin/member/viewer，机主是超级管理员；共享 Bot 默认只读、租户隔离、组织内私有目录（详见 docs/orgs.md）
 nyra session <create|list|show|join|join-request|join-approve|join-decline|join-list|leave|delegate|accept|complete|share|frame|record|end>   跨 agent 联合会话：多人多 agent 视频会（本地扇出模型），会内委派 + 共享任务产物（allowlist），画面默认不留存、录制须全体同意；好友进会要批、默认只读（详见 docs/sessions.md）
 nyra sfu <create|rooms|status|join|leave|turn|record|close|reclaim|video>   群组语音 SFU（本地实现，选型 mediasoup）：语音房 + 成员 + TURN 凭据 + 录制全体同意门；video 是群组视频（Producer/Consumer、按需看帧、带宽自适应、10 分钟模拟；真媒体面等 mediasoup 接线，详见 docs/sfu.md 与 docs/group-video.md）
 nyra meeting <create|list|join|reconnect|transcript|minutes|record|dispatch>   进外部会议：Meet/Zoom 受控浏览器进会、听字幕出纪要；进会、录制、发言都要机主批（详见 docs/meeting.md）
@@ -278,7 +287,7 @@ nyra hitl <start|takeover|handback|cancel|status|list>   对话转人工坐席�
 nyra events <list|add|remove|enable|disable|test|poll>   事件触发任务：webhook 与新邮件触发进任务队列（详见 docs/event-triggers.md）
 nyra thread <create|list|search|show|copy|prune|state|history|runs|cron-add|cron-remove|crons|archive|unarchive|remove>   远端线程操作 API：建线程、搜线程、复制接着跑、剪历史、读写状态、给线程绑 cron（详见 docs/threads.md）
 nyra automation <list|show|install|remove|suggested>   自动化 bundle：一次装好整条自动化，自带建议触发器（详见 docs/automations.md）
-nyra cron <incidents|policy|hold>   cron 成熟语义：漏跑补跑策略（once/skip）+ 配额 hold + 事故账（详见 docs/cron-maturity.md）
+nyra cron <incidents|policy|hold>   cron 成熟语义：漏跑补跑策略（once/skip）+ 配额 hold + 事故账 + 例行护栏（15 分钟下限、最多 20 个启用、连败 10 次自动关闭，详见 docs/cron-maturity.md）
 nyra backend <list|use|status|docker|ssh|e2b>   命令后端可换：本机 / Docker / SSH / E2B 控制面 / 云端（未接线），默认本机（详见 docs/command-backends.md）
 nyra mail-inbox <status|enable|disable|allowlist|set|poll>   邮件即任务入口：白名单发件人的邮件直接进任务队列，跑完回信（详见 docs/mail-inbox.md）
 nyra responsibility <list|add|set|remove|enable|disable|check|pause|resume|complete|cancel|brief|show>   持续责任语义：责任对象（归属人 + 验收标准 + 升级条件 + 过期时间）与晨间简报，无事安静（详见 docs/responsibilities.md）
@@ -298,7 +307,7 @@ nyra bughunt <install|status|scope|template|check>   授权漏洞挖掘技能包
 nyra market <list|show|source|install|install-team|update|uninstall|installed|publish|template>   内置机器人市场：浏览、安装、更新、发布技能包、机器人配置与业务流程模板、一个 Markdown 装一整队（静态策展仓库 + 本地客户端，详见 docs/marketplace.md）
 nyra account <status|login|logout|list|revoke|link|suspend|reactivate>   用户账号登录：Google / GitHub / 邮箱 / SSO，账号身份 + 会话（详见 docs/accounts.md）
 nyra cloud <status|connect|disconnect|sync|push|pull|pref|devices|set-url>   手机云端连接：账号登录后直连云端服务、跨端同步，不走局域网（详见 docs/mobile-cloud.md）
-nyra sso <provider|login|status|scim>   企业 SSO：OIDC 身份提供方注册与登录、SCIM 账号开通（详见 docs/sso.md）
+nyra sso <provider|login|route|status|scim>   企业 SSO：OIDC 身份提供方注册与登录、邮箱域名路由、组织强制 SSO、SCIM 账号开通（详见 docs/sso.md）
 nyra kb <create|list|add|search|ask|remove|test>  本地知识库：外部文档（文本/Markdown/PDF/网页）收录、分块、BM25 检索 + 检索测试台（详见 docs/knowledge.md）
 nyra search <关键词> [--scope project|all] [--session <会话 id>] [--after <日期>] [--before <日期>] [--limit <n>] [--export <路径>] [--json]  会话全文搜索：搜自己过去的对话，按会话分组回命中消息与上文下文；不给关键词列出最近会话，--export 把会话全文导出为 Markdown（详见 docs/session-search.md）
 nyra editor <serve|status|snapshot|ask|preview|apply|hosts>  编辑器插件：编辑器桥服务（VS Code / JetBrains / Zed 共用同一协议），快照带光标选区与诊断进模型上下文，diff 预览不动磁盘、应用须显式确认（详见 docs/editor-plugins.md）
@@ -371,6 +380,12 @@ nyra team <create|list|show|add|remove|dissolve|dispatch|handover|lead|writer>  
 nyra governance <policy|mandate|mode|dry-runs>   enterprise governance: versioned policy + immutable mandates + observe/auto intake modes + dry-run ledger (see docs/governance.md)
 nyra governance caps <set|list|show|check|assign-team|pause|resume|discard|pauses>   tiered cost caps: monthly USD/token limits per Bot/role/team/persona, over-cap tasks pause recoverably
 nyra governance audit <export|verify>   audit export: governance audit logs to SIEM (JSONL + hash chain, verifiable)
+nyra governance audit export [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--source <source>] [--actor <actor>] [--type <event type>] [--scope <deployment|org>] [--initiator <initiator>]   audit export: filter by time / actor / event type / scope / initiator and export to SIEM (see docs/governance.md)
+nyra governance audit deployment [--all] [--json]   deployment audit: deploy / upgrade / rollback records (see docs/governance.md)
+nyra governance deploy <note> [--kind deploy|upgrade|rollback]   deploy: record one deployment audit entry (deploy / upgrade / rollback, see docs/governance.md)
+nyra policy <list|add|remove|enable|disable|test|dry-run|status>   policy gateway: CEL-style rule expressions, allow / deny / require approval before a tool runs, denials go to the evidence chain (see docs/policy.md)
+nyra learn <list|scan|show|propose|approve|reject|publish|share|remove>   learning queue: human review and publishing of candidate memories / skill drafts / agent declarations, learning always needs a human to approve (see docs/learning.md)
+nyra components <list|block|unblock>   generative UI: allowlisted components (table/card/list/code/chart-bar) and the per-Bot blocklist (see docs/components.md)
 nyra optimize <propose|list|show|edit|approve|reject|apply|verify|revert|loop|arms>   human-approved self-optimization loop: drafts instruction changes only, needs approval to apply, three datasets + holdout decide release; loop reads an eval report, auto-drafts and ranks by UCB (see docs/governance.md)
 nyra eval <scenarios|scorecard|benchmarks|import|benchmark|remove|probes|probe|manifest>   eval as a first-class citizen: scenario scorecards + external benchmark import + in-repo probes + reproducibility manifest (mostly read-only; run evals with bun run scripts/eval.ts; see docs/eval.md)
 nyra trust <register|list|show|evidence|promote|demote|review|check>   trust ladder (governance): new agents / skills start read-only, earn one level per N consecutive successes with zero violations; each recorded success may be randomly spot-checked and only counts after review; demotion any time (see docs/trust-ladder.md)
@@ -407,7 +422,7 @@ nyra connector <status|list|approve|revoke|auth|install|uninstall|usage|flows|fl
 nyra mcp server <status|enable|disable|allow-writes-on|allow-writes-off>   external MCP server switch: other agents call Nyra memory and tasks via gateway POST /mcp (off by default, see docs/mcp.md)
 nyra peer <status|enable|disable|list|auth|ask|handoff|card|code|add|request|accept|friends|block|circle|share|grant|proposal|branch|discover|token>   peer collaboration: ask another Nyra instance, hand off run context, agent card and friends, scoped revocable grants, peer write proposals, foreign branch merges, public discovery with per-peer tokens, agent card JWS signatures (off by default, see docs/peer.md and docs/peer-discovery.md)
 nyra circle <create|list|show|invite|revoke|delete|bind|unbind|owner|check|bindings>   trust circles: who may send tasks to the agent (closed by default, out-of-circle messages are dropped at the gateway, see docs/circles.md)
-nyra org <create|list|show|add|remove|role|delete|check|share|shared|grant-write|learnings|workspace|file-read|cross-access|catalog|tasks|task-add|violations|isolation|memory>   orgs and team workspaces: orgs / members / roles admin/member/viewer, the owner is super-admin; shared Bots read-only by default, tenant isolation, org-private catalog (see docs/orgs.md)
+nyra org <create|list|show|add|remove|role|delete|check|sso|share|shared|grant-write|learnings|workspace|file-read|cross-access|catalog|tasks|task-add|violations|isolation|memory>   orgs and team workspaces: orgs / members / roles admin/member/viewer, the owner is super-admin; shared Bots read-only by default, tenant isolation, org-private catalog (see docs/orgs.md)
 nyra session <create|list|show|join|join-request|join-approve|join-decline|join-list|leave|delegate|accept|complete|share|frame|record|end>   cross-agent joint sessions: multi-person multi-agent video meetings (local fanout model), in-session delegation + shared task products (allowlist), frames not retained by default, recording needs everyone's consent; friends join only after approval, read-only by default (see docs/sessions.md)
 nyra sfu <create|rooms|status|join|leave|turn|record|close|reclaim|video>   group voice SFU (local implementation, mediasoup selected): voice rooms + members + TURN credentials + all-consent recording gate; video is group video (Producer/Consumer, watch-on-demand, adaptive bandwidth, 10-minute simulation; real media plane waits for mediasoup wiring, see docs/sfu.md and docs/group-video.md)
 nyra meeting <create|list|join|reconnect|transcript|minutes|record|dispatch>   join external meetings: controlled-browser join for Meet/Zoom, listen to captions and build minutes; joining, recording and speaking all need the owner's approval (see docs/meeting.md)
@@ -444,7 +459,7 @@ nyra hitl <start|takeover|handback|cancel|status|list>   human handoff: hand a c
 nyra events <list|add|remove|enable|disable|test|poll>   event-triggered tasks: webhooks and new mail enqueue tasks (see docs/event-triggers.md)
 nyra thread <create|list|search|show|copy|prune|state|history|runs|cron-add|cron-remove|crons|archive|unarchive|remove>   remote thread operations API: create/search/copy/prune threads, read/write state, bind crons to a thread (see docs/threads.md)
 nyra automation <list|show|install|remove|suggested>   automation bundles: install a whole automation at once, with suggested triggers included (see docs/automations.md)
-nyra cron <incidents|policy|hold>   cron maturity: missed-run catch-up policy (once/skip) + quota hold + incident ledger (see docs/cron-maturity.md)
+nyra cron <incidents|policy|hold>   cron maturity: missed-run catch-up policy (once/skip) + quota hold + incident ledger + routine guardrails (15-minute floor, max 20 enabled, auto-disable after 10 consecutive failures, see docs/cron-maturity.md)
 nyra backend <list|use|status|docker|ssh|e2b>   swappable command backends: local / Docker / SSH / E2B control plane / cloud (not wired), local by default (see docs/command-backends.md)
 nyra mail-inbox <status|enable|disable|allowlist|set|poll>   mail as task entry: allowlisted senders' mail enqueues tasks, results mailed back (see docs/mail-inbox.md)
 nyra responsibility <list|add|set|remove|enable|disable|check|pause|resume|complete|cancel|brief|show>   standing responsibilities: responsibility objects (owner + acceptance criteria + escalation conditions + expiry) and the morning briefing, quiet when nothing is wrong (see docs/responsibilities.md)
@@ -464,7 +479,7 @@ nyra bughunt <install|status|scope|template|check>   authorized bug-hunting skil
 nyra market <list|show|source|install|install-team|update|uninstall|installed|publish|template>   built-in bot marketplace: browse, install, update and publish skill packs, bot configs and business process templates, install a whole team from one Markdown file (static curated repo + local client, see docs/marketplace.md)
 nyra account <status|login|logout|list|revoke|link|suspend|reactivate>   user account login: Google / GitHub / email / SSO, account identity + sessions (see docs/accounts.md)
 nyra cloud <status|connect|disconnect|sync|push|pull|pref|devices|set-url>   mobile cloud link: after account login, connect straight to the cloud service and sync across devices, no local network needed (see docs/mobile-cloud.md)
-nyra sso <provider|login|status|scim>   enterprise SSO: OIDC identity provider registration and login, SCIM provisioning (see docs/sso.md)
+nyra sso <provider|login|route|status|scim>   enterprise SSO: OIDC identity provider registration and login, email domain routing, org-enforced SSO, SCIM provisioning (see docs/sso.md)
 nyra kb <create|list|add|search|ask|remove|test>  local knowledge base: ingest external docs (text/Markdown/PDF/web pages), chunk, BM25 search + retrieval test bench (see docs/knowledge.md)
 nyra search <keywords> [--scope project|all] [--session <session id>] [--after <date>] [--before <date>] [--limit <n>] [--export <path>] [--json]  session full-text search: search your past conversations, grouped by session with matching messages and context; without keywords lists recent sessions, --export dumps a session to Markdown (see docs/session-search.md)
 nyra editor <serve|status|snapshot|ask|preview|apply|hosts>  editor plugins: editor bridge service (VS Code / JetBrains / Zed share one protocol), snapshots carry cursor, selection and diagnostics into model context, diff previews never touch disk, applying needs explicit confirmation (see docs/editor-plugins.md)
@@ -7605,6 +7620,9 @@ export async function main(argv: string[]): Promise<number> {
   if (args.subcommand === "side-effects") return handleSideEffects(args.subArgs ?? [], home);
   if (args.subcommand === "heartbeat") return handleHeartbeat(args.subArgs ?? [], home);
   if (args.subcommand === "governance") return handleGovernance(args.subArgs ?? [], home);
+  if (args.subcommand === "policy") return handlePolicy(args.subArgs ?? [], home);
+  if (args.subcommand === "learn") return handleLearn(args.subArgs ?? [], home);
+  if (args.subcommand === "components") return handleComponents(args.subArgs ?? [], home);
   if (args.subcommand === "optimize") {
     const subArgs = args.subArgs ?? [];
     if (subArgs[0] === "loop" || subArgs[0] === "arms") {

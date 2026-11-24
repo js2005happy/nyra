@@ -124,12 +124,57 @@ export function missedCronMinutes(cron: string, anchor: Date | null, now: Date):
   return out;
 }
 
+// ---- O6 Routines 硬护栏（OpenBot Routines 借鉴） ----
+
+/**
+ * O6：定时触发器最小间隔 15 分钟。OpenBot Routines 同款下限——例行不是
+ * 高频轮询，1 分钟跑一次的工作流既烧 token 又容易把失败放大成灾难。
+ * 执行点在激活时拦（`activateWorkflow` / `addThreadCron`）；draft 只校验
+ * 形状，不动已有测试；执行路径遇到手改注册表绕过激活的旧触发器时，按
+ * 低于下限停用（见 workflowTriggers 的 disableBelowFloor）。
+ */
+export const MIN_CRON_INTERVAL_MINUTES = 15;
+/** O6：最多 20 个启用的例行（active 工作流的触发器数，自动停用的不算）。 */
+export const MAX_ENABLED_ROUTINES = 20;
+/** O6：连续失败 10 次自动关闭（须先通知，见 workflowTriggers 的 recordTriggerResult）。 */
+export const MAX_CONSECUTIVE_FAILURES = 10;
+
+/**
+ * O6：cron 表达式的最小触发间隔（分钟）。从 `from` 起往后扫 8 天内的匹配
+ * 分钟，取相邻匹配的最小间隔；8 天内不足两次匹配时返回 null（触发很稀疏，
+ * 间隔一定大于 15 分钟，算通过）。格式不对返回 null（调用方先做形状校验）。
+ * 例：每分钟触发 → 1；每 15 分钟触发 → 15；每小时整点 → 60。
+ */
+export function cronMinIntervalMinutes(cron: string, from = new Date()): number | null {
+  const start = new Date(from.getFullYear(), from.getMonth(), from.getDate(), from.getHours(), from.getMinutes());
+  let prev: number | null = null;
+  let minGap: number | null = null;
+  let found = 0;
+  for (let t = start.getTime(); t <= start.getTime() + 8 * 24 * 60 * 60_000; t += 60_000) {
+    const d = new Date(t);
+    if (!cronMatches(cron, d)) continue;
+    found += 1;
+    if (prev !== null) {
+      const gap = (t - prev) / 60_000;
+      if (minGap === null || gap < minGap) minGap = gap;
+      if (minGap !== null && minGap < MIN_CRON_INTERVAL_MINUTES) return minGap;
+    }
+    prev = t;
+    if (found >= 3 && minGap !== null) {
+      // 已有两次间隔且都 ≥ 15 分钟：cron 的间隔是周期性的，再扫也不会更小。
+      // （步长/范围/列表组合的最小间隔在前两次匹配里一定出现过。）
+      return minGap;
+    }
+  }
+  return minGap;
+}
+
 // ---- 事故账 ----
 
 export const CRON_INCIDENTS_FILE = "cron-incidents.jsonl";
 export const MAX_CRON_INCIDENTS = 500;
 
-export type CronIncidentKind = "missed" | "caught_up" | "quota_held" | "quota_released" | "failed";
+export type CronIncidentKind = "missed" | "caught_up" | "quota_held" | "quota_released" | "failed" | "auto_disabled" | "re_enabled";
 
 export interface CronIncident {
   at: string;
@@ -153,6 +198,8 @@ export interface CronIncident {
   run_id?: string | null;
   /** failed 时记（前 200 字）。 */
   error?: string;
+  /** auto_disabled 时记（连败次数，应为 10）。 */
+  consecutive_failures?: number;
   /** 补充说明（例如戳续期、手动清戳的原因）。 */
   note?: string;
 }

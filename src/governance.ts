@@ -232,6 +232,61 @@ export function appendGovernanceAudit(home: string, entry: Record<string, unknow
   }
 }
 
+/** O2：部署级审计的动作（部署/升级/回滚）。 */
+export type DeploymentAction = "deploy" | "upgrade" | "rollback";
+
+/**
+ * O2：记一条部署级审计——部署配置变更、升级、回滚都进同一本治理审计账本，
+ * 只加 `scope: "deployment"` 区分（不另起一套账本；组织级事件 scope 为
+ * "org" 或不填）。密钥轮换、成员变动这类事件也走这里（action 写
+ * "key_rotated"/"member_changed" 时 kind 仍为 deployment，由调用方传）。
+ * 返回 false 表示写盘失败（不抛错，不破坏部署流程本身）。
+ */
+export function appendDeploymentAudit(
+  home: string,
+  entry: { action: string; note: string; actor?: string },
+): boolean {
+  const note = entry.note.trim().slice(0, MAX_REASON_CHARS);
+  if (!note) return false;
+  return appendGovernanceAudit(home, {
+    kind: "deployment",
+    scope: "deployment",
+    action: entry.action,
+    note,
+    actor: entry.actor ?? "owner",
+  });
+}
+
+export interface DeploymentAuditEntry {
+  at: string;
+  action: string;
+  note: string;
+  actor: string;
+}
+
+/** O2：读回部署级审计（治理审计账本里 scope 为 deployment 的行）。 */
+export function listDeploymentAudit(home: string): DeploymentAuditEntry[] {
+  const path = join(resolveHome(home), AUDIT_FILE);
+  if (!existsSync(path) || lstatSync(path).isSymbolicLink()) return [];
+  const out: DeploymentAuditEntry[] = [];
+  for (const line of readFileSync(path, "utf-8").split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const rec = JSON.parse(line) as Record<string, unknown>;
+      if (!rec || typeof rec !== "object" || rec.scope !== "deployment") continue;
+      out.push({
+        at: typeof rec.at === "string" ? rec.at : "",
+        action: typeof rec.action === "string" ? rec.action : "",
+        note: typeof rec.note === "string" ? rec.note : "",
+        actor: typeof rec.actor === "string" ? rec.actor : "",
+      });
+    } catch {
+      continue;
+    }
+  }
+  return out;
+}
+
 /** 有运行上下文时，把治理事件镜像进运行事件（tasks 目录优先，runs 次之）。 */
 function mirrorEvent(home: string, runId: string | null, type: string, fields: Record<string, unknown>): void {
   if (!runId) return;
@@ -840,17 +895,61 @@ function printMandate(mandate: Mandate): void {
   }
 }
 
+function handleDeploy(args: string[], home: string): number {
+  const kind = getFlag(args, "--kind") ?? "deploy";
+  if (kind !== "deploy" && kind !== "upgrade" && kind !== "rollback") {
+    throw new GovernanceError("用法：nyra governance deploy <说明> [--kind deploy|upgrade|rollback]");
+  }
+  const rest: string[] = [];
+  for (let i = 0; i < args.length; i += 1) {
+    if (args[i] === "--kind") { i += 1; continue; }
+    rest.push(args[i]!);
+  }
+  const note = rest.join(" ").trim();
+  if (!note) throw new GovernanceError("用法：nyra governance deploy <说明> [--kind deploy|upgrade|rollback]（说明必填）");
+  const ok = appendDeploymentAudit(home, { action: kind, note });
+  if (!ok) throw new GovernanceError("部署审计写盘失败");
+  console.log(`已记部署审计：${kind} —— ${note.slice(0, MAX_REASON_CHARS)}`);
+  return 0;
+}
+
+function handleDeploymentAudit(args: string[], home: string): number {
+  const json = hasFlag(args, "--json");
+  const all = hasFlag(args, "--all");
+  const entries = listDeploymentAudit(home);
+  const shown = all ? entries : entries.slice(-20);
+  if (json) {
+    console.log(JSON.stringify({ entries: shown, total: entries.length }, null, 2));
+    return 0;
+  }
+  if (entries.length === 0) {
+    console.log("暂无部署级审计记录（nyra governance deploy <说明> 记一笔）。");
+    return 0;
+  }
+  console.log(`部署级审计（共 ${entries.length} 条${all ? "" : "，只看最近 20 条，加 --all 看全部"}）：`);
+  for (const e of shown) {
+    console.log(`- ${e.at} [${e.action}] ${e.note}（${e.actor}）`);
+  }
+  return 0;
+}
+
 export function handleGovernance(args: string[], home: string): number {
   const [group, ...rest] = args;
   const json = hasFlag(args, "--json");
   if (!group) {
-    console.log("用法：nyra governance <policy|mandate|mode|dry-runs|caps|audit> ...（详见 docs/governance.md）");
+    console.log("用法：nyra governance <policy|mandate|mode|dry-runs|caps|audit|deploy> ...（详见 docs/governance.md）");
     return 0;
   }
 
   // 缺口 43 第三批：分层成本上限与审计导出（见 src/costCaps.ts）。
   if (group === "caps") return handleCaps(rest, home);
-  if (group === "audit") return handleAudit(rest, home);
+  if (group === "audit") {
+    // O2：部署级审计列表（治理审计账本里 scope 为 deployment 的行）。
+    if (rest[0] === "deployment") return handleDeploymentAudit(rest.slice(1), home);
+    return handleAudit(rest, home);
+  }
+  // O2：部署/升级/回滚记一笔部署级审计。
+  if (group === "deploy") return handleDeploy(rest, home);
 
   if (group === "policy") {
     const sub = rest[0];

@@ -910,6 +910,8 @@ export const AUDIT_SOURCES: AuditSource[] = [
   { file: "script-preauth-audit.jsonl", label: "script_preauth" },
   // Pi Bot 借鉴第 2 条：交接契约验收审计（立约/挂包/验收/打回/停下/定夺/放弃）也是治理审计日志，进同一份 SIEM 导出。
   { file: "handover-contract-audit.jsonl", label: "handover_contract" },
+  // O1：策略网关审计（规则增删、命中拒绝/要求人工/演练）进同一份 SIEM 导出。
+  { file: "policy-audit.jsonl", label: "policy" },
 ];
 
 /** 稳定序列化（键排序，递归）：同一条记录在任何机器上算出的哈希都一样。 */
@@ -948,6 +950,14 @@ export interface ExportAuditOptions {
   sources?: string[] | null;
   out?: string | null;
   force?: boolean;
+  // O2：按主体/事件类型/范围/触发方过滤导出（各审计源的字段名不统一：
+  // actor 认 actor|actor_id|by，type 认 kind|action|type，initiator 认
+  // initiator|initiator_kind，任一字段命中即算；某行完全没有该概念的字段时
+  // 不命中，不过滤的完整导出里仍有它）。
+  actor?: string | null;
+  type?: string | null;
+  scope?: string | null;
+  initiator?: string | null;
 }
 
 /**
@@ -983,6 +993,31 @@ function scrubExportValue(value: unknown, home: string): unknown {
   return value;
 }
 
+/**
+ * O2 导出过滤：各审计源的字段名不统一，同一概念有多个名字（actor 有
+ * actor/actor_id/by，type 有 kind/action/type，initiator 有
+ * initiator/initiator_kind）——任一字段等于过滤值即命中。注意 kind 与
+ * action 不是同一概念（部署行 kind 是 "deployment"、action 才是
+ * "deploy"），所以不能只认第一个出现的字段。某行完全没有该概念的字段时
+ * 不命中（筛不出来不等于丢了：不过滤的完整导出里仍有它）。
+ */
+function matchesExportFilter(rec: Record<string, unknown>, opts: ExportAuditOptions): boolean {
+  if (opts.actor) {
+    const vals = [rec.actor, rec.actor_id, rec.by];
+    if (!vals.some((v) => v !== undefined && v !== null && v === opts.actor)) return false;
+  }
+  if (opts.type) {
+    const vals = [rec.kind, rec.action, rec.type];
+    if (!vals.some((v) => v !== undefined && v !== null && v === opts.type)) return false;
+  }
+  if (opts.scope && rec.scope !== opts.scope) return false;
+  if (opts.initiator) {
+    const vals = [rec.initiator, rec.initiator_kind];
+    if (!vals.some((v) => v !== undefined && v !== null && v === opts.initiator)) return false;
+  }
+  return true;
+}
+
 export function exportAudit(home: string, opts: ExportAuditOptions = {}): ExportAuditResult {
   const resolvedHome = resolveHome(home);
   const from = opts.from ? new Date(`${opts.from}T00:00:00.000Z`).getTime() : null;
@@ -1016,6 +1051,7 @@ export function exportAudit(home: string, opts: ExportAuditOptions = {}): Export
           const rec = JSON.parse(line) as Record<string, unknown>;
           if (!rec || typeof rec !== "object") { skippedBad += 1; continue; }
           if (!inRange(rec)) continue;
+          if (!matchesExportFilter(rec, opts)) continue;
           lines += 1;
           records.push({ ...rec, _source: src.label });
         } catch {
@@ -1334,7 +1370,7 @@ export function handleAudit(args: string[], home: string): number {
   const [sub, ...rest] = args;
   const json = hasFlag(args, "--json");
   if (!sub) {
-    console.log("用法：nyra governance audit <export|verify> ...（详见 docs/governance.md）");
+    console.log("用法：nyra governance audit <export|verify> [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--source <来源>] [--actor <主体>] [--type <事件类型>] [--scope <deployment|org>] [--initiator <触发方>]（详见 docs/governance.md）");
     return 0;
   }
   if (sub === "export") {
@@ -1344,6 +1380,10 @@ export function handleAudit(args: string[], home: string): number {
       sources: getAllFlags(rest, "--source").length > 0 ? getAllFlags(rest, "--source") : undefined,
       out: getFlag(rest, "--out") ?? undefined,
       force: hasFlag(rest, "--force"),
+      actor: getFlag(rest, "--actor") ?? undefined,
+      type: getFlag(rest, "--type") ?? undefined,
+      scope: getFlag(rest, "--scope") ?? undefined,
+      initiator: getFlag(rest, "--initiator") ?? undefined,
     });
     if (result.outPath) {
       console.log(`已导出 ${result.lines} 条审计记录 → ${result.outPath}（哈希链头部 ${result.headerHash.slice(0, 12)}，文件哈希 ${result.outHash.slice(0, 12)}）`);

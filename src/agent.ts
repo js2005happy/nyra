@@ -274,6 +274,11 @@ export interface AgentOptions {
    * 只由守护进程的巡查设置，队列任务与人工运行不设。
    */
   unattended?: boolean;
+  /**
+   * O2：本次运行的触发方（person|routine|cron|webhook|handoff|group|gateway；
+   * 默认 person，进运行记录与 run_started 事件，供审计导出按触发方查）。
+   */
+  initiator?: string;
   maxTurns?: number;
   sessionId?: string | null;
   interactive?: boolean;
@@ -722,6 +727,8 @@ export class Agent {
   mode: string;
   /** 缺口 8：无人值守巡查（锁定只读）；false = 有人值守或队列任务。 */
   unattended: boolean;
+  /** O2：本次运行的触发方（默认 person）。 */
+  initiator: string;
   maxTurns: number;
   interactive: boolean;
   sessionId: string;
@@ -839,6 +846,7 @@ export class Agent {
     // 缺口 8：无人值守巡查锁定只读——即使调用方误传了 auto，模式也按只读
     // 走（工具层的 unattended 拒绝是第二道防线，两道都得过才写得了）。
     this.unattended = opts.unattended ?? false;
+    this.initiator = opts.initiator ?? "person";
     if (this.unattended) this.mode = "readonly";
     this.maxTurns = opts.maxTurns ?? 20;
     this.interactive = opts.interactive ?? true;

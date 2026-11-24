@@ -1,6 +1,6 @@
 // src/cronCli.ts — G-P1-38 cron 成熟语义的 CLI：`nyra cron`。
 //
-//   incidents [--kind missed|caught_up|quota_held|quota_released|failed]
+//   incidents [--kind missed|caught_up|quota_held|quota_released|failed|auto_disabled|re_enabled]
 //             [--workflow <名>] [--limit <条数>]   查事故账（新的在前）
 //   policy [set --catch-up once|skip]
 //          [--window-minutes <分钟>] [--hold-minutes <分钟>]
@@ -13,13 +13,13 @@ import { listCronIncidents, type CronIncidentKind } from "./cronMaturity.ts";
 
 const USAGE = [
   "用法：",
-  "  nyra cron incidents [--kind missed|caught_up|quota_held|quota_released|failed] [--workflow <工作流名>] [--limit <条数>]   查事故账（新的在前，默认 20 条）",
+  "  nyra cron incidents [--kind missed|caught_up|quota_held|quota_released|failed|auto_disabled|re_enabled] [--workflow <工作流名>] [--limit <条数>]   查事故账（新的在前，默认 20 条）",
   "  nyra cron policy [set --catch-up once|skip] [--window-minutes <分钟>] [--hold-minutes <分钟>]   看 / 改补跑策略与窗口（窗口 0–1440 分钟，hold 有效期 5–1440 分钟）",
   "  nyra cron hold [status|clear --yes]   看配额 hold 状态 / 强制清掉 hold 戳（只清戳，不动成本暂停；暂停还在时下一轮会重新打戳）",
   "说明：漏跑补跑默认 once（只补跑一次，其余记 missed ×N），统计窗口默认 120 分钟；配额 hold 戳默认 60 分钟。详见 docs/cron-maturity.md。",
 ].join("\n");
 
-const KINDS: CronIncidentKind[] = ["missed", "caught_up", "quota_held", "quota_released", "failed"];
+const KINDS: CronIncidentKind[] = ["missed", "caught_up", "quota_held", "quota_released", "failed", "auto_disabled", "re_enabled"];
 
 const KIND_CN: Record<CronIncidentKind, string> = {
   missed: "漏跑",
@@ -27,6 +27,8 @@ const KIND_CN: Record<CronIncidentKind, string> = {
   quota_held: "配额 hold",
   quota_released: "hold 释放",
   failed: "失败",
+  auto_disabled: "自动关闭",
+  re_enabled: "重新启用",
 };
 
 function flagValue(argv: string[], flag: string): string | null {

@@ -767,6 +767,18 @@ export async function upsertAccount(
 }
 
 /**
+ * O3：非 SSO 登录前的强制 SSO 检查（动态导入：orgs.ts 静态引了 accounts.ts，
+ * 这里静态引回去会成环；登录时才加载一次，失败即拒绝发会话）。
+ */
+async function checkSsoRequirement(
+  home: string,
+  opts: { email?: string | null; accountId?: string | null },
+): Promise<void> {
+  const { assertNonSsoLoginAllowed } = await import("./orgs.ts");
+  assertNonSsoLoginAllowed(home, opts);
+}
+
+/**
  * Google 身份核验（只到取回用户信息为止）：回环回调 → 换 token → 取身份。
  * loginWithGoogle 在此之后建/链账号、发会话；link 流程复用同一段核验。
  */
@@ -822,6 +834,7 @@ export async function loginWithGoogle(opts: {
 }): Promise<{ account: Account; session: { id: string; token: string; expires_at: string } }> {
   const info = await runGoogleIdentity({ client: opts.client, fetchFn: opts.fetchFn, openUrl: opts.openUrl });
   const account = await upsertAccount(opts.home, "google", info, { clock: opts.clock, stores: opts.stores });
+  await checkSsoRequirement(opts.home, { email: account.email, accountId: account.id });
   const sessions = opts.stores?.sessions ?? new AccountSessionStore(opts.home, { clock: opts.clock });
   const session = await sessions.issue(account.id);
   writeCurrentSession(opts.home, { token: session.token, account_id: account.id, issued_at: new Date().toISOString() });
@@ -1022,6 +1035,7 @@ export async function loginWithGithub(opts: {
     clock: opts.clock,
   });
   const account = await upsertAccount(opts.home, "github", info, { clock: opts.clock, stores: opts.stores });
+  await checkSsoRequirement(opts.home, { email: account.email, accountId: account.id });
   const sessions = opts.stores?.sessions ?? new AccountSessionStore(opts.home, { clock: opts.clock });
   const session = await sessions.issue(account.id);
   writeCurrentSession(opts.home, { token: session.token, account_id: account.id, issued_at: new Date().toISOString() });
@@ -1066,6 +1080,7 @@ export async function requestMagicLink(opts: {
   clock?: () => number;
   stores?: AccountsStores;
 }): Promise<{ id: string; expires_at: string }> {
+  await checkSsoRequirement(opts.home, { email: opts.email });
   const store = opts.stores?.magicLinks ?? new MagicLinkStore(opts.home, { clock: opts.clock });
   const issued = await store.issue(opts.email);
   const url = buildMagicLinkUrl(opts.gatewayUrl, issued.token);
@@ -1090,6 +1105,7 @@ export async function loginWithMagicLink(opts: {
   const email = await store.redeem(opts.token);
   if (!email) throw new AccountError("magic link 无效、已过期或已用过，请重新请求");
   const account = await upsertAccount(opts.home, "email", { sub: email, email }, { clock: opts.clock, stores: opts.stores });
+  await checkSsoRequirement(opts.home, { email, accountId: account.id });
   const sessions = opts.stores?.sessions ?? new AccountSessionStore(opts.home, { clock: opts.clock });
   const session = await sessions.issue(account.id);
   writeCurrentSession(opts.home, { token: session.token, account_id: account.id, issued_at: new Date().toISOString() });
