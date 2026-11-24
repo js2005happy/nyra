@@ -18,7 +18,7 @@ function tmpHome(): string {
 }
 
 test("ModelCatalog.test_builtin_values_match_official_docs", () => {
-  expect(MODEL_CATALOG_UPDATED).toBe("2026-11-20");
+  expect(MODEL_CATALOG_UPDATED).toBe("2026-11-24");
   const byId = new Map(MODEL_CATALOG.map((e) => [e.model, e]));
   // DeepSeek：两模型均为 1M 窗口、384K 输出（api-docs.deepseek.com）。
   expect(byId.get("deepseek-flash")?.contextWindow).toBe(1_000_000);
@@ -45,13 +45,29 @@ test("ModelCatalog.test_builtin_values_match_official_docs", () => {
   expect(byId.get("llama-3.3-70b-versatile")?.contextWindow).toBe(131_072);
   expect(byId.get("meta-llama/Llama-3.3-70B-Instruct-Turbo")?.contextWindow).toBe(131_072);
   expect(byId.get("Qwen/Qwen2.5-72B-Instruct-Turbo")?.contextWindow).toBe(32_768);
+  // OpenLux：窗口数来自各家官方文档（2026-11-24 核实），计价一律留空（分组系数计价）。
+  expect(byId.get("deepseek-v4.1-flash")?.contextWindow).toBe(1_000_000);
+  expect(byId.get("deepseek-v4.1-flash")?.maxOutputTokens).toBe(393_216);
+  expect(byId.get("deepseek-v4.1-flash")?.supportsVision).toBe(true);
+  expect(byId.get("claude-sonnet-5-5")?.contextWindow).toBe(1_000_000);
+  expect(byId.get("claude-sonnet-5-5")?.maxOutputTokens).toBe(128_000);
+  expect(byId.get("claude-opus-5-5")?.contextWindow).toBe(1_000_000);
+  expect(byId.get("claude-sonnet-5")?.contextWindow).toBe(1_000_000);
+  expect(byId.get("claude-fable-5-2")?.contextWindow).toBe(1_000_000);
+  expect(byId.get("gemini-3.8-flash")?.contextWindow).toBe(1_000_000);
+  expect(byId.get("gemini-3.7-flash")?.contextWindow).toBe(1_000_000);
+  for (const id of ["deepseek-v4.1-flash", "claude-sonnet-5-5", "claude-opus-5-5", "gemini-3.8-flash"]) {
+    expect(byId.get(id)?.inputPricePer1M).toBe(null);
+    expect(byId.get(id)?.outputPricePer1M).toBe(null);
+    expect(byId.get(id)?.provider).toBe("openlux");
+  }
   // Ollama 本地模型记原生窗口，并注明实际受 num_ctx 影响。
   expect(byId.get("qwen2.5:7b")?.contextWindow).toBe(32_768);
   expect(byId.get("qwen2.5:7b")?.note).toContain("num_ctx");
   // 每条都有来源 URL 与核实日期，计价没把握的留空不编数。
   for (const e of MODEL_CATALOG) {
     expect(e.source.startsWith("https://")).toBe(true);
-    expect(e.updated).toBe("2026-11-20");
+    expect(["2026-11-20", "2026-11-24"]).toContain(e.updated);
     expect(Number.isInteger(e.contextWindow) && e.contextWindow > 0).toBe(true);
   }
   // 覆盖 config.ts 里 PROVIDERS 的全部模型（codex-default 除外：窗口由本机 Codex 决定）。

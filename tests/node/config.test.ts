@@ -12,16 +12,22 @@ function tmpHome(): string {
   return mkdtempSync(join(tmpdir(), "nyra-cfg-test-"));
 }
 
-test("14 个 provider 预置齐全，默认 deepseek/deepseek-flash", () => {
+test("15 个 provider 预置齐全，默认 deepseek/deepseek-flash", () => {
   expect(Object.keys(PROVIDERS).sort()).toEqual(
     ["codex", "custom", "deepseek", "gemini", "glm", "groq", "kimi", "mistral",
-     "ollama", "openai", "openrouter", "qwen", "together", "xai"].sort());
+     "ollama", "openai", "openlux", "openrouter", "qwen", "together", "xai"].sort());
   expect(DEFAULT_CONFIG.provider).toBe("deepseek");
   expect(DEFAULT_CONFIG.model).toBe("deepseek-flash");
   expect(DEFAULT_CONFIG.fallback_enabled).toBe(false); // 兜底默认关闭（用户定的安全事项）
   expect(PROVIDERS.deepseek.envKey).toBe("DEEPSEEK_API_KEY");
   expect(PROVIDERS.qwen.envKey).toBe("DASHSCOPE_API_KEY");
   expect(PROVIDERS.codex.auth).toBe("cli");
+  // OpenLux：OpenAI 兼容中转，一个 Key 调 300+ 模型。
+  expect(PROVIDERS.openlux.baseUrl).toBe("https://api.openlux.ai/v1");
+  expect(PROVIDERS.openlux.envKey).toBe("OPENLUX_API_KEY");
+  expect(PROVIDERS.openlux.defaultModel).toBe("deepseek-v4.1-flash");
+  expect(PROVIDERS.openlux.allowedHosts).toEqual(["api.openlux.ai"]);
+  expect(PROVIDERS.openlux.models).toContain("claude-sonnet-5-5");
 });
 
 test("NYRA_HOME 优先于 ~/.nyra；ANGEL_HOME 不再绕过旧目录", () => {
