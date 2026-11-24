@@ -15,7 +15,7 @@
 #   ./scripts/install-node-macos.sh [--version TAG] [--from-file PATH]
 #                                   [--prefix DIR] [--bin-dir DIR]
 #                                   [--with-launchd] [--uninstall] [--help]
-#   默认 --version 是下面 DEFAULT_VERSION 钉住的版本（当前 v0.5.12，
+#   默认 --version 是下面 DEFAULT_VERSION 钉住的版本（当前 v0.5.11，
 #   发版时改那一处）；已编好二进制时用 --from-file 本地安装。
 #   --version 传版本号时带 v 前缀，如 v0.5.1（不带 v 也行，脚本会补上）；
 #   latest 也可显式传，但仍要校验。
@@ -36,9 +36,9 @@ set -euo pipefail
 REPO="js2005happy/nyra"
 # 默认安装版本（钉住，不再是无校验的 latest）。发版时改这一处，
 # 同时改 install-node.sh、install-node.ps1 与 docs/installers.md。
-# 注意：v0.5.12 尚未正式发版（本批不打 tag、不发 Release），在它发版
-# 之前默认安装会因下载不到而拒绝——这是有意的 fail-closed，不是 bug。
-DEFAULT_VERSION="v0.5.12"
+# 默认版本只指向已经发布、附件齐全（含 SHA256SUMS）的 Release：发版流程在新 Release
+# 挂齐附件之后才改这里，CI（installer-release-check）会核对这一点。
+DEFAULT_VERSION="v0.5.11"
 VERSION="$DEFAULT_VERSION"
 FROM_FILE=""
 PREFIX="${HOME}/.local/share/nyra"
@@ -74,7 +74,7 @@ usage() {
     cat <<'EOF'
 
 选项：
-  --version TAG      Release 版本（默认 DEFAULT_VERSION 钉住的 v0.5.12）
+  --version TAG      Release 版本（默认 DEFAULT_VERSION 钉住的 v0.5.11）
   --from-file PATH   从本地已编好的二进制安装（不联网下载）
   --prefix DIR       安装位置（默认 ~/.local/share/nyra）
   --bin-dir DIR      nyra 链接位置（默认 ~/.local/bin）
@@ -150,6 +150,21 @@ verify_asset() {
     log "哈希校验通过：$asset"
 }
 
+# 下载前先确认这个版本真的发布了：Release 里没有这个文件时 GitHub 回 404。
+# 这时直接说“还没发布”，不再让人去查网络。用 1 字节的 GET（Range: 0-0）探测，
+# 不用 HEAD（Release 附件对 HEAD 会回 401）。网络本身不通时不在这里拦，交给下载报错。
+check_released() {
+    local url="$1" code=""
+    if command -v curl >/dev/null 2>&1; then
+        code="$(curl -sL -o /dev/null -r 0-0 -w '%{http_code}' "$url" 2>/dev/null || true)"
+    elif command -v wget >/dev/null 2>&1; then
+        code="$(wget -q -S -O /dev/null --header='Range: bytes=0-0' "$url" 2>&1 | awk '/^  HTTP\//{c=$2} END{print c}' || true)"
+    fi
+    if [ "$code" = "404" ]; then
+        die "版本 $VERSION 还没发布（Release 里找不到 $(basename "$url")）。请用 --version 指定一个已发布的版本（见 https://github.com/$REPO/releases），或稍后再试。"
+    fi
+}
+
 if [ "$UNINSTALL" -eq 1 ]; then
     check_prefix "$PREFIX"
     launchctl unload "$PLIST_DST" 2>/dev/null || true
@@ -174,6 +189,7 @@ else
     else
         URL="https://github.com/$REPO/releases/download/$VERSION/$ASSET"
     fi
+    check_released "$URL"
     log "下载 $URL"
     # 先下到临时文件、成功后再 mv 到位：下载失败时不留半截二进制。
     TMP_BIN="$PREFIX/nyra.tmp.$$"

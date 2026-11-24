@@ -2,7 +2,7 @@
 // 只测纯逻辑与参数构造（SHA256SUMS 解析、单字节篡改必败、缺失清单报错、
 // gh 轮询参数），不调网络、不调 gh、不花钱；全部用临时目录。
 import { test, expect } from "bun:test";
-import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -112,11 +112,16 @@ test("ReleaseVerifyTest.test_version_normalize_and_download_urls", () => {
   );
 });
 
-test("ReleaseVerifyTest.test_pinned_install_version_is_unreleased_dev_target", () => {
-  // 安装脚本默认钉住的版本就是 CHANGELOG 顶部未发布的 0.5.12；
-  // 本批不打 tag、不发 Release，所以该版本尚无 Release，安装脚本
-  // 在它发版前会 fail-closed（下载不到或没有 SHA256SUMS 就拒绝）。
-  expect(PINNED_INSTALL_VERSION).toBe("v0.5.12");
+test("ReleaseVerifyTest.test_pinned_install_version_matches_all_three_installers", () => {
+  // 默认版本只指向已发布、附件齐全的 Release（CI 的 installer-release-check 联网核对附件）；
+  // 这里离线核对：三份安装脚本与 PINNED_INSTALL_VERSION 是同一个版本号。
+  const root = join(import.meta.dir, "..", "..");
+  const sh = readFileSync(join(root, "scripts", "install-node.sh"), "utf-8").match(/^DEFAULT_VERSION="([^"]+)"/m)?.[1];
+  const mac = readFileSync(join(root, "scripts", "install-node-macos.sh"), "utf-8").match(/^DEFAULT_VERSION="([^"]+)"/m)?.[1];
+  const ps = readFileSync(join(root, "scripts", "install-node.ps1"), "utf-8").match(/\[string\]\$Version = "([^"]+)"/)?.[1];
+  expect(sh).toBe(PINNED_INSTALL_VERSION);
+  expect(mac).toBe(PINNED_INSTALL_VERSION);
+  expect(ps).toBe(PINNED_INSTALL_VERSION);
 });
 
 test("ReleaseVerifyTest.test_list_artifacts_skips_sums_and_attestations", () => {

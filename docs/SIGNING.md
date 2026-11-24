@@ -34,7 +34,7 @@ git tag v0.5.0 && git push origin v0.5.0
 2. **签名工作流根本没启动**：Release 是 CI 用默认 `GITHUB_TOKEN` 建的（`node-binaries.yml` 的 softprops/action-gh-release），GitHub 不会因此触发 `release: published` 工作流——用 `GITHUB_TOKEN` 触发的事件（除 workflow_dispatch / repository_dispatch 外）不会再触发新的 workflow run。所以只靠 `release: published` 时，tag 推送建 Release 根本不会启动签名。已改走 `workflow_run`：Node binaries 跑完（它负责建 Release）即触发，等待循环再等桌面/手机产物挂齐；手动建的 Release 仍走 `release` 事件，手动重跑仍走 `workflow_dispatch`。
 3. **等待循环没有 fail-closed 出口**：以前等满 50 分钟仍缺产物时，脚本会照常下载、签名一份不全的清单。已补：等不到就直接失败，不签不全的清单。
 
-`SHA256SUMS` 从 0.5.12 起恢复；v0.5.2–v0.5.11 的 Release 不回头补（没法对已发版的产物事后证明“构建时”状态）。安装脚本默认钉住 v0.5.12 并强制校验：下载后先对同一 Release 的 `SHA256SUMS` 校验，哈希对不上、清单里没有、下载不到 `SHA256SUMS`，一律拒绝安装；`verify-release.sh` 在没有 `SHA256SUMS` 时直接报“没有 SHA256SUMS”并退出码 1。
+`SHA256SUMS` 从 0.5.12 起恢复。v0.5.11 在 2026-11-24 手动跑签名工作流补了 `SHA256SUMS` 与签名，好让安装脚本能装它；这份签名只证明“签名时 Release 上的这些文件”，不是构建时的来源证明。v0.5.2–v0.5.10 不回头补。安装脚本默认钉住一个已发布、附件齐全的版本（见 docs/installers.md）并强制校验：下载后先对同一 Release 的 `SHA256SUMS` 校验，哈希对不上、清单里没有、下载不到 `SHA256SUMS`，一律拒绝安装；`verify-release.sh` 在没有 `SHA256SUMS` 时直接报“没有 SHA256SUMS”并退出码 1。
 
 Release 页面会多出这些文件：
 
