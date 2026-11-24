@@ -9,10 +9,14 @@
 // 都刷新 last_seen，常用设备永不过期；长期不用的设备 token 被剪掉，
 // 丢了的旧手机不会一直能连。过期判断只看 last_seen，改动对用户透明。
 // 配对成功发设备专属 token（只此一次返回），磁盘只存 SHA-256；文件 0600、
-// 原子写入。配对码与 token 均为明文传输（HTTP 与 UDP），只在可信网络上配对：
+// 原子写入。配对码与 token 默认是明文传输（HTTP 与 UDP），只在可信网络上配对：
 // 适用范围就是本机局域网发现 + 本机 HTTP 端口，不要跨公网配对；
 // 这是局域网配对的常规做法，改成 HTTPS 需要给每台电脑发证书，
 // 普通用户配不起来，所以保留明文并写清范围，不假装它安全。
+// 加密路径：POST /api/pair/encrypted（src/pairingCrypto.ts），手机在安全上下文
+// （HTTPS 或 localhost）时走 ECDH + HKDF + AES-256-GCM 加密换 token；
+// 经明文 HTTP 局域网 IP 加载的手机页上 WebCrypto 不可用，
+// 仍回落明文 /api/pair，配对页会明说当前连接未加密。
 // 注意：PairingHost 的 CODE_TTL_SECONDS=600 是另一条旧路径，网页端走
 // DeviceRegistry 的 300 秒，以此为准。
 import { createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
