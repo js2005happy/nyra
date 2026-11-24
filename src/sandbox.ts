@@ -63,6 +63,13 @@ export interface ResolvedSandbox {
   jobObjectAvailable?: boolean;
 }
 
+// 仅测试用：全局探测覆盖。端到端测试（CLI main / 网关）没法把 probe 一路传进去，
+// 用它模拟 macOS/Windows；生产代码从不调用，未设置时走真实探测。
+let probeOverride: SandboxProbe | undefined;
+export function setSandboxProbeForTests(probe?: SandboxProbe): void {
+  probeOverride = probe;
+}
+
 /** bwrap 不可用时抛出的错误：调用方据此降级或 fail-closed，绝不静默裸奔。 */
 export class SandboxUnavailableError extends Error {
   constructor(message: string) {
@@ -147,6 +154,7 @@ export function resolveSandboxBackend(
   flag?: string | null,
   probe?: SandboxProbe,
 ): ResolvedSandbox {
+  probe = probe ?? probeOverride;
   const cfg = config ?? {};
   const raw = flag ?? sandboxEnv("SANDBOX") ?? (cfg.sandbox as string | undefined) ?? "auto";
   if (!(SANDBOX_BACKENDS as readonly string[]).includes(raw)) {
@@ -272,6 +280,7 @@ export function getSandboxStatus(
   flag?: string | null,
   probe?: SandboxProbe,
 ): SandboxStatus {
+  probe = probe ?? probeOverride;
   const bwrapAvailable = probe?.bwrapAvailable ?? detectBwrap();
   const seatbeltAvailableFlag = probe?.seatbeltAvailable ?? seatbeltAvailable();
   const jobObjectAvailableFlag = probe?.jobObjectAvailable ?? windowsSandboxAvailable();

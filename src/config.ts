@@ -9,6 +9,7 @@ import { getCredential } from "./vault.ts";
 import { getFileKey } from "./keystore.ts";
 
 import { effectiveValue } from "./enforcedConfig.ts";
+import { SANDBOX_BACKENDS } from "./sandbox.ts";
 
 export const VERSION = "0.5.12-dev";
 
@@ -240,7 +241,9 @@ export const DEFAULT_CONFIG: Record<string, unknown> = {
 };
 
 export const VALID_MODES = ["readonly", "auto", "full", "creator"] as const;
-export const VALID_SANDBOXES = ["auto", "local", "bwrap", "e2b"] as const;
+// 沙箱后端只维护一份：直接复用 sandbox.ts 的 SANDBOX_BACKENDS（含 macOS seatbelt、
+// Windows jobobject），CLI 参数、config.json 与网关走同一张表。
+export const VALID_SANDBOXES = SANDBOX_BACKENDS;
 // 调研报告第 9 项：OS 级分级沙箱（学 Codex CLI）——三档沙箱模式。
 export const VALID_SANDBOX_MODES = ["read-only", "workspace-write", "danger-full-access"] as const;
 export const PLAINTEXT_HTTP_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
