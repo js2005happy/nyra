@@ -55,9 +55,13 @@ Codex 决定，Nyra 从配置里看不到窗口，走 unknown 分支说明原因
 | codestral-latest | 262,144 | mistral.ai/pricing |
 | llama-3.3-70b-versatile / llama-3.1-8b-instant / openai/gpt-oss-120b | 131,072 | groq.com/pricing |
 | meta-llama/Llama-3.3-70B-Instruct-Turbo 等（Together） | 131,072；Qwen2.5-72B 为 32,768 | together.ai/pricing |
+| deepseek-v4.1-flash（OpenLux） | 1,000,000（输出上限 393,216） | api-docs.deepseek.com/quick_start/pricing（2026-11-24 核实） |
+| claude-sonnet-5-5 / claude-opus-5-5 / claude-sonnet-5 / claude-fable-5-2（OpenLux） | 1,000,000（输出上限 128,000） | platform.claude.com/docs/about-claude/models/overview（2026-11-24 核实） |
+| gemini-3.8-flash / gemini-3.7-flash（OpenLux） | 1,000,000 | openlux.ai/pricing（2026-11-24 核实） |
 
 注意：
 
+- **OpenLux**：表里只记窗口（各家官方文档核实）；计价一律留空——OpenLux 按建 Key 时选的分组系数（官方价 × 系数）计费，分组不同价不同，见 openlux.ai/pricing。GPT-6 系与 gemini-4-argon 未在官方文档里核实到窗口，不进表；照样能用 `--model` 透传，窗口走 unknown 分支说明原因。
 - **Ollama**：表里记的是模型原生窗口。Ollama 默认 `num_ctx` 为 4096，
   实际窗口以 Ollama 配置为准；`nyra models show qwen2.5:7b` 会提示这一点。
 - **xAI 长上下文价**：grok 模型 prompt 超过 200,000 token 后按更高一档计费，
