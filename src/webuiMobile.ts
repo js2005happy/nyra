@@ -16,6 +16,8 @@ import { MASCOT_COMPOSE_JS, mascotClientData, mascotSvg } from "./mascots.ts";
 import APP_CSS from "./assets/mobile-app.css.txt" with { type: "text" };
 import APP_JS from "./assets/mobile-app.js.txt" with { type: "text" };
 import SPLASH_JS from "./assets/mobile-splash.js.txt" with { type: "text" };
+// 安全 Markdown 渲染（桌面 / 手机共用，只建 DOM 不写 innerHTML）。
+import MD_JS from "./assets/markdown.js.txt" with { type: "text" };
 import INTER_400 from "./assets/mobile-fonts/inter-400.woff.b64.txt" with { type: "text" };
 import INTER_600 from "./assets/mobile-fonts/inter-600.woff.b64.txt" with { type: "text" };
 import JBM_400 from "./assets/mobile-fonts/jbm-400.woff.b64.txt" with { type: "text" };
@@ -285,5 +287,6 @@ ${Object.entries(IC).map(([k, v]) => `<template id="ic-${k}">${v}</template>`).j
 <script>window.NYRA_I18N=${I18N_JSON};window.NYRA_MASCOTS=${MASCOT_JSON};</script>
 <script>${MASCOT_COMPOSE_JS}</script>
 <script>${SPLASH_JS}</script>
+<script>${MD_JS}</script>
 <script>${APP_JS}</script>
 </body></html>`;

@@ -14,6 +14,8 @@ import { NYRA_AVATAR } from "./nyraAvatar.ts";
 import APP_CSS from "./assets/desktop-app.css.txt" with { type: "text" };
 import APP_JS from "./assets/desktop-app.js.txt" with { type: "text" };
 import SPLASH_JS from "./assets/mobile-splash.js.txt" with { type: "text" };
+// 安全 Markdown 渲染（桌面 / 手机共用，只建 DOM 不写 innerHTML）。
+import MD_JS from "./assets/markdown.js.txt" with { type: "text" };
 
 /** 设计稿令牌（nyra-design v2 kit.py）。测试核对 CSS 里用的就是这几组值。 */
 export const DESKTOP_COLORS = {
@@ -124,5 +126,6 @@ ${NAV}
 </div></div>
 <script>window.NYRA_I18N=${I18N_JSON};</script>
 <script>${SPLASH_JS}</script>
+<script>${MD_JS}</script>
 <script>${APP_JS}</script>
 </body></html>`;

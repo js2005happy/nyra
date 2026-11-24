@@ -563,7 +563,7 @@ function renderFeed(v){
     tu.items.forEach((m, i) => {
       if (i === finalIdx || m.role === 'tool') return;
       const txt = textOf(m);
-      if (txt) proc.push(el('div', 'r txt', txt));
+      if (txt) proc.push(mdEl('r txt', txt));
       (m.tool_calls || []).forEach(c => { n++; proc.push(stepRow((c.function && c.function.name) || '?', argsOf(c))); });
     });
     const hasNyra = tu.items.some(m => m.role === 'assistant') || (last && (running || pend));
@@ -573,7 +573,7 @@ function renderFeed(v){
     if (liveNow) col.appendChild(liveLine(tu.ev || null));
     else { const who = el('div', 'who-row'); who.appendChild(avatar(last && pend ? 'wait-s' : 'done-s')); who.appendChild(el('span', '', 'Nyra')); col.appendChild(who); }
     if (n) col.appendChild(processBlock(proc, n, false));
-    else proc.forEach(p => { p.className = 'p'; col.appendChild(p); });
+    else proc.forEach(p => { p.className = p.classList.contains('md') ? 'p md' : 'p'; col.appendChild(p); });
     if (finalIdx >= 0) {
       const m = tu.items[finalIdx]; const txt = textOf(m);
       const b = bubble(m, all, txt, 'p'); col.appendChild(b);
@@ -604,9 +604,15 @@ function renderFeed(v){
   if (!msgs.length && !running) col.appendChild(el('div', 'empty', t('d.threadEmpty')));
   if (nearBottom || pend) feedEl.scrollTop = feedEl.scrollHeight;
 }
+// 助手文字用安全 Markdown 渲染（表格、列表、行内代码）；用户自己的话原样显示。
+function mdEl(cls, txt){
+  const d = el('div', cls);
+  if (window.NyraMd) { try { window.NyraMd.render(txt, d, document); return d; } catch (e) { /* 回退纯文字 */ } }
+  d.textContent = txt; return d;
+}
 function bubble(m, all, txt, cls){
   const wrap = el('div', 'msg' + (cls === 'u' ? ' u-wrap' : ''));
-  const b = el('div', cls, txt); wrap.appendChild(b);
+  const b = cls === 'u' ? el('div', cls, txt) : mdEl(cls, txt); wrap.appendChild(b);
   const index = all.indexOf(m);
   if (index >= 0) { b.title = t('d.rewindHint'); b.style.cursor = 'pointer'; b.onclick = () => toggleRewind(wrap, index, txt); }
   return wrap;

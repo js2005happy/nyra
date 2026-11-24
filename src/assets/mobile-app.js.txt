@@ -492,7 +492,12 @@ function renderFeed(v){
   window.scrollTo(0, document.body.scrollHeight);
 }
 function bubble(m, all, txt){
-  const b = el('div', m.role === 'user' ? 'u' : 'p', txt);
+  // 助手回复用安全 Markdown 渲染（表格可横向滚动）；用户自己的话原样显示。
+  let b;
+  if (m.role !== 'user' && window.NyraMd) {
+    b = el('div', 'p');
+    try { window.NyraMd.render(txt, b, document); } catch (e) { b.textContent = txt; }
+  } else b = el('div', m.role === 'user' ? 'u' : 'p', txt);
   // 点一下消息展开回退操作（回退到此 / 编辑重发 / Fork 新会话）。
   const index = all.indexOf(m);
   if (index >= 0) b.onclick = () => toggleRewind(b, index, txt);

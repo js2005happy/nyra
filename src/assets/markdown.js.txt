@@ -1,0 +1,189 @@
+// Nyra 安全 Markdown 渲染（桌面网页 / 手机 /m 共用）。
+// 只用 createElement + 文本节点搭 DOM，从不写 innerHTML：原始 HTML 一律当普通文字显示；
+// 链接只放行 http:// https:// mailto:，其余（javascript:、data: 等）退回纯文字。
+// 支持：标题、段落、无序/有序列表（可嵌套一层缩进）、引用、分隔线、代码块、
+// 行内代码、粗体、斜体、删除线、链接、表格（外包一层可横向滚动的容器）。
+(function (root) {
+  'use strict';
+  var SAFE_LINK = /^(https?:\/\/|mailto:)/i;
+
+  function inline(src) {
+    // 返回节点描述数组：{t:'text',v} | {t:'code',v} | {t:'strong'|'em'|'del',c:[...]} | {t:'a',href,c:[...]}
+    var out = [];
+    var buf = '';
+    var i = 0;
+    function flush() { if (buf) { out.push({ t: 'text', v: buf }); buf = ''; } }
+    while (i < src.length) {
+      var ch = src[i];
+      if (ch === '\\' && i + 1 < src.length && /[\\`*_~\[\]()#+\-.!|>]/.test(src[i + 1])) { buf += src[i + 1]; i += 2; continue; }
+      if (ch === '`') {
+        var n = 1; while (src[i + n] === '`') n++;
+        var fence = src.substr(i, n);
+        var end = src.indexOf(fence, i + n);
+        if (end > i) { flush(); out.push({ t: 'code', v: src.slice(i + n, end).replace(/^ (.*) $/, '$1') }); i = end + n; continue; }
+        buf += fence; i += n; continue;
+      }
+      if ((ch === '*' || ch === '_') && src[i + 1] === ch) {
+        var close = src.indexOf(ch + ch, i + 2);
+        if (close > i + 2) { flush(); out.push({ t: 'strong', c: inline(src.slice(i + 2, close)) }); i = close + 2; continue; }
+      }
+      if (ch === '~' && src[i + 1] === '~') {
+        var cl = src.indexOf('~~', i + 2);
+        if (cl > i + 2) { flush(); out.push({ t: 'del', c: inline(src.slice(i + 2, cl)) }); i = cl + 2; continue; }
+      }
+      if ((ch === '*' || ch === '_') && src[i + 1] && src[i + 1] !== ' ' && src[i + 1] !== ch) {
+        var prev = i > 0 ? src[i - 1] : ' ';
+        if (ch === '*' || !/[A-Za-z0-9]/.test(prev)) {
+          var ce = src.indexOf(ch, i + 1);
+          if (ce > i + 1 && src[ce - 1] !== ' ') { flush(); out.push({ t: 'em', c: inline(src.slice(i + 1, ce)) }); i = ce + 1; continue; }
+        }
+      }
+      if (ch === '[') {
+        var m = /^\[([^\]\n]*)\]\(([^)\s]*)(?:\s+"[^"]*")?\)/.exec(src.slice(i));
+        if (m) {
+          flush();
+          var href = m[2].trim();
+          if (SAFE_LINK.test(href)) out.push({ t: 'a', href: href, c: inline(m[1]) });
+          else out.push({ t: 'text', v: m[1] || href });
+          i += m[0].length; continue;
+        }
+      }
+      if (ch === 'h' && (src.startsWith('http://', i) || src.startsWith('https://', i)) && (i === 0 || /[\s(（]/.test(src[i - 1]))) {
+        var um = /^https?:\/\/[^\s<>()（）]+/.exec(src.slice(i));
+        if (um) { var u = um[0].replace(/[.,;:!?。，；：！？]+$/, ''); flush(); out.push({ t: 'a', href: u, c: [{ t: 'text', v: u }] }); i += u.length; continue; }
+      }
+      buf += ch; i++;
+    }
+    flush();
+    return out;
+  }
+
+  function splitRow(line) {
+    var s = line.trim();
+    if (s[0] === '|') s = s.slice(1);
+    if (s[s.length - 1] === '|' && s[s.length - 2] !== '\\') s = s.slice(0, -1);
+    var cells = []; var cur = '';
+    for (var i = 0; i < s.length; i++) {
+      if (s[i] === '\\' && s[i + 1] === '|') { cur += '|'; i++; continue; }
+      if (s[i] === '|') { cells.push(cur.trim()); cur = ''; continue; }
+      cur += s[i];
+    }
+    cells.push(cur.trim());
+    return cells;
+  }
+  var DELIM = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/;
+  var LIST = /^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/;
+
+  function parse(text) {
+    var lines = String(text == null ? '' : text).replace(/\r\n?/g, '\n').split('\n');
+    var blocks = [];
+    var i = 0;
+    while (i < lines.length) {
+      var line = lines[i];
+      if (!line.trim()) { i++; continue; }
+      var fm = /^\s*(```+|~~~+)\s*([\w+-]*)\s*$/.exec(line);
+      if (fm) {
+        var body = []; i++;
+        while (i < lines.length && lines[i].trim().indexOf(fm[1]) !== 0) { body.push(lines[i]); i++; }
+        i++;
+        blocks.push({ t: 'pre', lang: fm[2] || '', v: body.join('\n') });
+        continue;
+      }
+      var hm = /^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/.exec(line);
+      if (hm) { blocks.push({ t: 'h', level: Math.min(hm[1].length + 2, 6), c: inline(hm[2]) }); i++; continue; }
+      if (/^\s{0,3}([-*_])(\s*\1){2,}\s*$/.test(line)) { blocks.push({ t: 'hr' }); i++; continue; }
+      if (line.indexOf('|') >= 0 && i + 1 < lines.length && DELIM.test(lines[i + 1])) {
+        var head = splitRow(line);
+        var aligns = splitRow(lines[i + 1]).map(function (c) { return /^:-+:$/.test(c) ? 'center' : /-+:$/.test(c) ? 'right' : /^:-+/.test(c) ? 'left' : ''; });
+        var rows = []; i += 2;
+        while (i < lines.length && lines[i].trim() && lines[i].indexOf('|') >= 0) { rows.push(splitRow(lines[i])); i++; }
+        blocks.push({ t: 'table', align: aligns, head: head.map(inline), rows: rows.map(function (r) { var cells = []; for (var k = 0; k < head.length; k++) cells.push(inline(r[k] || '')); return cells; }) });
+        continue;
+      }
+      if (/^\s{0,3}>/.test(line)) {
+        var q = [];
+        while (i < lines.length && /^\s{0,3}>/.test(lines[i])) { q.push(lines[i].replace(/^\s{0,3}>\s?/, '')); i++; }
+        blocks.push({ t: 'quote', c: parse(q.join('\n')) });
+        continue;
+      }
+      var lm = LIST.exec(line);
+      if (lm) {
+        var ordered = /\d/.test(lm[2]);
+        var baseIndent = lm[1].length;
+        var items = []; var start = ordered ? parseInt(lm[2], 10) : 1;
+        while (i < lines.length) {
+          var l2 = lines[i];
+          var m2 = LIST.exec(l2);
+          if (m2 && m2[1].length <= baseIndent + 1 && /\d/.test(m2[2]) === ordered) { items.push([m2[3]]); i++; continue; }
+          if (!l2.trim()) {
+            var nx = lines[i + 1];
+            var nm = nx !== undefined ? LIST.exec(nx) : null;
+            if (nm && nm[1].length <= baseIndent + 1 && /\d/.test(nm[2]) === ordered) { i++; continue; }
+            if (nx !== undefined && /^\s{2,}\S/.test(nx) && items.length) { items[items.length - 1].push(''); i++; continue; }
+            break;
+          }
+          if (items.length && (/^\s{2,}\S/.test(l2) || (m2 && m2[1].length > baseIndent + 1))) { items[items.length - 1].push(l2.replace(/^\s{2,4}/, '')); i++; continue; }
+          if (items.length && !m2 && !/^\s*(```|~~~|#|>)/.test(l2) && !DELIM.test(lines[i + 1] || '')) { items[items.length - 1][0] += ' ' + l2.trim(); i++; continue; }
+          break;
+        }
+        blocks.push({ t: ordered ? 'ol' : 'ul', start: start, items: items.map(function (it) { return it.length === 1 ? [{ t: 'p', tight: true, c: inline(it[0]) }] : parse(it.join('\n')).map(function (b) { if (b.t === 'p') b.tight = true; return b; }); }) });
+        continue;
+      }
+      var para = [line.trim()]; i++;
+      while (i < lines.length && lines[i].trim() && !/^\s*(```|~~~)/.test(lines[i]) && !/^\s{0,3}(#{1,6}\s|>)/.test(lines[i]) && !LIST.exec(lines[i]) && !(lines[i].indexOf('|') >= 0 && DELIM.test(lines[i + 1] || ''))) { para.push(lines[i].trim()); i++; }
+      blocks.push({ t: 'p', c: inline(para.join('\n')) });
+    }
+    return blocks;
+  }
+
+  function build(doc, nodes, parent) {
+    nodes.forEach(function (n) {
+      var e;
+      switch (n.t) {
+        case 'text': {
+          var parts = n.v.split('\n');
+          parts.forEach(function (p, k) { if (k) parent.appendChild(doc.createElement('br')); if (p) parent.appendChild(doc.createTextNode(p)); });
+          return;
+        }
+        case 'code': e = doc.createElement('code'); e.appendChild(doc.createTextNode(n.v)); break;
+        case 'strong': case 'em': case 'del': e = doc.createElement(n.t); build(doc, n.c, e); break;
+        case 'a':
+          e = doc.createElement('a');
+          if (SAFE_LINK.test(n.href)) { e.setAttribute('href', n.href); e.setAttribute('target', '_blank'); e.setAttribute('rel', 'noopener noreferrer nofollow'); }
+          build(doc, n.c, e); break;
+        case 'p': e = doc.createElement(n.tight ? 'div' : 'p'); build(doc, n.c, e); break;
+        case 'h': e = doc.createElement('h' + n.level); build(doc, n.c, e); break;
+        case 'hr': e = doc.createElement('hr'); break;
+        case 'pre': { e = doc.createElement('pre'); var c = doc.createElement('code'); c.appendChild(doc.createTextNode(n.v)); e.appendChild(c); break; }
+        case 'quote': e = doc.createElement('blockquote'); build(doc, n.c, e); break;
+        case 'ul': case 'ol':
+          e = doc.createElement(n.t);
+          if (n.t === 'ol' && n.start !== 1) e.setAttribute('start', String(n.start));
+          n.items.forEach(function (it) { var li = doc.createElement('li'); build(doc, it, li); e.appendChild(li); });
+          break;
+        case 'table': {
+          e = doc.createElement('div'); e.setAttribute('class', 'md-table');
+          var tb = doc.createElement('table'); var th = doc.createElement('thead'); var tr = doc.createElement('tr');
+          n.head.forEach(function (cell, k) { var x = doc.createElement('th'); if (n.align[k]) x.setAttribute('style', 'text-align:' + n.align[k]); build(doc, cell, x); tr.appendChild(x); });
+          th.appendChild(tr); tb.appendChild(th);
+          var body = doc.createElement('tbody');
+          n.rows.forEach(function (r) { var rr = doc.createElement('tr'); r.forEach(function (cell, k) { var x = doc.createElement('td'); if (n.align[k]) x.setAttribute('style', 'text-align:' + n.align[k]); build(doc, cell, x); rr.appendChild(x); }); body.appendChild(rr); });
+          tb.appendChild(body); e.appendChild(tb); break;
+        }
+        default: return;
+      }
+      parent.appendChild(e);
+    });
+    return parent;
+  }
+
+  /** 把 Markdown 渲染进 target（先清空）；返回 target。 */
+  function render(text, target, doc) {
+    doc = doc || target.ownerDocument || root.document;
+    while (target.firstChild) target.removeChild(target.firstChild);
+    target.classList && target.classList.add('md');
+    return build(doc, parse(text), target);
+  }
+
+  root.NyraMd = { parse: parse, inline: inline, render: render, build: build };
+})(typeof window !== 'undefined' ? window : globalThis);
