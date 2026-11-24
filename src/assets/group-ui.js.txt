@@ -114,7 +114,7 @@
       select.value = names.includes(current) ? current : "";
     }
   }
-  const FALLBACK_PROVIDERS = ["", "deepseek", "xai", "openrouter", "ollama", "openai", "qwen", "kimi", "glm", "gemini", "mistral", "groq", "together", "custom", "codex"];
+  const FALLBACK_PROVIDERS = ["", "deepseek", "xai", "openrouter", "openlux", "ollama", "openai", "qwen", "kimi", "glm", "gemini", "mistral", "groq", "together", "custom", "codex"];
   async function refreshProviders() {
     try {
       const info = await api("/api/info");

@@ -1285,9 +1285,9 @@ async function maybeSetup(force){
   $('setup').classList.remove('hidden');
   renderSetup();
 }
-const BRAND = { deepseek: 'DeepSeek', openai: 'OpenAI', gemini: 'Gemini', qwen: 'Qwen', kimi: 'Kimi', glm: 'GLM', mistral: 'Mistral', groq: 'Groq', together: 'Together', xai: 'xAI', openrouter: 'OpenRouter', ollama: 'Ollama', codex: 'Codex' };
+const BRAND = { deepseek: 'DeepSeek', openai: 'OpenAI', gemini: 'Gemini', qwen: 'Qwen', kimi: 'Kimi', glm: 'GLM', mistral: 'Mistral', groq: 'Groq', together: 'Together', xai: 'xAI', openrouter: 'OpenRouter', openlux: 'OpenLux', ollama: 'Ollama', codex: 'Codex' };
 const brand = (id) => BRAND[id] || id;
-const SETUP_ORDER = ['deepseek', 'openai', 'gemini', 'qwen', 'kimi', 'glm', 'mistral', 'groq', 'together', 'xai', 'openrouter', 'ollama'];
+const SETUP_ORDER = ['deepseek', 'openai', 'gemini', 'qwen', 'kimi', 'glm', 'mistral', 'groq', 'together', 'xai', 'openrouter', 'openlux', 'ollama'];
 function renderSetup(){
   const s = S.setupData; const box = $('setup-provs'); box.innerHTML = '';
   const provs = s.providers.filter(p => p.needs_key || p.provider === 'ollama').filter(p => p.provider !== 'custom');
