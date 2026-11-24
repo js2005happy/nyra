@@ -117,7 +117,7 @@ import { resolveSandboxBackend, getSandboxStatus } from "./sandbox.ts";
 // G-P1-39：命令后端可换——buildAgent 把解析出的生效后端 id 透传给 Agent。
 import { resolveActiveBackend } from "./commandBackends.ts";
 import { runExampleTask } from "./exampleTask.ts";
-import { printNoKeyAndExitCode } from "./noKey.ts";
+import { NoCredentialsError, printNoKeyAndExitCode } from "./noKey.ts";
 import { defaultExampleFile, runWizard } from "./wizard.ts";
 import { ensureNyraHome, isAngelAlias } from "./migration.ts";
 import { ApprovalRequired, TOOL_SCHEMAS } from "./tools.ts";
@@ -830,7 +830,7 @@ async function buildAgent(args: CliArgs, opts?: { interactive: boolean; skillsDi
   );
   if (!provider.hasCredentials()) {
     printNoKeyAndExitCode(primaryCfg);
-    throw new AgentError("__NO_CREDENTIALS__");
+    throw new NoCredentialsError(primaryCfg.name);
   }
   const mode = validateMode(args.mode ?? profile.mode ?? (config.mode as string) ?? "auto");
   const maxTurns = args.maxTurns ?? (typeof config.max_turns === "number" ? config.max_turns : 20);
@@ -5858,8 +5858,9 @@ async function runJson(args: CliArgs): Promise<number> {
     if (err instanceof ApprovalRequired) {
       return lines.failed("approval_required", "审批被拒绝或超时", EXIT_RUNTIME, { class: "tool_error", retryable: false, errorName: "ApprovalRequired" });
     }
-    if (err instanceof AgentError && (err as Error).message === "__NO_CREDENTIALS__") {
-      return lines.failed("no_credentials", "未找到可用的 API 凭据", EXIT_RUNTIME, { class: "model_error", retryable: false, errorName: "AgentError" });
+    if (err instanceof NoCredentialsError || (err instanceof AgentError && (err as Error).message === "__NO_CREDENTIALS__")) {
+      const provider = err instanceof NoCredentialsError ? err.providerName : "";
+      return lines.failed("no_credentials", t("creds.short", { provider }), EXIT_RUNTIME, { class: "model_error", retryable: false, errorName: "AgentError" });
     }
     // P1-3：失败分类——CI 据此决定重试还是报 bug，不必解析自然语言。
     const info = classifyFailure(err);
@@ -6380,7 +6381,7 @@ async function runOneShot(args: CliArgs): Promise<number> {
     process.stderr.write(t("repl.usageTitle") + "\n" + formatUsage(agent.usage.snapshot()) + "\n");
     return final.status === "verify_failed" ? EXIT_VERIFY : EXIT_SUCCESS;
   } catch (err: unknown) {
-    if (err instanceof AgentError && (err as Error).message === "__NO_CREDENTIALS__") return 1;
+    if (err instanceof NoCredentialsError) return 1;
     // P2-2：成本硬顶触发——专用退出码，便于 CI/脚本区分"超预算"与"真出错"。
     if (err instanceof AgentError && /^成本上限已超/.test((err as Error).message)) {
       process.stderr.write(`成本上限已触发：${(err as Error).message}\n`);
@@ -6490,7 +6491,7 @@ async function runRepl(args: CliArgs): Promise<number> {
   try {
     built = await buildAgent(args, { interactive: true, onRetry: (r) => retryNotify?.(r) });
   } catch (err: unknown) {
-    if (err instanceof AgentError && (err as Error).message === "__NO_CREDENTIALS__") return 1;
+    if (err instanceof NoCredentialsError) return 1;
     process.stderr.write(t("err.prefix", { err: err instanceof Error ? err.message : String(err) }) + "\n");
     return 1;
   }

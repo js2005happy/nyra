@@ -1,12 +1,12 @@
-// src/wizard.ts — 首次启动向导（中文，三步到第一个任务）。
-// 第 1 步：选模型来源（15 个 provider + 本地 Ollama / Codex，二选一的本地项排在前面）。
-// 第 2 步：填 Key 或选本地。Key 绝不写进 config.json（与 Python 版一致）：
+// src/wizard.ts — 首次启动向导（中文）。
+// 第 1 步：选模型来源（本地 Ollama / Codex 排在前面）。
+// 第 2 步：填 Key 或选本地。Key 绝不写进 config.json：
 //   已在环境变量里的 Key 直接认；rc 里已有的 Key 只显示后 4 位，密码箱可用时
 //   问要不要迁入密码箱；新填的 Key 用掩码输入（屏幕上只显示 *），
 //   密码箱可用时默认存密码箱（只问一句），否则才问要不要追加进 shell rc；
 //   追加进 rc 后 chmod 600（POSIX）。Key 确认行只显示后 4 位。
-// 第 3 步：跑一条本地示例任务（不调模型、无 Key 也能跑通）。
-// 有 Key 时向导只保存配置，不强制跑模型任务（agent 核心在第 2 阶段移植）。
+// 第 3 步：跑一条本地示例（不调模型、不连网）。跑通只说明本机示例能执行，
+// 不说明模型或 Key 已经连通。有 Key 时向导也只保存配置，不发模型请求。
 import { createInterface } from "node:readline";
 import { appendFileSync, chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -202,8 +202,8 @@ export async function runWizard(opts: {
   const rl = createInterface({ input: opts.input ?? process.stdin, output: opts.output ?? process.stdout });
   const { ask } = createAsker(rl);
   try {
-    console.log("欢迎使用 Nyra！三步就能跑起第一个任务。");
-    console.log("（全程不注册、不登录；模型只用你自己的 Key，本地任务不花钱。）");
+    console.log("欢迎使用 Nyra。向导只做三件事：选择模型来源、配置 Key、跑一条本地示例。");
+    console.log("（不注册、不登录。本地示例不调用模型、不连网，也不代表 Key 或模型已经连通。）");
     console.log("");
 
     // 第 1 步：选模型来源
