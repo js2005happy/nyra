@@ -5,7 +5,7 @@
 import { createHash } from "node:crypto";
 import { spawn, execFileSync } from "node:child_process";
 import {
-  existsSync, mkdirSync, readFileSync, readdirSync, realpathSync,
+  closeSync, constants, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync,
   statSync, writeFileSync,
 } from "node:fs";
 import { basename, join, resolve, relative, dirname, sep, posix } from "node:path";
@@ -1540,6 +1540,74 @@ function shadowFallbackSuffix(notice: ShadowSnapshotNotice | null): string {
   return `（影子快照：${notice.notice}，可用 /restore 恢复）`;
 }
 
+const OPEN_NOFOLLOW = typeof constants.O_NOFOLLOW === "number" ? constants.O_NOFOLLOW : 0;
+
+/** 打开最终分量：若此刻它是符号链接，内核直接失败，不跟着写到别的文件。 */
+function openNoFollow(path: string, flags: number, mode?: number): number {
+  if (OPEN_NOFOLLOW === 0 && existsSync(path) && lstatSync(path).isSymbolicLink()) {
+    throw new ToolError("拒绝跟随符号链接");
+  }
+  return openSync(path, flags | OPEN_NOFOLLOW, mode);
+}
+
+function readFileNoFollow(path: string): string {
+  const fd = openNoFollow(path, constants.O_RDONLY);
+  try {
+    return readFileSync(fd, "utf-8");
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function writeFileNoFollow(path: string, content: string): void {
+  mkdirSync(dirname(path), { recursive: true });
+  const fd = openNoFollow(path, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC, 0o666);
+  try {
+    writeFileSync(fd, content, "utf-8");
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** 相对真实工作目录的路径。macOS 的 /tmp 是 /private/tmp 的符号链接，两边都先 realpath。 */
+function workdirRelative(ctx: ToolContext, absolute: string): string {
+  return relative(canonicalizePath(resolve(ctx.workdir)), canonicalizePath(absolute)).split(sep).join("/");
+}
+
+/**
+ * 读写前再看一眼最终分量。若是符号链接，改对真实目标重跑越界/受保护/禁读检查，
+ * 然后只打开那个真实路径（O_NOFOLLOW）。检查和打开之间若被换成符号链接，打开失败。
+ */
+function resolveIoTarget(ctx: ToolContext, lexical: string, kind: "read" | "write"): string {
+  if (!existsSync(lexical) || !lstatSync(lexical).isSymbolicLink()) return lexical;
+  let real: string;
+  try {
+    real = realpathSync(lexical);
+  } catch {
+    throw new ToolError("符号链接目标无法解析");
+  }
+  // 传相对路径：Bun 的 join(root, 绝对路径) 不会丢掉前半段，会拼出双重目录。
+  const rel = workdirRelative(ctx, real);
+  return kind === "write" ? workspaceWritePath(ctx, rel) : workspaceReadPath(ctx, rel);
+}
+
+function linkedTargetLabel(ctx: ToolContext, requested: string, absolute: string): string {
+  try {
+    if (existsSync(absolute) && lstatSync(absolute).isSymbolicLink()) {
+      const rel = workdirRelative(ctx, realpathSync(absolute));
+      if (rel && !rel.startsWith("..") && !rel.startsWith("/")) return `${requested} → ${rel}`;
+    }
+  } catch { /* 解析失败时仍用调用方给出的路径 */ }
+  return requested;
+}
+
+function ioError(err: unknown, action: string): never {
+  if (err instanceof ToolError) throw err;
+  const code = (err as NodeJS.ErrnoException).code;
+  if (code === "ELOOP") throw new ToolError(`${action}前路径变成了符号链接，已拒绝`);
+  throw err instanceof Error ? err : new ToolError(String(err));
+}
+
 function writeLocalText(ctx: ToolContext, target: string, content: string): void {
   if (ctx.checkpoint && !ctx.backend) {
     try {
@@ -1549,34 +1617,56 @@ function writeLocalText(ctx: ToolContext, target: string, content: string): void
       throw err;
     }
   } else {
-    mkdirSync(dirname(target), { recursive: true });
-    writeFileSync(target, content, "utf-8");
+    const dest = resolveIoTarget(ctx, target, "write");
+    try {
+      writeFileNoFollow(dest, content);
+    } catch (err: unknown) {
+      ioError(err, "写入");
+    }
   }
 }
 
 export function changePreview(ctx: ToolContext, target: string, newContent: string): string {
   if (ctx.backend) return "（远端文件不支持本地 diff 预览，请确认写入范围）";
-  if (!existsSync(target)) {
-    const rel = relative(resolve(ctx.workdir), resolve(target)).split(sep).join("/");
+  let label = target;
+  try {
+    if (existsSync(target) && lstatSync(target).isSymbolicLink()) label = realpathSync(target);
+  } catch { /* 预览标签解析失败时用调用方路径 */ }
+  if (!existsSync(label)) {
+    const rel = workdirRelative(ctx, label);
     return unifiedPreview(rel, null, Buffer.from(newContent, "utf-8"));
   }
-  if (!statSync(target).isFile()) throw new ToolError("只能修改普通文件");
-  if (statSync(target).size > 2 * 1024 * 1024) return "（原文件超过 2 MiB，无法展示完整预览）";
-  const oldBytes = readFileSync(target);
-  const rel = relative(resolve(ctx.workdir), resolve(target)).split(sep).join("/");
+  if (!statSync(label).isFile()) throw new ToolError("只能修改普通文件");
+  if (statSync(label).size > 2 * 1024 * 1024) return "（原文件超过 2 MiB，无法展示完整预览）";
+  const oldBytes = readFileSync(label);
+  const rel = workdirRelative(ctx, label);
   return unifiedPreview(rel, oldBytes, Buffer.from(newContent, "utf-8"));
 }
 
 async function toolReadFile(ctx: ToolContext, path: string): Promise<string> {
   if (ctx.backend?.readFile) return truncate(ctx.backend.readFile(resolveBackendPath(ctx, path)));
   const target = workspaceReadPath(ctx, path);
-  if (!existsSync(target) || !statSync(target).isFile()) return `错误：文件不存在：${path}`;
-  return truncate(readFileSync(target, "utf-8"));
+  let dest: string;
+  try {
+    dest = resolveIoTarget(ctx, target, "read");
+  } catch (err: unknown) {
+    if (err instanceof ToolError) return `错误：${err.message}`;
+    throw err;
+  }
+  if (!existsSync(dest) || !statSync(dest).isFile()) return `错误：文件不存在：${path}`;
+  try {
+    return truncate(readFileNoFollow(dest));
+  } catch (err: unknown) {
+    if (err instanceof ToolError) return `错误：${err.message}`;
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ELOOP") return "错误：读取前路径变成了符号链接，已拒绝";
+    throw err;
+  }
 }
 
 async function toolWriteFile(ctx: ToolContext, path: string, content: string): Promise<string> {
   const target = workspaceWritePath(ctx, path);
-  let summary = tr("sum.write", { path, n: content.length });
+  let summary = tr("sum.write", { path: linkedTargetLabel(ctx, path, target), n: content.length });
   if ((ctx.mode === "auto" || ctx.mode === "creator") && ctx.interactive) summary += "\n" + changePreview(ctx, target, content);
   await checkApproval(ctx, "write_file", summary, { fileTarget: target });
   const snap = takeShadowSnapshot(ctx, "write_file", target, summary);
@@ -3285,6 +3375,11 @@ async function toolGrepSearch(ctx: ToolContext, pattern: string, path = ".", reg
   }
   const root = workspaceReadPath(ctx, path);
   if (!existsSync(root)) return `错误：路径不存在：${path}`;
+  const canonRoot = canonicalizePath(resolve(ctx.workdir));
+  const insideWorkdir = (abs: string): boolean => {
+    const canon = canonicalizePath(abs);
+    return canon === canonRoot || canon.startsWith(canonRoot + sep);
+  };
   let match: (line: string) => boolean;
   if (regex) {
     let compiled: RegExp;
@@ -3300,19 +3395,32 @@ async function toolGrepSearch(ctx: ToolContext, pattern: string, path = ".", reg
   }
   const found: string[] = [];
   const files: string[] = [];
-  const walk = (dir: string) => {
-    for (const entry of readdirSync(dir).sort()) {
-      const full = join(dir, entry);
-      const st = statSync(full);
-      if (st.isDirectory()) {
-        if (SKIP_DIRS.has(entry) || entry.startsWith(".")) continue;
-        walk(full);
-      } else {
-        files.push(full);
+  const consider = (full: string, name: string): void => {
+    let listed;
+    try { listed = lstatSync(full); } catch { return; }
+    let real = full;
+    if (listed.isSymbolicLink()) {
+      try { real = realpathSync(full); } catch { return; }
+      if (!insideWorkdir(real)) return;
     }
+    let st;
+    try { st = statSync(real); } catch { return; }
+    if (st.isDirectory()) {
+      if (SKIP_DIRS.has(name) || name.startsWith(".")) return;
+      if (!insideWorkdir(real)) return;
+      walk(real);
+      return;
     }
+    if (!st.isFile()) return;
+    if (isDenyReadPath(ctx, full) || isDenyReadPath(ctx, real)) return;
+    files.push(real);
   };
-  if (statSync(root).isFile()) files.push(root);
+  const walk = (dir: string) => {
+    let names: string[];
+    try { names = readdirSync(dir).sort(); } catch { return; }
+    for (const entry of names) consider(join(dir, entry), entry);
+  };
+  if (lstatSync(root).isSymbolicLink() || statSync(root).isFile()) consider(root, basename(root));
   else walk(root);
   for (const entry of files) {
     if (found.length >= maxResults) break;
@@ -3320,7 +3428,7 @@ async function toolGrepSearch(ctx: ToolContext, pattern: string, path = ".", reg
     if (relParts.slice(0, -1).some((p) => SKIP_DIRS.has(p) || (p.startsWith(".") && p !== "."))) continue;
     let text: string;
     try {
-      text = readFileSync(entry, "utf-8");
+      text = readFileNoFollow(entry);
     } catch { continue; }
     const lines = text.split("\n");
     for (let lineno = 0; lineno < lines.length; lineno++) {

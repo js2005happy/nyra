@@ -617,13 +617,12 @@ export function usageFromJsonl(text: string): Record<string, number> | null {
 }
 
 export function codexChildEnv(): Record<string, string> {
-  // 白名单环境（第四份审计 P0）：只传 PATH/HOME/语言/代理等白名单变量。
-  // 旧版只去 *_API_KEY，GITHUB_TOKEN 等仍会漏进 Codex 子进程。
-  const env: Record<string, string> = {};
-  for (const [k, v] of Object.entries(buildChildEnv())) {
-    if (v !== undefined) env[k] = v;
-  }
-  return env;
+  // 白名单环境：只传 PATH/HOME/语言/代理，以及 Codex 登录目录 CODEX_HOME
+  //（认证路径，不是密钥本身）。不继承 GITHUB_TOKEN、*_API_KEY 等无关变量。
+  const extra: Record<string, string> = {};
+  const codexHome = process.env.CODEX_HOME;
+  if (codexHome) extra.CODEX_HOME = codexHome;
+  return buildChildEnv(extra);
 }
 
 export function buildCodexArgv(binary: string, model: string, outputFile: string, workdir: string): string[] {

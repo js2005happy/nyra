@@ -1071,6 +1071,15 @@ export class MCPToolManager {
  * readonly 或非交互 auto 一律不启动；交互 auto 逐服务器确认；full 直接启动。
  * 未启用（mcp_enabled 非真）或无服务器时返回 null。
  */
+/** 启动确认文案：只列配置显式传入的变量名，不列值。 */
+export function mcpStartPrompt(name: string, inheritEnv: readonly string[], env: Record<string, string>): string {
+  const declared = [...inheritEnv, ...Object.keys(env)].sort();
+  const envNote = declared.length
+    ? `配置显式传入的环境变量名：${declared.join("、")}（只列名字，不含值）。`
+    : "不额外传入环境变量，只用不含密钥的默认白名单。";
+  return `允许启动 MCP 服务 ${name} 吗？${envNote}`;
+}
+
 export async function buildMcpManager(
   opts: {
     mode?: string; interactive?: boolean; config?: Record<string, unknown>;
@@ -1094,7 +1103,9 @@ export async function buildMcpManager(
     approved = {};
     for (const [name, server] of Object.entries(servers)) {
       process.stdout.write(`外部 MCP 服务 ${name} 将以当前系统用户启动，可能访问本机文件和网络。\n`);
-      const ok = opts.askApproval ? await opts.askApproval(`允许启动该 MCP 服务吗？`) : false;
+      const ok = opts.askApproval
+        ? await opts.askApproval(mcpStartPrompt(name, server.inherit_env, server.env))
+        : false;
       if (ok) approved[name] = server;
     }
     if (!Object.keys(approved).length) return null;

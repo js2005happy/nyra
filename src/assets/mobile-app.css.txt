@@ -175,6 +175,8 @@ code{background:rgba(255,255,255,.06);padding:1px 5px;border-radius:5px;color:va
 .scope .sr+.sr{border-top:1px solid var(--hair)}
 .scope .k{color:var(--t3);width:30px;flex:none;font-size:var(--f-s)}
 .scope .v{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.scope .sr.wrap{align-items:flex-start;padding-top:8px;padding-bottom:8px}
+.scope .sr.wrap .v{white-space:pre-wrap;overflow:visible;text-overflow:clip;word-break:break-word}
 .scope .x{flex:none;font-size:var(--f-s);color:var(--t2)}
 .ok{color:var(--ok-t)}.bad{color:var(--bad-t)}
 .lk{color:var(--brand-t);font-weight:600;font-size:var(--f-s);display:flex;align-items:center;gap:3px;height:44px;flex:none}

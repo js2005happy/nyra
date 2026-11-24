@@ -556,7 +556,7 @@ function scopeBox(a, b, st, onDiff, oneLine){
     return box;
   }
   const box = el('div', 'scope');
-  const row = (k, v, extra, mono) => { const r = el('div', 'sr'); r.appendChild(el('span', 'k', k)); const vv = el('span', 'v' + (mono ? ' mono' : ''), v); r.appendChild(vv); if (extra) r.appendChild(extra); box.appendChild(r); return r; };
+  const row = (k, v, extra, mono) => { const r = el('div', 'sr' + (mono === 'wrap' ? ' wrap' : '')); r.appendChild(el('span', 'k', k)); const vv = el('span', 'v' + (mono ? ' mono' : '') + (mono === 'wrap' ? ' wrap' : ''), v); r.appendChild(vv); if (extra) r.appendChild(extra); box.appendChild(r); return r; };
   if (b.isEdit) {
     let link = null;
     if (onDiff) { link = el('button', 'lk', st.diff ? t('m.scope.hideDiff') : t('m.scope.viewDiff')); link.appendChild(icon(st.diff ? 'chevd' : 'chev', 's14')); link.dataset.act = 'diff'; link.onclick = onDiff; }
@@ -566,7 +566,8 @@ function scopeBox(a, b, st, onDiff, oneLine){
     row(t('m.scope.cmd'), a.command, null, true);
     row(t('m.scope.other'), sandboxText()).querySelector('.v').style.color = 'var(--t2)';
   } else {
-    row(t('m.scope.other'), a.tool + (a.summary ? t('m.sep') + String(a.summary).split('\n')[0].slice(0, 120) : ''));
+    row(t('m.scope.tool'), a.tool);
+    if (a.summary) String(a.summary).split('\n').forEach((line) => { if (line.length) row(t('m.scope.detail'), line, null, 'wrap'); });
   }
   return box;
 }
