@@ -183,7 +183,16 @@ export function writeEvalJson(
   }
 }
 export function validateEvalConditions(c: EvalConditions): void {
-  if (c.provider === 'deepseek') {
+  if (c.provider === 'scripted') {
+    // M5 脚本化评测：不调模型、不花钱——model 钉死 scripted-v1，单价与上限须为 0。
+    if (
+      c.model !== 'scripted-v1' ||
+      c.inputPer1M !== 0 ||
+      c.outputPer1M !== 0 ||
+      c.maxCostUsd !== 0
+    )
+      throw new Error('脚本化评测不调模型：model 须是 scripted-v1，单价与上限须为 0');
+  } else if (c.provider === 'deepseek') {
     // API 通道（整合者增补）：只认峰时价表里的两个模型，单价须与表精确一致，
     // 每尝试上限须大于 0；digest 不存在，报告里记 null。
     const pricing = resolveDeepSeekEvalPricing(c.model);
