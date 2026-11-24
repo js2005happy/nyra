@@ -120,6 +120,15 @@ export function isLoopbackHost(host: string): boolean {
   return host === "127.0.0.1" || host === "localhost" || host === "::1" || host === "[::1]";
 }
 
+/** 对端地址是不是本机回环（127.0.0.0/8、::1、IPv4 映射的 ::ffff:127.x）。 */
+export function isLoopbackPeer(addr: string | undefined | null): boolean {
+  if (!addr) return false;
+  const a = addr.trim().toLowerCase();
+  if (a === "::1") return true;
+  const v4 = a.startsWith("::ffff:") ? a.slice(7) : a;
+  return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(v4);
+}
+
 function clip(text: unknown, limit = MAX_EVENT_TEXT): string {
   const s = typeof text === "string" ? text : JSON.stringify(text ?? "");
   return s.length > limit ? s.slice(0, limit) + "…" : s;
@@ -1650,7 +1659,13 @@ export class Gateway {
     return name === "127.0.0.1" || name === "localhost" || name === "[::1]";
   }
 
+  /**
+   * 电脑端自己的 token（启动时随机生成、打印在本机终端/桌面外壳里）只认来自回环地址的连接：
+   * 监听局域网（--pair / --host）时，别的主机就算拿到这个 token 也不算数。
+   * 手机等已配对设备走各自的设备 token（device()），不受这条限制。
+   */
   private tokenOk(req: IncomingMessage): boolean {
+    if (!isLoopbackPeer(req.socket?.remoteAddress)) return false;
     const supplied = req.headers["x-nyra-token"] ?? req.headers["x-angel-token"] ?? "";
     if (!supplied || typeof supplied !== "string") return false;
     const a = Buffer.from(supplied, "utf-8");
@@ -1661,6 +1676,7 @@ export class Gateway {
   /** 页面/manifest/icon 允许 ?token=；API 一律只认请求头。 */
   private pageTokenOk(req: IncomingMessage): boolean {
     if (this.tokenOk(req)) return true;
+    if (!isLoopbackPeer(req.socket?.remoteAddress)) return false;
     try {
       const url = new URL(req.url ?? "/", "http://x");
       const q = url.searchParams.get("token") ?? "";
