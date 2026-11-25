@@ -49,6 +49,7 @@ import { UsageLedger, monthKeyString } from "./usageLedger.ts";
 import { McpCostTracker } from "./mcpCost.ts";
 import { buildAgentCard } from "./peerCard.ts";
 import { loadSigningKey, signAgentCard } from "./cardSignature.ts";
+import { agentContract } from "./agentContract.ts";
 import { applyInterventions, newBusMessageId } from "./interventions.ts";
 
 export const A2A_PROTOCOL_VERSION = "0.3";
@@ -391,6 +392,9 @@ export function buildA2aAgentCard(home: string, config: Record<string, unknown>,
     skills: base.skills.map((s) => ({ id: s.id, name: s.name, description: s.description })),
     securitySchemes: { bearer: { type: "http", scheme: "bearer" } },
     security: [{ bearer: [] }],
+    // H7：最小稳定契约 nyra-contract-v1——卡片里写清认哪 10 条命令，
+    // 对方照着调就行；签名在后面算，契约字段在签名之前，不破坏签名。
+    contract: agentContract(),
   };
   // 第 3 批 G-P1-7 同款：开了签名且密码箱里有钥匙时，名片带上 JWS 签名
   // 与公钥 JWK；没钥匙发素名片，不报错、不假装签过。

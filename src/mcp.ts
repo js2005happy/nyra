@@ -1590,8 +1590,32 @@ export class NyraMcpServer {
  */
 export async function handleMcpServer(argv: string[], home: string): Promise<number> {
   const resolvedHome = home || resolveHome();
+  // H7：nyra mcp contract —— 打印最小稳定契约 nyra-contract-v1（只读，
+  // 服务关着也能看）。动态 import：agentContract.ts 读 MCP_SERVER_TOOLS，
+  // 静态互引会成环。
+  if (argv[0] === "contract") {
+    const { agentContract, validateAgentContract } = await import("./agentContract.ts");
+    const contract = agentContract();
+    const problems = validateAgentContract();
+    process.stdout.write(`最小稳定契约 ${contract.id}（版本 ${contract.version}）\n`);
+    process.stdout.write("Bot 之间互操作、市场里的 Bot 调别的 Bot，都只走这 10 条命令；\n");
+    process.stdout.write("每条都对应一个已有的 MCP 工具或 A2A 方法，不另起协议。详见 docs/agent-contract.md。\n");
+    for (const cmd of contract.commands) {
+      const via = cmd.surface === "mcp"
+        ? `MCP ${cmd.mcpTool}`
+        : cmd.surface === "a2a"
+          ? `A2A ${cmd.a2aMethod}`
+          : `MCP ${cmd.mcpTool} / A2A ${cmd.a2aMethod}`;
+      process.stdout.write(`  ${cmd.name}（${cmd.title}）${cmd.write ? " [写]" : " [只读]"}：${cmd.description} 走 ${via}。\n`);
+    }
+    if (problems.length) {
+      process.stderr.write(`契约自检发现 ${problems.length} 个问题：${problems.join("；")}\n`);
+      return 1;
+    }
+    return 0;
+  }
   if (argv[0] !== "server") {
-    process.stdout.write("用法：nyra mcp server <status|enable|disable|allow-writes-on|allow-writes-off>\n");
+    process.stdout.write("用法：nyra mcp <server <status|enable|disable|allow-writes-on|allow-writes-off>|contract>\n");
     return 2;
   }
   const action = argv[1];

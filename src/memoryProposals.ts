@@ -372,7 +372,7 @@ export function rejectMemoryProposal(
   home: string | undefined,
   id: string,
   reason?: string,
-  opts: { now?: Date } = {},
+  opts: { now?: Date; ledgerReason?: string } = {},
 ): { ok: boolean; proposal: MemoryProposal | null; message?: string } {
   const list = readMemoryProposals(home);
   const idx = list.findIndex((p) => p.id === id);
@@ -386,10 +386,16 @@ export function rejectMemoryProposal(
   proposal.decisionReason = (reason ?? "").trim() || "user-rejected";
   list[idx] = proposal;
   writeMemoryProposals(home, list);
+  // 拒绝账本的 reason 须说清是谁拒绝的：默认是用户亲手拒绝；做梦代谢
+  // 清过期候选时传 ledgerReason "dream-pruned-stale"，不冒充用户。
+  const ledgerReason = (opts.ledgerReason ?? "user-rejected").trim() || "user-rejected";
+  const detail = ledgerReason === "dream-pruned-stale"
+    ? `夜间做梦代谢清掉了过期候选记忆“${proposal.subject}”${reason ? `（${reason}）` : ""}`
+    : `用户拒绝了候选记忆“${proposal.subject}”${reason ? `（${reason}）` : "（未说明原因）"}`;
   recordGateRejection(home, {
     action: "proposal_reject",
-    reason: "user-rejected",
-    detail: `用户拒绝了候选记忆“${proposal.subject}”${reason ? `（${reason}）` : "（未说明原因）"}`,
+    reason: ledgerReason,
+    detail,
     subject: proposal.subject,
     scope: "user",
   });

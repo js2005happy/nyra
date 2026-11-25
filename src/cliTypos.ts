@@ -79,6 +79,7 @@ export const SUBCOMMAND_FLAGS: Record<string, { value: readonly string[]; bool: 
     value: ["--host", "--port", "--mode", "--provider", "--model", "--profile", "--workdir", "--lang"],
     bool: ["--print-url-json", "--exit-on-stdin-close", "--pair", "--verbose", "--open"],
   },
-  doctor: { value: ["--provider", "--model", "--lang"], bool: [] },
+  doctor: { value: ["--provider", "--model", "--lang"], bool: ["--deep"] },
+  dream: { value: ["--at", "--summarize-with-model", "--prune-stale-days"], bool: ["--with-model"] },
   setup: { value: ["--provider", "--model", "--lang"], bool: [] },
 };

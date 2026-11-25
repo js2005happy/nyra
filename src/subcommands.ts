@@ -24,7 +24,7 @@ export const SUBCOMMANDS: readonly string[] = [
   // 入职与模板
   "init", "templates", "wake",
   // 自检与运维
-  "doctor", "status", "setup", "vault", "eval", "update-check",
+  "doctor", "status", "setup", "vault", "eval", "update-check", "dream",
 ] as const;
 
 /** 供 `Set` 用法与文档校验共用。 */

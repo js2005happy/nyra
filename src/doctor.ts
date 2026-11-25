@@ -31,6 +31,8 @@ export interface DoctorOptions {
   fetchFn?: typeof fetch;
   /** 测试注入：替代默认的网络目标（默认用当前 provider 的 base_url 根）。 */
   networkUrl?: string;
+  /** H4：--deep 时追加“免疫体检”（大脑自检，见 src/immune.ts）。 */
+  deep?: boolean;
 }
 
 const MB = 1024 * 1024;
@@ -226,6 +228,33 @@ export async function runDoctor(opts: DoctorOptions): Promise<{ checks: DoctorCh
       checks.push({
         name: "密码箱权限", ok, detail: `vault.json 存在，权限 ${mode.toString(8)}${ok ? "" : "（应为 600）"}`,
         fix: ok ? undefined : `chmod 600 ${join(home, "vault.json")}（密码箱权限太松时，别人可能读到你的凭据）。`,
+      });
+    }
+  }
+
+  // H4：--deep 时追加“免疫体检”（大脑自检：记忆证据、技能文件、配置、
+  // 密钥明文、账本、成本硬顶、权限位）。不合格的已隔离（移进 quarantine/，
+  // 不删除），报告写 immune-report.json；体检本身不调模型、不联网。
+  // 用动态 import：immune.ts 依赖 memoryGate，doctor.ts 不在启动路径上
+  // 静态拉它，避免循环依赖。
+  if (opts.deep) {
+    try {
+      const { runImmuneChecks } = await import("./immune.ts");
+      const report = runImmuneChecks(home);
+      for (const c of report.checks) {
+        checks.push({
+          name: `免疫体检：${c.name}`,
+          ok: c.ok,
+          detail: c.detail,
+          fix: c.fix,
+        });
+      }
+    } catch (err) {
+      checks.push({
+        name: "免疫体检",
+        ok: false,
+        detail: `免疫体检没跑起来：${err instanceof Error ? err.message : String(err)}`,
+        fix: "重跑 nyra doctor --deep；还失败就把报错原样发出来。",
       });
     }
   }

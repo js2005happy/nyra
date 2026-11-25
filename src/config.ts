@@ -239,6 +239,10 @@ export const DEFAULT_CONFIG: Record<string, unknown> = {
   // reviewer 的便宜模型链（smart_approvals.reviewer_*，再没有用 deepseek /
   // deepseek-flash）；rules 是用户用自然语言写的额外验收规则。
   verifier: { enabled: false, provider: null, model: null, rework: false, rules: [] },
+  // H3：夜间“做梦代谢”（默认关）。enabled 开关、at 每夜时间、summarize_with_model
+  // 写小结是否额外调一次模型润色（默认关）、prune_stale_days 待确认候选多少天
+  // 未决算过期清掉。详见 docs/dream.md。
+  dream: { enabled: false, at: "03:00", summarize_with_model: false, prune_stale_days: 90 },
   // 缺口 11：技能自沉淀闭环（学 OpenClaw Skill Workshop / Hermes 自写技能）。
   // 默认关闭（显式 opt-in）；开启后成功运行收尾时自动起草技能草稿（Markdown +
   // frontmatter，附来源运行与质量分），低质草稿出生即归档；安装永远要人批准

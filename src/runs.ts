@@ -112,6 +112,12 @@ responsibility_cancelled: ["responsibility_id", "responsibility_name"],
 responsibility_expired: ["responsibility_id", "responsibility_name"],
 responsibility_escalated: ["responsibility_id", "responsibility_name", "condition", "item_id"],
 briefing_generated: ["date", "progress_items", "decision_items", "anomaly_items", "quiet"],
+// H3：夜间做梦代谢——扫了几个会话、提炼几条候选、剪掉几条重复、清掉几条过期、
+// 矛盾几组、模型润色小结开没开（只记计数，不记记忆正文、不记绝对路径）。
+dream_run: ["sessions_scanned", "proposals_added", "duplicates_pruned", "stale_rejected", "contradictions", "model_summary"],
+// H4：免疫体检——查了几项、几项没过、隔离了几个（只记计数与隔离区相对名）。
+immune_check: ["checks", "failed", "quarantined"],
+immune_quarantined: ["kind", "name", "detail"],
 // 缺口 33：外部文档知识库检索进证据链——哪个库、问了什么、命中几条、
 // 最高分多少（只记元数据与分数，不记笔记正文、不记绝对路径）。
 knowledge_search: ["base", "query", "hits", "top_score"],

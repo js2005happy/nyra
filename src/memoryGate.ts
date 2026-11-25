@@ -416,8 +416,15 @@ export function updateMemoryEntry(
   }
   // 改记忆同样要附新依据：模型路径逐字对照当前用户消息；CLI 路径只验格式
   // （用户本人直接提供，不算模型推断）。
+  // 例外：只删不改（patch 里只有 status: "deleted"）——删除是撤回断言，
+  // 不是新断言，不需要新依据，沿用原条目的依据；这样证据本身已坏
+  // （如引用为空）的条目也能被免疫体检隔离掉，否则会死锁在“删不掉”。
+  const statusOnlyDelete = nextStatus === "deleted"
+    && patch.content === undefined && patch.subject === undefined && patch.sourceRefs === undefined;
   let evidenceQuotes: string[];
-  if (opts.checkVerbatim === false) {
+  if (statusOnlyDelete) {
+    evidenceQuotes = cur.evidenceQuotes;
+  } else if (opts.checkVerbatim === false) {
     const vf = verifyEvidenceQuotesFormat(patch.evidenceQuotes);
     if (!vf.ok) throw new MemoryGateError(vf.reason, evidenceReasonText(vf.reason));
     evidenceQuotes = vf.quotes;
@@ -427,9 +434,13 @@ export function updateMemoryEntry(
     evidenceQuotes = (patch.evidenceQuotes as string[]).map((q) => q.trim());
   }
   // 秘密拦截：改后正文、主题、引用、出处里任何一处含密钥都拒绝整版。
-  for (const [where, text] of [["content", nextContent], ["subject", nextSubject], ...evidenceQuotes.map((q, i): [string, string] => [`quote:${i + 1}`, q]), ...nextRefs.map((r, i): [string, string] => [`sourceRef:${i + 1}`, r])] as [string, string][]) {
-    const kind = detectSecretKind(text);
-    if (kind) throw new MemoryGateError(`secret:${kind}`, `${where} 里含疑似密钥（${secretKindText(kind)}），不能写入记忆`);
+  // 只删不改时不拦截——删除不写新断言，旧内容已在账本里，拦删除只会
+  // 让含密钥的条目删不掉；隔离路径（immune/dream）靠它清掉脏条目。
+  if (!statusOnlyDelete) {
+    for (const [where, text] of [["content", nextContent], ["subject", nextSubject], ...evidenceQuotes.map((q, i): [string, string] => [`quote:${i + 1}`, q]), ...nextRefs.map((r, i): [string, string] => [`sourceRef:${i + 1}`, r])] as [string, string][]) {
+      const kind = detectSecretKind(text);
+      if (kind) throw new MemoryGateError(`secret:${kind}`, `${where} 里含疑似密钥（${secretKindText(kind)}），不能写入记忆`);
+    }
   }
   const now = (opts.now ?? new Date()).toISOString();
   const rev: MemoryGateRevision = {

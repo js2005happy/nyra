@@ -19,6 +19,7 @@ import { RunStore } from "./runs.ts";
 import { loadReviewQueue } from "./reviewQueue.ts";
 import { loadResponsibilities } from "./responsibilities.ts";
 import { appendInbox, nyraHome, TASKS_DIR } from "./tasks.ts";
+import { dreamBriefLines, readDreamState } from "./dream.ts";
 
 export class BriefingError extends Error {
   constructor(message: string) { super(message); this.name = "BriefingError"; }
@@ -81,6 +82,8 @@ export interface MorningBrief {
   progress: string[];
   decisions: string[];
   anomalies: string[];
+  /** H3：昨夜做梦小结（上次做梦在窗口内时才有，否则不写这一节）。 */
+  dream?: string[];
   patrolRuns: number;
   patrolFindings: number;
   quiet: boolean;
@@ -103,7 +106,7 @@ function section(title: string, lines: string[]): string {
   return `## ${title}\n${body}`;
 }
 
-/** 拼一份简报的正文：三节 + 每条结论的来源，不写推测。 */
+/** 拼一份简报的正文：三节 + 每条结论的来源，不写推测。做梦小结有内容时多一节。 */
 export function renderBriefingText(brief: MorningBrief, now: Date = new Date()): string {
   const lines = [
     `# 晨间简报 ${brief.date}`,
@@ -114,10 +117,15 @@ export function renderBriefingText(brief: MorningBrief, now: Date = new Date()):
     ``,
     section("今日待决策", brief.decisions),
     ``,
+  ];
+  if (brief.dream && brief.dream.length) {
+    lines.push(section("昨夜做梦小结", brief.dream), ``);
+  }
+  lines.push(
     section("异常提醒", brief.anomalies),
     ``,
     `窗口内共巡查 ${brief.patrolRuns} 次，其中有发现 ${brief.patrolFindings} 次。`,
-  ];
+  );
   return lines.join("\n") + "\n";
 }
 
@@ -190,9 +198,12 @@ export function collectMorningBrief(
     decisions.push(`另有 ${pending.length - MAX_DECISIONS_LISTED} 项待批未列出，请跑 nyra review list 看全`);
   }
 
-  const quiet = progress.length === 0 && decisions.length === 0 && anomalies.length === 0;
+  // H3：昨夜做梦小结——上次做梦在窗口内时写一节；没做梦或没内容就不写。
+  const dream = dreamBriefLines(readDreamState(home), sinceMs);
+
+  const quiet = progress.length === 0 && decisions.length === 0 && anomalies.length === 0 && dream.length === 0;
   return {
-    date: dateStr(now), since, progress, decisions, anomalies,
+    date: dateStr(now), since, progress, decisions, anomalies, dream,
     patrolRuns, patrolFindings, quiet,
   };
 }

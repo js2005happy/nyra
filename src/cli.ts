@@ -250,7 +250,7 @@ nyra gmail <status|auth|search|read|send|drafts|send-draft|labels|label|mark-rea
 nyra shopify <auth|status|products|product|orders|order|fulfill|inventory>   Shopify 原生连接器（只读）：查商品 / 订单 / 订单履约核查 / 库存（详见 docs/connectors.md）
 nyra slack <auth|status|channels|history|send|card|callback>   Slack 原生连接器：读频道 / 消息、发消息（须显式批准）、发审批卡、按钮回调回写审批桥（详见 docs/connectors.md）
 nyra connector <status|list|approve|revoke|auth|install|uninstall|usage|flows|flow|bundle>   连接器目录：安装 / 一键授权 / 撤销 / 用量 / 业务流程 / 导出连接器包（详见 docs/connectors.md）
-nyra mcp server <status|enable|disable|allow-writes-on|allow-writes-off>   对外 MCP 服务开关：别的 agent 经网关 POST /mcp 调记忆与任务（默认关闭，详见 docs/mcp.md）
+nyra mcp <server <status|enable|disable|allow-writes-on|allow-writes-off>|contract>   对外 MCP 服务开关与最小稳定契约：别的 agent 经网关 POST /mcp 调记忆与任务（默认关闭，详见 docs/mcp.md）；contract 打印 10 条命令的 nyra-contract-v1（详见 docs/agent-contract.md）
 nyra peer <status|enable|disable|list|auth|ask|handoff|card|code|add|request|accept|friends|block|circle|share|grant|proposal|branch|discover|token>   对端协作：问别的 Nyra 实例、交接运行上下文、名片加好友、带 scope 可吊销的 grant、对方写操作提议、外来分支合入、公开发现与 per-peer token、名片 JWS 签名（默认关闭，详见 docs/peer.md 与 docs/peer-discovery.md）
 nyra circle <create|list|show|invite|revoke|delete|bind|unbind|owner|check|bindings>   信任圈：谁能给 agent 发任务（默认全封闭，圈外消息网关直接丢弃，详见 docs/circles.md）
 nyra org <create|list|show|add|remove|role|delete|check|sso|share|shared|grant-write|learnings|workspace|file-read|cross-access|catalog|tasks|task-add|violations|isolation|memory>   组织与团队 workspace：组织/成员/角色 admin/member/viewer，机主是超级管理员；共享 Bot 默认只读、租户隔离、组织内私有目录（详见 docs/orgs.md）
@@ -319,7 +319,8 @@ nyra creator "<一句话需求>" [--yes]   创造模式：一句话搓出插件�
 nyra memory <export|export-prompt|import|local|import-zip|search|forget|remember|entries|entry|update|rejections|recall|extract|review>  记忆交换与检索/删除；remember/entries/entry/update/rejections 走记忆证据门（写记忆须附用户原话依据，详见 docs/memory.md）；remember/entries 支持 --org 组织记忆；recall 是主动记忆开关与试跑（默认关，详见 docs/memory.md）；extract/review 是对话里自动提炼候选记忆、进库前人工确认（详见 docs/memory.md）
 nyra soul <show|status|list|init|add|remove|enable|disable|edit|export|import>  Soul 身份层：每 agent 的身份与 Tenets（不变量进规则层、代码拦截；Charter 角色契约见 nyra soul charter <set|show|clear>，详见 docs/soul.md 与 docs/team.md）
 nyra style <learn|show|list|delete|export|import>  分应用文风学习（详见 docs/style.md）
-nyra doctor [--provider 名字]  中文自检：运行时、配置文件、配置目录、Key、网络、磁盘、写权限、密码箱权限
+nyra doctor [--provider 名字] [--deep]  中文自检：运行时、配置文件、配置目录、Key、网络、磁盘、写权限、密码箱权限；--deep 追加免疫体检（大脑自检，不合格的进隔离区，详见 docs/immune.md）
+nyra dream <status|enable|disable|set|run>  夜间做梦代谢：每夜提炼记忆候选、剪掉重复与过期、写小结进晨间简报（默认关，详见 docs/dream.md）
 nyra models [list|show <模型名>|refresh|fallback|handoff|preset|health]   查模型上下文窗口、刷新模型数据、看备用链与本月切换统计、查限流接力摘要、设降级预设与看故障账本（见 docs/model-catalog.md）
 nyra setup                     首次启动向导
 nyra init [--name 名字] [--role researcher|assistant|shopkeeper|custom] [--work 干什么活] [--persona 风格] [--redline 红线] [--agent default] [--yes] [--force]   对话式入职：三个问题（叫什么、干什么活、什么风格/红线）→ 生成 Soul + 按角色预装技能包 + 配置清单确认后生效，确认后发就绪简报（详见 docs/onboarding.md）
@@ -419,7 +420,7 @@ nyra gmail <status|auth|search|read|send|drafts|send-draft|labels|label|mark-rea
 nyra shopify <auth|status|products|product|orders|order|fulfill|inventory>   native Shopify connector (read-only): products / orders / order fulfillment check / inventory (see docs/connectors.md)
 nyra slack <auth|status|channels|history|send|card|callback>   native Slack connector: read channels / messages, send messages (explicit approval required), post approval cards, button callbacks resolve approvals (see docs/connectors.md)
 nyra connector <status|list|approve|revoke|auth|install|uninstall|usage|flows|flow|bundle>   connector directory: install / one-click auth / revoke / usage / business flows / export connector bundle (see docs/connectors.md)
-nyra mcp server <status|enable|disable|allow-writes-on|allow-writes-off>   external MCP server switch: other agents call Nyra memory and tasks via gateway POST /mcp (off by default, see docs/mcp.md)
+nyra mcp <server <status|enable|disable|allow-writes-on|allow-writes-off>|contract>   external MCP server switch and minimal stable contract: other agents call Nyra memory and tasks via gateway POST /mcp (off by default, see docs/mcp.md); contract prints the 10 commands of nyra-contract-v1 (see docs/agent-contract.md)
 nyra peer <status|enable|disable|list|auth|ask|handoff|card|code|add|request|accept|friends|block|circle|share|grant|proposal|branch|discover|token>   peer collaboration: ask another Nyra instance, hand off run context, agent card and friends, scoped revocable grants, peer write proposals, foreign branch merges, public discovery with per-peer tokens, agent card JWS signatures (off by default, see docs/peer.md and docs/peer-discovery.md)
 nyra circle <create|list|show|invite|revoke|delete|bind|unbind|owner|check|bindings>   trust circles: who may send tasks to the agent (closed by default, out-of-circle messages are dropped at the gateway, see docs/circles.md)
 nyra org <create|list|show|add|remove|role|delete|check|sso|share|shared|grant-write|learnings|workspace|file-read|cross-access|catalog|tasks|task-add|violations|isolation|memory>   orgs and team workspaces: orgs / members / roles admin/member/viewer, the owner is super-admin; shared Bots read-only by default, tenant isolation, org-private catalog (see docs/orgs.md)
@@ -491,7 +492,8 @@ nyra creator "<one-line idea>" [--yes]   creator mode: build a plugin from one s
 nyra memory <export|export-prompt|import|local|import-zip|search|forget|remember|entries|entry|update|rejections|recall|extract|review>  memory exchange, search and forget; remember/entries/entry/update/rejections go through the memory evidence gate (writes need verbatim user quotes, see docs/memory.md); remember/entries support --org org memory; recall is the active-memory switch and dry run (off by default, see docs/memory.md); extract/review auto-extracts candidate memories from a conversation and confirms them before they enter the store (see docs/memory.md)
 nyra soul <show|status|list|init|add|remove|enable|disable|edit|export|import>  Soul identity layer: per-agent identity and Tenets (invariants compile into the rule layer and are enforced by code; role Charter via nyra soul charter <set|show|clear>, see docs/soul.md and docs/team.md)
 nyra style <learn|show|list|delete|export|import>  per-channel writing style profiles (see docs/style.md)
-nyra doctor [--provider name]  self-check: runtime, config, home dir, key, network, disk, write access, vault permissions
+nyra doctor [--provider name] [--deep]  self-check: runtime, config, home dir, key, network, disk, write access, vault permissions; --deep adds the immune check (self-check of the brain, failures go to quarantine, see docs/immune.md)
+nyra dream <status|enable|disable|set|run>  nightly dream metabolism: extract memory candidates, prune duplicates and stale ones, write a summary into the morning briefing (off by default, see docs/dream.md)
 nyra models [list|show <model>|refresh|fallback|handoff|preset|health]   look up model context windows, refresh model data, show fallback chain and this month's switches, view rate-limit handoff summaries, set the degradation preset and view the health ledger (see docs/model-catalog.md)
 nyra setup                     first-run wizard
 nyra init [--name name] [--role researcher|assistant|shopkeeper|custom] [--work job] [--persona style] [--redline redline] [--agent default] [--yes] [--force]   guided onboarding: three questions (name, job, style/redlines) -> Soul + role skill pack + a reviewable checklist, applied only after you confirm; then a ready briefing (see docs/onboarding.md)
@@ -1476,6 +1478,16 @@ async function handleSchedule(argv: string[], workdir: string): Promise<number> 
           if (report.skipped) return;
           const acted = report.flagged.length + report.retried.length + report.blocked.length + report.failed.length;
           if (acted) process.stdout.write(`[看门狗] 扫了 ${report.scanned} 个在跑任务：标卡住 ${report.flagged.length} 个、重排 ${report.retried.length} 个、停下 ${report.blocked.length} 个、运行已失败走 fail 路径 ${report.failed.length} 个。\n`);
+        });
+      // H3：夜间做梦代谢（默认关）。每轮调 isDreamDue 判断：开关关着或
+      // 没到点就静默跳过；到了就跑一次确定性提炼 + 剪枝，小结进晨间简报。
+      // 模型润色小结默认不开（须配置里显式开），失败只记 stderr，不破坏定时任务。
+      pollers.push(async () => {
+          const { dreamConfig, isDreamDue, readDreamState, runDreamMetabolism } = await import("./dream.ts");
+          const cfg = dreamConfig(loadConfig(home));
+          if (!isDreamDue(cfg, readDreamState(home))) return;
+          const result = await runDreamMetabolism(home);
+          process.stdout.write(`[做梦] 扫了 ${result.counts.sessions_scanned} 个会话，提炼 ${result.counts.proposals_added} 条候选，剪掉重复 ${result.counts.duplicates_pruned} 条、过期 ${result.counts.stale_rejected} 条，小结已进晨间简报。\n`);
         });
       // 缺口 32：变化监测例程 Watch / Watch-with-action（只读巡查：抓页面、
       // 读文件，变了才汇报；带动作的按声明触发，下载须人批）。全局开关未
@@ -7493,6 +7505,10 @@ export async function main(argv: string[]): Promise<number> {
   if (args.subcommand === "judge") return handleJudge(args.subArgs ?? [], resolve(args.workdir));
   if (args.subcommand === "verifier") return handleVerifier(args.subArgs ?? [], home);
   if (args.subcommand === "mcp") return handleMcpServer(args.subArgs ?? [], home);
+  if (args.subcommand === "dream") {
+    const { handleDream } = await import("./dreamCli.ts");
+    return handleDream(args.subArgs ?? [], home);
+  }
   if (args.subcommand === "peer") {
     const sub = args.subArgs ?? [];
     if (sub[0] && (PEER_FRIEND_COMMANDS as readonly string[]).includes(sub[0])) {
@@ -7997,7 +8013,8 @@ export async function main(argv: string[]): Promise<number> {
   if (args.subcommand === "permissions") return handlePermissions(args.subArgs ?? [], home);
   if (args.subcommand === "eigenflux") return handleEigenflux(args.subArgs ?? [], home);
   if (args.subcommand === "doctor") {
-    const { checks, allOk } = await runDoctor({ home, providerName: args.provider });
+    const deep = (args.subArgs ?? []).includes("--deep");
+    const { checks, allOk } = await runDoctor({ home, providerName: args.provider, deep });
     printDoctorResult({ checks, allOk });
     return allOk ? 0 : 1;
   }
