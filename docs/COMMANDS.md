@@ -178,6 +178,7 @@
 |---|---|
 | `nyra doctor [--provider 名字] [--deep]` | 中文自检：运行时、配置、Key、网络、磁盘、写权限、密码箱；`--deep` 追加免疫体检（大脑自检，不合格的进隔离区，详见 `docs/immune.md`） |
 | `nyra dream <status\|enable\|disable\|set\|run>` | 夜间做梦代谢：每夜提炼记忆候选、剪掉重复与过期、写小结进晨间简报（默认关，详见 `docs/dream.md`） |
+| `nyra router <status\|test>` | 本地小路由：零 token 意图分类（不调模型），status 看开关与权重，test 干跑一条消息；开了才在群聊里先走本地分类、判不出回落模型路由（默认关，详见 `docs/local-router.md`） |
 | `nyra status` | 诊断清单：坏配置、不可用沙箱、被忽略的权限、永不匹配的 hook matcher |
 | `nyra setup` | 首次启动向导 |
 | `nyra vault` | 凭据保险箱（加密存储，权限 0600） |
