@@ -657,6 +657,9 @@ group_chat_terminated: ["room", "reason", "turns"],
 // M2：Jev 式快速决策路由进证据链——房间、选中的成员、置信度、
 // 是否回落全员回答、回落原因。只记 id 与结论，不记消息全文。
 jev_routed: ["room", "member", "confidence", "fallback", "reason"],
+// 本地小路由：每次本地分类都记一笔——判了什么标签、置信度、
+// 是否回落、为什么。只记标签与结论，不记消息全文。
+local_router_decision: ["label", "confidence", "fallback", "reason"],
 // M3：队伍包安装进证据链——队伍、版本、机器人（逗号分隔）、
 // 来源（本地路径或 https URL，不记文件内容）。
 team_pack_installed: ["team", "version", "bots", "source"],

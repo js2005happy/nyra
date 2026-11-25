@@ -321,6 +321,7 @@ nyra soul <show|status|list|init|add|remove|enable|disable|edit|export|import>  
 nyra style <learn|show|list|delete|export|import>  分应用文风学习（详见 docs/style.md）
 nyra doctor [--provider 名字] [--deep]  中文自检：运行时、配置文件、配置目录、Key、网络、磁盘、写权限、密码箱权限；--deep 追加免疫体检（大脑自检，不合格的进隔离区，详见 docs/immune.md）
 nyra dream <status|enable|disable|set|run>  夜间做梦代谢：每夜提炼记忆候选、剪掉重复与过期、写小结进晨间简报（默认关，详见 docs/dream.md）
+nyra router <status|test>  本地小路由：零 token 意图分类（不调模型），status 看开关与权重，test 干跑一条消息（默认关，详见 docs/local-router.md）
 nyra models [list|show <模型名>|refresh|fallback|handoff|preset|health]   查模型上下文窗口、刷新模型数据、看备用链与本月切换统计、查限流接力摘要、设降级预设与看故障账本（见 docs/model-catalog.md）
 nyra setup                     首次启动向导
 nyra init [--name 名字] [--role researcher|assistant|shopkeeper|custom] [--work 干什么活] [--persona 风格] [--redline 红线] [--agent default] [--yes] [--force]   对话式入职：三个问题（叫什么、干什么活、什么风格/红线）→ 生成 Soul + 按角色预装技能包 + 配置清单确认后生效，确认后发就绪简报（详见 docs/onboarding.md）
@@ -494,6 +495,7 @@ nyra soul <show|status|list|init|add|remove|enable|disable|edit|export|import>  
 nyra style <learn|show|list|delete|export|import>  per-channel writing style profiles (see docs/style.md)
 nyra doctor [--provider name] [--deep]  self-check: runtime, config, home dir, key, network, disk, write access, vault permissions; --deep adds the immune check (self-check of the brain, failures go to quarantine, see docs/immune.md)
 nyra dream <status|enable|disable|set|run>  nightly dream metabolism: extract memory candidates, prune duplicates and stale ones, write a summary into the morning briefing (off by default, see docs/dream.md)
+nyra router <status|test>  local tiny router: zero-token intent classification (no model calls); status shows switch and weights, test dry-runs one message (off by default, see docs/local-router.md)
 nyra models [list|show <model>|refresh|fallback|handoff|preset|health]   look up model context windows, refresh model data, show fallback chain and this month's switches, view rate-limit handoff summaries, set the degradation preset and view the health ledger (see docs/model-catalog.md)
 nyra setup                     first-run wizard
 nyra init [--name name] [--role researcher|assistant|shopkeeper|custom] [--work job] [--persona style] [--redline redline] [--agent default] [--yes] [--force]   guided onboarding: three questions (name, job, style/redlines) -> Soul + role skill pack + a reviewable checklist, applied only after you confirm; then a ready briefing (see docs/onboarding.md)
@@ -2775,16 +2777,32 @@ async function handleGroupChat(argv: string[], home: string, args: CliArgs): Pro
         return 2;
       }
       const room = store.get(roomId);
-      const { createJevDecider, jevRouterConfig, routeMessage } = await import("./jevRouter.ts");
+      const { chainDeciders, createJevDecider, jevRouterConfig, routeMessage } = await import("./jevRouter.ts");
       const cfg = jevRouterConfig(home);
       const members = room.bots.map((b) => ({ id: b.id, name: b.name, role: b.role, instructions: b.instructions }));
-      const decision = await routeMessage(message, members, createJevDecider(home, { model: cfg.model }), { threshold: cfg.threshold });
+      // 本地小路由开了就先走它（与群聊里同一条链）；干跑不记运行事件。
+      let decider = createJevDecider(home, { model: cfg.model });
+      let localOn = false;
+      const { localRouterConfig } = await import("./localRouter.ts");
+      const localCfg = localRouterConfig(home);
+      if (localCfg.enabled) {
+        const { createLocalRouterDecider } = await import("./localRouter.ts");
+        decider = chainDeciders(
+          createLocalRouterDecider(home, { threshold: Math.min(localCfg.threshold, cfg.threshold) }),
+          decider,
+        );
+        localOn = true;
+      }
+      const decision = await routeMessage(message, members, decider, { threshold: cfg.threshold });
+      const localDecided = localOn && decision.member && (decider as { lastSource?: string }).lastSource === "first";
       if (argv.includes("--json")) {
-        process.stdout.write(JSON.stringify({ room: roomId, ...decision }, null, 2) + "\n");
+        process.stdout.write(JSON.stringify({ room: roomId, decider: localDecided ? "local" : "model", ...decision }, null, 2) + "\n");
         return 0;
       }
       if (decision.member) {
-        process.stdout.write(`路由：${decision.member} 接（置信度 ${decision.confidence}，阈值 ${cfg.threshold}，模型 ${cfg.model}）\n`);
+        process.stdout.write(localDecided
+          ? `路由：${decision.member} 接（本地小路由，零 token，置信度 ${decision.confidence}，阈值 ${cfg.threshold}）\n`
+          : `路由：${decision.member} 接（置信度 ${decision.confidence}，阈值 ${cfg.threshold}，模型 ${cfg.model}）\n`);
       } else {
         process.stdout.write(`路由回落全员回答：${decision.reason}\n`);
       }
@@ -7508,6 +7526,10 @@ export async function main(argv: string[]): Promise<number> {
   if (args.subcommand === "dream") {
     const { handleDream } = await import("./dreamCli.ts");
     return handleDream(args.subArgs ?? [], home);
+  }
+  if (args.subcommand === "router") {
+    const { handleRouter } = await import("./localRouterCli.ts");
+    return handleRouter(args.subArgs ?? [], home);
   }
   if (args.subcommand === "peer") {
     const sub = args.subArgs ?? [];

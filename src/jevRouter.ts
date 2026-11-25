@@ -146,6 +146,42 @@ export async function routeMessage(
 }
 
 /**
+ * 链式 decider：先跑 first（本地小路由，零 token），它返回 null
+ * （判不出、置信度不够、权重坏了）时再跑 second（便宜模型）。
+ * first 抛错也一样落到 second；两个都判不出才返回 null，
+ * 外层 routeMessage 再回落全员回答。调用后 lastSource 说明
+ * 这次是谁判的（first / second / none），调用方据此写审计。
+ */
+export type ChainedDecider = JevDecider & {
+  lastSource: "first" | "second" | "none";
+};
+
+export function chainDeciders(first: JevDecider, second: JevDecider): ChainedDecider {
+  const chained = (async (message: string, members: JevMember[]) => {
+    let d: JevRawDecision | null = null;
+    try {
+      d = await first(message, members);
+    } catch {
+      d = null;
+    }
+    if (d) {
+      chained.lastSource = "first";
+      return d;
+    }
+    let d2: JevRawDecision | null = null;
+    try {
+      d2 = await second(message, members);
+    } catch {
+      d2 = null;
+    }
+    chained.lastSource = d2 ? "second" : "none";
+    return d2;
+  }) as ChainedDecider;
+  chained.lastSource = "none";
+  return chained;
+}
+
+/**
  * 生产 decider：便宜模型一句话分流。只用 resolveProvider 直连，
  * 不走 fallback 链（路由不值得换模型）；任何失败都返回 null
  * （routeMessage 会回落），不在这里抛错打断群聊。

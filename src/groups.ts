@@ -58,12 +58,15 @@ import { decryptEntry, encryptEntry, Vault } from "./vault.ts";
 import type { SandboxMode } from "./sandbox.ts";
 import { RunStore } from "./runs.ts";
 import {
+  chainDeciders,
   createJevDecider,
   jevRouterConfig,
   routeMessage,
+  type ChainedDecider,
   type JevDecider,
   type JevMember,
 } from "./jevRouter.ts";
+import { createLocalRouterDecider, localRouterConfig } from "./localRouter.ts";
 
 /**
  * G-P2-1：拦截事件进证据链（改写 / 丢弃才发，log 只记审计）。
@@ -1194,7 +1197,30 @@ export class GroupStore {
       decider = this.jevDecider;
     } else {
       if (!cfg.enabled) return null;
-      decider = createJevDecider(this.home, { model: cfg.model });
+      const modelDecider = createJevDecider(this.home, { model: cfg.model });
+      // 本地小路由开了就先走它（零 token）：它判不出、置信度不够、
+      // 权重坏了时返回 null，链子自动落到便宜模型那一棒；模型也
+      // 判不出才回落全员回答。本地阈值取两边更严的那个——本地判
+      // 出但过不了 Jev 阈值的结论不该直接进 routeMessage，而该
+      // 给模型一次机会。测试注入的 decider（jevDecider 已定）不链。
+      const localCfg = localRouterConfig(this.home);
+      if (localCfg.enabled) {
+        decider = chainDeciders(
+          createLocalRouterDecider(this.home, {
+            threshold: Math.min(localCfg.threshold, cfg.threshold),
+            onDecision: (fields) => {
+              const lf: Record<string, unknown> = { ...fields };
+              try {
+                if (emit) emit("local_router_decision", lf);
+                else recordBusInterventionEvent(this.home, "local_router_decision", lf);
+              } catch { /* 审计写不上不影响群聊 */ }
+            },
+          }),
+          modelDecider,
+        );
+      } else {
+        decider = modelDecider;
+      }
     }
     const members: JevMember[] = bots.map((b) => ({
       id: b.id, name: b.name, role: b.role, instructions: b.instructions,
@@ -1210,7 +1236,11 @@ export class GroupStore {
       member: decision.member,
       confidence: decision.confidence,
       fallback: decision.fallback,
-      reason: decision.reason,
+      // 本地小路由判中的那次，jev_routed 的原因要如实写本地，
+      // 别写成“Jev 路由”（那是模型那一棒的原因）。
+      reason: decision.member && (decider as ChainedDecider).lastSource === "first"
+        ? "本地小路由（零 token）"
+        : decision.reason,
     };
     try {
       if (emit) emit("jev_routed", fields);
