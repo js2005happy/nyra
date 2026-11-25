@@ -220,6 +220,16 @@ Nyra 的代码全部是原创实现，没有复制任何项目的源码。下表
 - **shell 黑名单**：`rm -rf /`、`rm -rf ~`、`mkfs`、`dd` 写设备、关机/重启、fork 炸弹等一律拒绝（见 `src/tools.ts` 的 `checkShellDenied`）。
 - **无真沙箱（诚实说明）**：MVP 没有实现容器/命名空间级沙箱，命令以运行 Nyra 的用户身份执行。这是路线图第一项；在此之前，请只在信任的目录用 full 模式。
 
+## 单向编译：源只读、派生单向、写回必过门（H8，2026-11-25）
+
+脑资产（长期记忆、技能、人设、规则）是源，运行态（索引、分块、缓存、账本）是派生。方向只有一条：源 → 派生，绝不反向。
+
+- **源只读**：`MEMORY.md`（全局与各 Bot 的）、技能源文件（`skills/*.md`）、`AGENTS.md`、`SOUL.md` 在运行时只读。派生数据（FTS 索引、会话搜索索引、知识库分块、记忆 sidecar 索引）只写自己的派生文件，绝不写回源文件。
+- **写 MEMORY.md 只有一个入口**：`appendMemory`（`src/memory.ts`）。模型工具 `memory_append`、记忆提炼、聊天导出导入，写盘前先过记忆门（`src/memoryGate.ts`，Kooyu 证据门）或进待审队列（`src/memoryProposals.ts`），绝不静默写记忆。删记忆走按会话删除，不直接改文件。
+- **写技能源文件只有一个入口**：`saveSkillFile`（`src/skills.ts`）。只有用户批准的技能安装/保存能调它；模型不能直接写技能文件。
+- **派生损坏可删可重建**：索引、分块、缓存坏了就删了重建，绝不反向修源；重建失败时报“派生已损坏”，不碰源。
+- **钉住**：`tests/node/test-one-way-compile.test.ts` 静态扫描全仓——除 `src/memory.ts` 外，任何源文件不得用文件写原语写 `MEMORY.md`；除 `src/skills.ts` 外，任何源文件不得写技能目录；本节存在且点名两个入口，改了入口名测试就失败。
+
 ## 路线图
 
 **v2 已完成（0.2.0）：** MCP 客户端、内置调度器/daemon、会话压缩、证据链、grep/git_status/http_post、provider 档案、web_search 双后端。
