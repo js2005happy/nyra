@@ -342,3 +342,12 @@ test("LocalRouterTest.test_featurize_is_binary_bag_of_words", () => {
   expect(x.every((v) => v === 0 || v === 1)).toBe(true);
   expect(x.reduce((a, b) => a + b, 0)).toBeGreaterThan(0);
 });
+
+test("随仓权重只解析一次并复用；传 weightsJson 仍每次现解析", () => {
+  expect(loadLocalRouterWeights()).toBe(loadLocalRouterWeights());
+  const json = JSON.stringify(loadLocalRouterWeights());
+  expect(loadLocalRouterWeights(json)).not.toBe(loadLocalRouterWeights(json));
+  expect(() => loadLocalRouterWeights("{坏")).toThrow();
+  // 坏的覆盖不污染缓存
+  expect(loadLocalRouterWeights().vocab.length).toBeGreaterThan(0);
+});

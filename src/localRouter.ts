@@ -106,8 +106,18 @@ export function buildLocalRouterVocabulary(
 }
 
 /** 文本→二值词袋向量（词在词表里出现为 1，否则 0）。 */
+const VOCAB_INDEX_CACHE = new WeakMap<string[], Map<string, number>>();
+function vocabIndex(vocab: string[]): Map<string, number> {
+  let index = VOCAB_INDEX_CACHE.get(vocab);
+  if (!index) {
+    index = new Map(vocab.map((tok, i) => [tok, i]));
+    VOCAB_INDEX_CACHE.set(vocab, index);
+  }
+  return index;
+}
+
 export function featurizeLocalRouter(text: string, vocab: string[]): number[] {
-  const index = new Map(vocab.map((tok, i) => [tok, i]));
+  const index = vocabIndex(vocab);
   const x = new Array<number>(vocab.length).fill(0);
   for (const tok of new Set(tokenizeLocalRouter(text))) {
     const i = index.get(tok);
@@ -164,8 +174,12 @@ export function parseLocalRouterWeights(json: string): LocalRouterWeights {
 }
 
 /** 读随仓权重（测试可传 weightsJson 覆盖，不碰文件）。 */
+let bundledCache: LocalRouterWeights | null = null;
 export function loadLocalRouterWeights(weightsJson?: string): LocalRouterWeights {
-  return parseLocalRouterWeights(weightsJson ?? BUNDLED_WEIGHTS_JSON);
+  if (weightsJson !== undefined) return parseLocalRouterWeights(weightsJson);
+  // 随仓权重不变：解析 + 校验一次，之后每条消息直接复用（解析失败不缓存，下次照样抛错）
+  if (!bundledCache) bundledCache = parseLocalRouterWeights(BUNDLED_WEIGHTS_JSON);
+  return bundledCache;
 }
 
 /** 前向：tanh 隐藏层 + softmax 输出。纯函数，训练脚本也复用它。 */
