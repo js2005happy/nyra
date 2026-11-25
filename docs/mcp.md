@@ -74,7 +74,10 @@ nyra mcp server enable            # 开启对外服务（默认只读）
 nyra mcp server allow-writes-on   # 允许写操作（仍须过独立审查层）
 nyra mcp server allow-writes-off  # 关回只读
 nyra mcp server disable           # 关闭对外服务
+nyra mcp contract                 # 打印最小稳定契约 nyra-contract-v1 的 10 条命令（只读，服务关着也能看）
 ```
+
+最小稳定契约 `nyra-contract-v1` 是 MCP 与 A2A 的同一张子集清单：10 条命令（问、记、查任务、列技能……），每条对应一个已有的 MCP 工具或 A2A 方法，不另起协议。详见 `docs/agent-contract.md`。
 
 配置在 `config.json` 的 `mcp_server` 一节：`{ "enabled": false, "allow_writes": false }`。
 

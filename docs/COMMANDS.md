@@ -152,7 +152,7 @@
 | `nyra connector <status\|list\|approve\|revoke\|auth\|install\|uninstall\|usage\|flows\|flow\|bundle>` | 连接器目录：安装 / 一键授权 / 撤销 / 用量 / 业务流程 / 导出连接器包（详见 `docs/connectors.md`） |
 | `nyra shopify <auth\|status\|products\|product\|orders\|order\|fulfill\|inventory>` | Shopify 连接器（只读）：查商品、订单、库存；订单履约核查（G-P0-6 做深）；写操作一律拒绝（详见 `docs/connectors.md`） |
 | `nyra slack <auth\|status\|channels\|history\|send\|card\|callback>` | Slack 连接器：读频道/消息、发消息（须显式批准）、发审批卡、按钮回调回写审批桥（G-P0-6 做深）；删消息/改频道/管理成员一律拒绝（详见 `docs/connectors.md`） |
-| `nyra mcp server <status\|enable\|disable\|allow-writes-on\|allow-writes-off>` | 对外 MCP 服务开关：别的 agent 经网关 `POST /mcp` 调 Nyra 的记忆与任务（默认关闭；写操作须显式开且过独立审查，详见 `docs/mcp.md`） |
+| `nyra mcp <server <status\|enable\|disable\|allow-writes-on\|allow-writes-off>\|contract>` | 对外 MCP 服务开关：别的 agent 经网关 `POST /mcp` 调 Nyra 的记忆与任务（默认关闭；写操作须显式开且过独立审查，详见 `docs/mcp.md`）；`contract` 打印最小稳定契约 nyra-contract-v1 的 10 条命令（详见 `docs/agent-contract.md`） |
 | `nyra peer <status\|enable\|disable\|list\|auth\|ask\|handoff\|card\|code\|add\|request\|accept\|friends\|block\|circle\|share\|grant\|proposal\|branch\|discover\|token>` | 对端协作：问别的 Nyra 实例、交接运行上下文、名片加好友（默认关闭；对外发送须开独立审查，详见 `docs/peer.md`）；第 2 批 G-P1-5/G-P1-6/G-P1-8/G-P1-10：名片 per-circle 可见性、带 scope 可吊销的 grant、对方写操作默认进提议、外来任务隔离分支；第 3 批 G-P1-4/G-P1-7：公开发现（well-known 名片 + 验签，不靠线下传码）、per-peer token（出站，每好友一条）、名片 JWS 签名（详见 `docs/peer-discovery.md`） |
 | `nyra circle <create\|list\|show\|invite\|revoke\|delete\|bind\|unbind\|owner\|check\|bindings>` | 信任圈与跨实例准入：谁能给 agent 发任务（默认全封闭，圈外消息网关直接丢弃；详见 `docs/circles.md`） |
 | `nyra org <create\|list\|show\|add\|remove\|role\|delete\|check\|sso>` | 组织与团队 workspace：组织/成员/角色 admin/member/viewer（机主是超级管理员；`sso` 开关组织强制 SSO，详见 `docs/orgs.md`） |
@@ -163,7 +163,7 @@
 | `nyra usage [--agent <id>] [--json]` | M1：每 Bot 用量仪表——按 Bot 列当日/当月已花多少、上限是多少、到 80% 了没有、是不是已超限停了；数字来自用量账本与分层判定（详见 `docs/budget.md`） |
 | `nyra agui <register\|list\|show\|link\|connect\|disconnect\|send\|exec\|accept-write\|revoke-write\|a2a\|serve>` | 协议中立接入：接任意 AG-UI endpoint 当 Bot（只读先行，写操作须机主显式接受），A2A 复用名片 + 交接；`serve` 把 Nyra 对外暴露成 AG-UI endpoint（详见 `docs/agui.md`） |
 | `nyra acp <serve\|status\|grant\|revoke-grant>` | ACP 服务端：编辑器经 stdio 用 JSON-RPC 驱动 Nyra（只读先行，写操作进 peer 提议门，须机主逐条批）（详见 `docs/acp.md`） |
-| `nyra a2a <serve\|card>` | A2A 服务端：别的 agent 经 HTTP 用 JSON-RPC 2.0 调用 Nyra（只读先行，写操作进 peer 提议门，须机主逐条批）（详见 `docs/a2a.md`） |
+| `nyra a2a <serve\|card>` | A2A 服务端：别的 agent 经 HTTP 用 JSON-RPC 2.0 调用 Nyra（只读先行，写操作进 peer 提议门，须机主逐条批）；agent 卡片里带最小稳定契约 nyra-contract-v1（详见 `docs/a2a.md` 与 `docs/agent-contract.md`） |
 | `nyra screen <watch\|activity\|status\|takeover\|handover> <电脑 id>` | 缺口 50：只读看屏（实时画面 + 活动列表，帧指纹不记帧内容）与接管（take the wheel，须确认；接管期间 Bot 暂停、交还后从挂起点继续，全程记审计）；画面里密码/验证码/卡号自动打码（详见 `docs/bot-screen.md`） |
 | `nyra computer <status\|grant\|grants\|blocklist\|activity\|display\|require>` | G-P1-35：真机电脑操作守卫——禁碰窗口名单、可撤销授权、虚拟桌面 Xvfb、每一次动作留痕；禁碰名单与限流默认开，授权与虚拟桌面检查默认关、机主按需收紧（详见 `docs/computer-guard.md`） |
 | `nyra voice <status\|speak <文字>\|enable-tts\|disable-tts\|transcribe <音频>\|realtime <list\|use\|status>>` | 语音指挥：看配置与可用性、读一段文字、开关自动回读；只转写不跑任务；实时语音服务商切换（默认 local，详见 `docs/realtime-voice.md`；详见 `docs/voice.md`） |
@@ -176,7 +176,8 @@
 
 | 命令 | 作用 |
 |---|---|
-| `nyra doctor [--provider 名字]` | 中文自检：运行时、配置、Key、网络、磁盘、写权限、密码箱 |
+| `nyra doctor [--provider 名字] [--deep]` | 中文自检：运行时、配置、Key、网络、磁盘、写权限、密码箱；`--deep` 追加免疫体检（大脑自检，不合格的进隔离区，详见 `docs/immune.md`） |
+| `nyra dream <status\|enable\|disable\|set\|run>` | 夜间做梦代谢：每夜提炼记忆候选、剪掉重复与过期、写小结进晨间简报（默认关，详见 `docs/dream.md`） |
 | `nyra status` | 诊断清单：坏配置、不可用沙箱、被忽略的权限、永不匹配的 hook matcher |
 | `nyra setup` | 首次启动向导 |
 | `nyra vault` | 凭据保险箱（加密存储，权限 0600） |
