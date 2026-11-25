@@ -101,8 +101,19 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: npm
-          cache-dependency-path: desktop/package-lock.json
+
+      # H9 发版缓存隔离：不用 setup-node 内置的 npm 缓存——它的键只含
+      # OS + 锁文件哈希，不含分支，一个分支的缓存会被另一个分支直接复用。
+      # 这里用显式 actions/cache，键里钉死 github.ref（分支/tag 全名），
+      # restore-keys 只回落到同一分支的前缀，绝不跨分支串味；发版 tag 构建
+      # （v*）每次都是新键，从干净缓存起步。
+      - name: Cache npm dependencies (branch-scoped)
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ github.ref }}-${{ hashFiles('desktop/package-lock.json') }}
+          restore-keys: |
+            npm-${{ runner.os }}-${{ github.ref }}-
 
       - name: Check versions match
         # Runs after Set up Node on purpose: the check itself uses `node -p`.
@@ -185,10 +196,14 @@ jobs:
         with:
           targets: ${{ matrix.rust_targets }}
 
+      # H9 发版缓存隔离：rust-cache 的默认键只按 job + Rust 环境哈希，
+      # 不含分支，跨分支会复用同一个 target/ 缓存。key 里钉死 github.ref，
+      # 一个分支/tag 的 Rust 构建缓存绝不被另一个分支复用。
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: desktop/src-tauri -> target
+          key: ${{ github.ref }}
 
       - name: Install Tauri CLI
         working-directory: desktop
