@@ -56,6 +56,8 @@ import { loadSkills, canonicalSkillDirs } from "./skills.ts";
 import { pluginSkillDirs } from "./plugins.ts";
 // H1：网关逐回合记客户端——每条 HTTP 发起的回合记审计 + 最近客户端账本。
 import { describeGatewayClient, listGatewayClients, recordGatewayRound } from "./gatewayClients.ts";
+// H2：网关 presence（桌面活跃 → 手机通知静默）。
+import { isDesktopActive, isPresenceSurface, listActivePresence, loadGatewayPresence, recordPresenceHeartbeat, shouldNotifyMobile, PRESENCE_ACTIVE_WINDOW_MS, type PresenceSurface } from "./gatewayPresence.ts";
 import { loadModelCache, manualWindowFromConfig, resolveContextWindow, type WindowSource } from "./modelCatalog.ts";
 import { resolveAuxRouting, resolvePlanActRouting } from "./modelRouting.ts";
 import { MCPToolManager, NyraMcpServer, appendMcpServerAudit, buildMcpManager, mcpServerConfig } from "./mcp.ts";
@@ -2313,6 +2315,35 @@ export class Gateway {
     if (method === "GET" && path === "/api/clients") {
       if (!isOwner) { this.sendError(res, 403, "只能在电脑上查看客户端"); return; }
       this.sendJson(res, 200, { clients: listGatewayClients(this.home) });
+      return;
+    }
+    // H2：网关 presence（只限机主查）：桌面是否活跃、要不要推手机、
+    // 当前活跃的客户端。手机端按 should_notify_mobile 决定推不推通知。
+    if (method === "GET" && path === "/api/presence") {
+      if (!isOwner) { this.sendError(res, 403, "只能在电脑上查看在线状态"); return; }
+      const active = listActivePresence(this.home);
+      this.sendJson(res, 200, {
+        desktop_active: isDesktopActive(this.home),
+        should_notify_mobile: shouldNotifyMobile(this.home),
+        window_ms: PRESENCE_ACTIVE_WINDOW_MS,
+        active: active.map((r) => ({ client: r.client, kind: r.kind, surface: r.surface, last_active: r.last_active })),
+        clients: loadGatewayPresence(this.home).map((r) => ({ client: r.client, kind: r.kind, surface: r.surface, first_seen: r.first_seen, last_active: r.last_active, heartbeats: r.heartbeats })),
+      });
+      return;
+    }
+    // H2：客户端报心跳（任何有效 token 都能报；身份取自 apiAuth，不信任
+    // body 里的 client）。surface 不报时按 kind 推断（owner→desktop，
+    // device→mobile，account→web）。10 秒内重复心跳不写盘，返回 throttled。
+    if (method === "POST" && path === "/api/presence/heartbeat") {
+      const ref = describeGatewayClient(who);
+      if (!ref) { this.sendError(res, 400, "客户端身份无效"); return; }
+      let body: Record<string, unknown> = {};
+      try { body = await this.readBody(req); } catch (err) { this.sendError(res, 400, `请求无效：${err instanceof Error ? err.message : String(err)}`); return; }
+      const surface = body.surface === undefined ? undefined : body.surface;
+      if (surface !== undefined && !isPresenceSurface(surface)) { this.sendError(res, 400, "surface 只允许 desktop|mobile|web"); return; }
+      const out = recordPresenceHeartbeat(this.home, { client: ref.client, kind: ref.kind, surface: surface as PresenceSurface | undefined, source: "heartbeat" });
+      if (!out.ok) { this.sendError(res, 500, "心跳没写上"); return; }
+      this.sendJson(res, 200, { ok: true, throttled: out.throttled, desktop_active: isDesktopActive(this.home), should_notify_mobile: shouldNotifyMobile(this.home) });
       return;
     }
     if (method === "GET" && path === "/api/info") { this.sendJson(res, 200, this.info()); return; }

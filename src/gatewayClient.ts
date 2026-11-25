@@ -63,5 +63,13 @@ export class GatewayClient {
   clients(): Promise<{ clients: { client: string; kind: string; first_seen: string; last_seen: string; rounds: number }[] }> {
     return this.call("/api/clients") as Promise<{ clients: { client: string; kind: string; first_seen: string; last_seen: string; rounds: number }[] }>;
   }
+  /** H2：网关 presence——桌面是否活跃、要不要推手机、当前活跃的客户端。 */
+  presence(): Promise<{ desktop_active: boolean; should_notify_mobile: boolean; window_ms: number; active: { client: string; kind: string; surface: string; last_active: string }[]; clients: { client: string; kind: string; surface: string; first_seen: string; last_active: string; heartbeats: number }[] }> {
+    return this.call("/api/presence") as Promise<{ desktop_active: boolean; should_notify_mobile: boolean; window_ms: number; active: { client: string; kind: string; surface: string; last_active: string }[]; clients: { client: string; kind: string; surface: string; first_seen: string; last_active: string; heartbeats: number }[] }>;
+  }
+  /** H2：报一次心跳（surface 不传时网关按 token 类型推断）。 */
+  presenceHeartbeat(surface?: string): Promise<{ ok: boolean; throttled: boolean; desktop_active: boolean; should_notify_mobile: boolean }> {
+    return this.call("/api/presence/heartbeat", { method: "POST", body: JSON.stringify(surface === undefined ? {} : { surface }) }) as Promise<{ ok: boolean; throttled: boolean; desktop_active: boolean; should_notify_mobile: boolean }>;
+  }
   schedule(): Promise<unknown> { return this.call("/api/schedule"); }
 }

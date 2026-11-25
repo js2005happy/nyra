@@ -7,6 +7,8 @@ import { appendFileSync, chmodSync, mkdirSync, readFileSync, renameSync, writeFi
 import { createHash } from "node:crypto";
 import { join, dirname } from "node:path";
 import { resolveNyraHome } from "./memory.ts";
+// H2：owner 回合（本机回环 token）即桌面活跃，顺带记 presence。
+import { recordPresenceHeartbeat } from "./gatewayPresence.ts";
 
 export type GatewayClientKind = "owner" | "device" | "account";
 export interface GatewayClientRef { client: string; kind: GatewayClientKind; }
@@ -111,6 +113,13 @@ export function recordGatewayRound(
   } catch {
     // 账本写失败不影响回合：审计行已落盘，账本下次记回合时重建。
     return false;
+  }
+  // H2：owner 回合即桌面活跃（本机回环 token 只能是电脑上的客户端），
+  // 顺带记 presence——手机推不推就看它。心跳写失败不影响回合本身。
+  if (opts.kind === "owner") {
+    try {
+      recordPresenceHeartbeat(home, { client: opts.client, kind: opts.kind, surface: "desktop", source: "round" });
+    } catch { /* ignore */ }
   }
   return true;
 }

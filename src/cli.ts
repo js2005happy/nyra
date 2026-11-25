@@ -187,7 +187,7 @@ nyra --list-sessions           列出历史会话
 nyra --list-mcp                列出已配置的 MCP 服务器与预置
 nyra ui [--host 127.0.0.1] [--port 8765] [--pair] [--open]   启动 gateway 网页界面
 nyra ui --print-url-json --exit-on-stdin-close   桌面外壳模式：stdout 首行一行 JSON，stdin 关闭即退出
-nyra gw <sessions|send|view|approve|rewind|info|clients|schedule|mode-requests|mode-confirm>   连正在跑的 gateway 当客户端（clients：最近用过哪些客户端）
+nyra gw <sessions|send|view|approve|rewind|info|clients|presence|presence-heartbeat|schedule|mode-requests|mode-confirm>   连正在跑的 gateway 当客户端（clients：最近用过哪些客户端；presence：桌面是否活跃、手机通知推不推；presence-heartbeat：报一次心跳）
 nyra update-check   手动检查一次新版本（默认关闭：须先在设置里开启更新检查，否则不联网）
 nyra --compact <会话 ID>       压缩指定会话后退出
 REPL：/context 查看上下文占用；/compact focus <关键词> 按重点压缩会话（详见 docs/context.md）
@@ -358,7 +358,7 @@ nyra --list-sessions           list past sessions
 nyra --list-mcp                list configured MCP servers and presets
 nyra ui [--host 127.0.0.1] [--port 8765] [--pair] [--open]   start the gateway web UI
 nyra ui --print-url-json --exit-on-stdin-close   desktop shell mode: one JSON line on stdout, exits when stdin closes
-nyra gw <sessions|send|view|approve|rewind|info|clients|schedule|mode-requests|mode-confirm>   talk to a running gateway as a client (clients: which clients recently sent rounds)
+nyra gw <sessions|send|view|approve|rewind|info|clients|presence|presence-heartbeat|schedule|mode-requests|mode-confirm>   talk to a running gateway as a client (clients: which clients recently sent rounds; presence: whether desktop is active and mobile push is on; presence-heartbeat: send one heartbeat)
 nyra update-check   check for a new version once (off by default: enable update checks in settings first, otherwise no network)
 nyra --compact <session id>    compact a session and exit
 REPL: /context shows context usage; /compact focus <keyword> compacts around a topic (see docs/context.md)
@@ -1253,6 +1253,26 @@ async function handleGw(argv: string[]): Promise<number> {
       else for (const c of data.clients) process.stdout.write(`- ${c.client}（${c.kind}，${c.rounds} 回合，最近 ${c.last_seen}）\n`);
       return 0;
     }
+    if (action === "presence") {
+      // H2：桌面是否活跃、要不要推手机、当前活跃的客户端（只限机主）。
+      const data = await client.presence();
+      process.stdout.write(`桌面${data.desktop_active ? "活跃" : "不活跃"}（5 分钟窗口），手机通知${data.should_notify_mobile ? "会推" : "静默"}\n`);
+      if (!data.active.length) process.stdout.write("当前没有活跃的客户端\n");
+      else for (const c of data.active) process.stdout.write(`- ${c.client}（${c.kind}，${c.surface}，最近活跃 ${c.last_active}）\n`);
+      return 0;
+    }
+    if (action === "presence-heartbeat") {
+      // H2：报一次心跳（--surface desktop|mobile|web，不传时网关按 token 类型推断）。
+      const surface = flags("--surface");
+      if (surface !== undefined && surface !== "desktop" && surface !== "mobile" && surface !== "web") {
+        process.stderr.write("用法：nyra gw presence-heartbeat [--surface desktop|mobile|web]\n");
+        return 2;
+      }
+      const out = await client.presenceHeartbeat(surface);
+      process.stdout.write(out.throttled ? "心跳已报过（10 秒内重复，不重复写）\n" : "心跳已记录\n");
+      process.stdout.write(`桌面${out.desktop_active ? "活跃" : "不活跃"}，手机通知${out.should_notify_mobile ? "会推" : "静默"}\n`);
+      return 0;
+    }
     if (action === "schedule") {
       const data = await client.schedule() as { tasks: { name: string; enabled?: boolean }[] };
       if (!data.tasks.length) process.stdout.write("暂无定时任务\n");
@@ -1274,7 +1294,7 @@ async function handleGw(argv: string[]): Promise<number> {
       else process.stdout.write(`已批准 ${id}，模式：${out.mode ?? "full"}\n`);
       return 0;
     }
-    process.stderr.write("用法：nyra gw <sessions|send|view|approve|rewind|info|clients|schedule|mode-requests|mode-confirm>\n");
+    process.stderr.write("用法：nyra gw <sessions|send|view|approve|rewind|info|clients|presence|presence-heartbeat|schedule|mode-requests|mode-confirm>\n");
     return 2;
   } catch (err) {
     process.stderr.write(`gateway 调用失败：${err instanceof Error ? err.message : String(err)}\n`);
