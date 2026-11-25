@@ -39,7 +39,7 @@ test("DesktopJsonTest.test_print_url_json_contract", async () => {
     const line = await readFirstLine(child);
     const info = JSON.parse(line) as Record<string, unknown>;
     expect(info.nyra).toBe("ui");
-    expect(info.version).toBe("0.5.14");
+    expect(info.version).toBe("0.5.15");
     expect(typeof info.url).toBe("string");
     expect(typeof info.host).toBe("string");
     expect(typeof info.port).toBe("number");

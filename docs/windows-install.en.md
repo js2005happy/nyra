@@ -44,7 +44,7 @@ For a manual step-by-step install, see the install panel on the website
    $env:DEEPSEEK_API_KEY="sk-..."
    ```
 
-4. Check: `nyra.exe --version` should print `nyra 0.5.14 (node runtime)`;
+4. Check: `nyra.exe --version` should print `nyra 0.5.15 (node runtime)`;
    then run `nyra.exe setup` for the first-run wizard.
 
 The Node exe is a single-file console program built with Bun `--compile`. It

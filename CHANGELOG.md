@@ -2,7 +2,7 @@
 
 > Changelog is in Chinese; see [Release notes](https://github.com/js2005happy/nyra/releases) for English summaries.
 
-## 未发布（2026-11-25）
+## 0.5.15（2026-11-25）
 
 - 本地小路由提速（2026-11-25）：随仓权重以前每条消息都重新 `JSON.parse` + 全量校验（约 1.8 万个浮点数），词表索引也每次重建；现在随仓权重解析一次后复用，词表索引按词表缓存（传 `weightsJson` 的测试路径仍每次现解析，坏权重不进缓存、仍 fail-closed 抛错）。实测 2000 次分类 1208ms → 60ms（约 20 倍，每条约 0.6ms → 0.03ms）。测试：`test-local-router` 新增 1 项。分类结果不变。
 

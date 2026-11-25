@@ -38,7 +38,7 @@ Release 里的 `.msi` / `-setup.exe`，见 [docs/desktop.md](desktop.md)。
    $env:DEEPSEEK_API_KEY="sk-..."
    ```
 
-4. 验证：`nyra.exe --version` 应打印 `nyra 0.5.14 (node runtime)`，
+4. 验证：`nyra.exe --version` 应打印 `nyra 0.5.15 (node runtime)`，
    再跑 `nyra.exe setup` 走首次启动向导。
 
 Node exe 是 Bun `--compile` 打的单文件控制台程序，自带运行时，不用
