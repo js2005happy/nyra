@@ -15,7 +15,7 @@
 #   ./scripts/install-node.sh [--version TAG] [--from-file PATH]
 #                             [--prefix DIR] [--bin-dir DIR]
 #                             [--with-systemd] [--uninstall] [--help]
-#   默认 --version 是下面 DEFAULT_VERSION 钉住的版本（当前 v0.5.14，
+#   默认 --version 是下面 DEFAULT_VERSION 钉住的版本（当前 v0.5.15，
 #   发版时改那一处）；已编好二进制时用 --from-file dist/nyra-linux-x64
 #   从本地文件安装（不联网下载）。--version 传版本号时带 v 前缀，
 #   如 v0.5.1（不带 v 也行，脚本会补上）；latest 也可显式传，但仍要校验。
@@ -37,7 +37,7 @@ REPO="js2005happy/nyra"
 # 同时改 install-node-macos.sh、install-node.ps1 与 docs/installers.md。
 # 默认版本只指向已经发布、附件齐全（含 SHA256SUMS）的 Release：发版流程在新 Release
 # 挂齐附件之后才改这里，CI（installer-release-check）会核对这一点。
-DEFAULT_VERSION="v0.5.14"
+DEFAULT_VERSION="v0.5.15"
 VERSION="$DEFAULT_VERSION"
 FROM_FILE=""
 PREFIX="${HOME}/.local/share/nyra"
@@ -74,7 +74,7 @@ usage() {
     cat <<'EOF'
 
 选项：
-  --version TAG      Release 版本（默认 DEFAULT_VERSION 钉住的 v0.5.14）
+  --version TAG      Release 版本（默认 DEFAULT_VERSION 钉住的 v0.5.15）
   --from-file PATH   从本地已编好的二进制安装（不联网下载）
   --prefix DIR       安装位置（默认 ~/.local/share/nyra）
   --bin-dir DIR      nyra 链接位置（默认 ~/.local/bin）

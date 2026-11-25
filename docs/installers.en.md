@@ -47,7 +47,7 @@ Gradle (0.5.3 failed this way three times in a row).
 
 The three install scripts (`scripts/install-node.sh`,
 `scripts/install-node-macos.sh`, `scripts/install-node.ps1`) no longer default
-to an unchecked `latest`. They pin `DEFAULT_VERSION` (currently `v0.5.14`,
+to an unchecked `latest`. They pin `DEFAULT_VERSION` (currently `v0.5.15`,
 written prominently at the top of each script). After downloading, they check
 the file against the same Release's `SHA256SUMS` before installing. A hash
 mismatch, a file missing from the list, or a `SHA256SUMS` that can't be

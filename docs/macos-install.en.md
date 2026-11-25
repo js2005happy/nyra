@@ -104,7 +104,7 @@ nyra "Explain the structure of this project"
 
 | Option | Default | Description |
 | --- | --- | --- |
-| `--version TAG` | `v0.5.14` (pinned) | Version to download from GitHub Releases (with the `v` prefix, e.g. `v0.5.2`; without `v` also works and the script adds it; `latest` can be passed explicitly) |
+| `--version TAG` | `v0.5.15` (pinned) | Version to download from GitHub Releases (with the `v` prefix, e.g. `v0.5.2`; without `v` also works and the script adds it; `latest` can be passed explicitly) |
 | `--from-file PATH` | — | Install from a locally built binary (no download) |
 | `--prefix DIR` | `~/.local/share/nyra` | Install location (can't be `/`, can't be `$HOME` itself, can't contain spaces) |
 | `--bin-dir DIR` | `~/.local/bin` | Launcher location |
