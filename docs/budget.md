@@ -16,10 +16,10 @@
 
 ## 账本：`~/.nyra/budget-ledger.json`
 
-- 格式：`{version: 1, reservations: [...]}`，每行一笔预留：`id`（`rsv_<12 位 hex>`）、`owner`（谁预留的：子 agent 用注册表行 id，主 agent 用会话 id，都没有时是 `cli`）、`amountUsd`、`reason`（`next-call` / `parallel-thread` / `manual`）、`bindingScope`（撞上的是哪层上限：`run` / `monthly` / `tiered:<层>`，没撞上时为 null）、`createdAt` / `expiresAt`、`pid`、`status`（`reserved` / `settled` / `released`）、`settledUsd`（结算时的实际花费，没结算时为 null）。
+- 格式：`{version: 1, reservations: [...]}`，每行一笔预留：`id`（`rsv_<12 位 hex>`）、`owner`（谁预留的：子 agent 用注册表行 id，主 agent 用会话 id，都没有时是 `cli`）、`amountUsd`、`reason`（`next-call` / `parallel-thread` / `manual` / `group-turn`）、`bindingScope`（撞上的是哪层上限：`run` / `monthly` / `tiered:<层>`，没撞上时为 null）、`createdAt` / `expiresAt`、`pid`、`status`（`reserved` / `settled` / `released`）、`settledUsd`（结算时的实际花费，没结算时为 null）。
 - 只记用量数字，不记任务文本、不记模型回答、不记绝对路径。
 - 权限 0600，原子写（先写临时文件再改名）；文件损坏时先备份成 `budget-ledger.json.corrupt-<时间戳>` 再抛错，不静默丢账。
-- 每次读写都重新读文件，不在内存里缓存——跨会话、跨进程共享靠文件本身。同一个进程里的并发预留是原子的（整段 reserve 都是同步文件操作，不会被别的线程插队）；跨进程的读改写仍有竞态窗口，同一台机器上两个进程同时预留时以文件为准、后写的那笔以最新文件重算（见“诚实边界”）。
+- 每次读写都重新读文件，不在内存里缓存——跨会话、跨进程共享靠文件本身。写操作（reserve/settle/release/pruneExpired）的读-改-写一段由 `.budget-ledger.lock` 目录锁串行化（mkdir 原子创建；锁主进程已死或锁超 30 秒未放算 stale、可抢走；10 秒拿不到锁抛错）；读侧不加锁（写盘是 rename 原子写，读不到撕裂内容）。
 - 过期：默认 TTL 1 小时；过期预留在读时不计入、不拦路，下次写盘（reserve 写盘、`nyra budget list/show` 的 prune）时标 `released` 留痕。调用/线程预留的 owner 进程已死（`process.kill(pid, 0)` 抛 ESRCH）同样算过期——崩溃的进程不留僵尸预留。**手动预留（`nyra budget reserve`）例外：它是跨进程持有的，预留命令跑完退出是正常的，只按 TTL 过期、不看 pid**（真 CLI 冒烟跑出来的问题：初稿按 pid 清掉了刚预留的手动记录）。
 
 ## 预留算法
@@ -29,7 +29,7 @@
 1. 没有美元上限（单次 `--max-cost` / 月度上限）且没有分层回调 → 不预留，直接发请求。
 2. 未配单价：有美元上限要守且严格模式开 → 暂停（见下），调用不发出；非严格模式 → 继续跑（旧行为）；只有分层回调时 → 先判一次分层（USD 传 null，只判 token 层），判不过直接抛分层文案。
 3. 已有调用未报用量（`missing_calls > 0`）：同上——有美元上限且严格模式 → 暂停，不再发下一轮调用。
-4. 预估本次调用：`estimateCallUsd(prompt 字符数, 单价)`，输入按提示字符 / 2.5 折 token，补全默认按 400 token 算（与 `nyra cost --estimate` 同一套换算）。
+4. 预估本次调用：`estimateCallUsd(prompt 字符数, 单价)`，输入按提示字符 / 2.5 折 token，补全默认按 2000 token 算（保守值，不是典型值：典型回复约 400 token，但预留要拦超支，按 400 算时长回复的结算会顶穿预留；调用方知道本次输出上限时显式传 `completionTokens`）。
 5. 分层预判：把“本次运行已花 + 在途预留 + 本次预留”当在途花费传给分层回调，超了直接抛它的文案（回调里已按现有口径建暂停记录）。
 6. 只有分层回调、没有美元上限时到此为止（不预留，没上限可守）。
 7. 拼 limits 逐层算 `已花 + 在途预留 + 本次 <= 上限`：单次层（已花 = 本次运行已计价合计：主 agent + 已完成子任务 + 语音）、月度层（已花 = 账本里本月已落盘的 + 本次运行进行中）。任一层不够 → 拒绝，调用不发出，发 `budget_rejected` 事件。
@@ -105,7 +105,8 @@ nyra budget strict [--on | --off] [--yes]
 ## 诚实边界
 
 - 只在假 provider / 假 transport 与本地确定性检查上验过；真 API 未跑通；Windows/macOS 真机未验证。
-- 预估不是实测：补全默认按 400 token 算，实际补全更长时结算数会比预留大——预留是“事前拦超支”，不是“精确报价”。结算永远按实际用量算，预留与实际的差额在结算时找平。
-- 跨进程竞态：同一进程内的并发预留是原子的；两个进程同时预留时，后写的那笔以最新文件重算，先写的可能被后写的覆盖——同机多进程并发是已知边界，不是严格串行化。
+- 预估不是实测：补全默认按 2000 token 保守算，实际补全更长时结算数仍可能比预留大——预留是“事前拦超支”，不是“精确报价”。结算永远按实际用量算，预留与实际的差额在结算时找平；事后仍由 `checkCost` 硬停兜底。
+- 跨进程竞态：写操作由 `.budget-ledger.lock` 目录锁串行化（stale 锁 30 秒后可回收，拿不到锁 10 秒抛错）；锁目录被手动删掉不影响正确性（下一笔重建），删锁期间的两笔并发仍可能互相覆盖——不要手动删。
+- 群聊轮次：`runSessionRound` 没给 `estimateUsd` 时按 `pricing` 保守估算；既没 `estimateUsd` 也没 `pricing` 时该轮预留 0（只靠事后 `checkCost`）。生产调用方（CLI `group session send`、模型工具 `group_session_send`）尚未把定价接进来，目前群聊轮次实际走的是 0 预留——接线是待办，不是已完成。
 - 已发出去的外部动作停不掉；暂停只停“还没发的调用”。
 - 进程退出则后台模型循环停了，跑一半的任务须 `nyra fanout recover` 回收（旧行为）。
