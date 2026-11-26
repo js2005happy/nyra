@@ -18,6 +18,7 @@
 import { createServer, connect, type Server, type Socket } from "node:net";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { resolve } from "node:path";
 
 /** 协议版本：客户端与服务端各带一份，不匹配就拒绝（避免半升级错配）。 */
 export const EXEC_PROTOCOL_VERSION = 1;
@@ -140,7 +141,7 @@ export async function startExecDaemon(opts: ExecDaemonOptions = {}): Promise<Exe
     }
     if (roots.length) {
       const cwd = String(req.cwd ?? "");
-      const ok = roots.some((r) => cwd === r || cwd.startsWith(r + "/") || cwd.startsWith(r + "\\"));
+      const ok = isWithinRoots(cwd, roots);
       if (!ok) {
         deny(socket, id, `工作目录不在白名单内：${cwd || "(未指定)"}`);
         return;
@@ -281,4 +282,39 @@ export class ExecDaemonClient {
       });
     });
   }
+}
+
+/**
+ * 路径是否落在允许的白名单根之内。
+ *
+ * 为什么单独抽出来：白名单判定是**安全边界**，必须能单独测、能跨平台测。
+ *
+ * 三条踩过的坑：
+ *   1. **分隔符混用**：root 写成 `C:/work`、cwd 是 `C:\work\x` —— 直接 `startsWith`
+ *      会判"不在根内"（误拒，好一点是拒绝；坏一点是让你怀疑 daemon 坏了）
+ *   2. **前缀当包含**：root `/repo` 与 cwd `/repo2` —— 只比字符串会把 `/repo2` 放进来。
+ *      所以必须要求根后面紧跟分隔符（或完全相等）
+ *   3. **Windows 大小写**：`C:\Work` 与 `c:\work\x` 是同一个目录，比较要忽略大小写
+ */
+export function isWithinRoots(
+  cwd: string,
+  roots: readonly string[],
+  opts: { caseInsensitive?: boolean } = {},
+): boolean {
+  if (roots.length === 0) return true; // 空 = 不限制（仅在明确不需要边界时使用）
+  const ci = opts.caseInsensitive ?? process.platform === "win32";
+  const norm = (p: string): string => {
+    // **先统一分隔符、再 resolve、再比**：客户端可以送 `/work/../etc`，纯字符串前缀会把它当成在 `/work` 里
+    // ——那是一条真实的越权路径（cwd 由请求方提供）。resolve 之后再比就没有这个口子。
+    // 分隔符必须先统一：Windows 风格的 `C:\work\..\Windows` 里 `..` 藏在反斜杠后面，
+    // POSIX 的 resolve 不认 `\` 是分隔符，先 resolve 再换斜杠就漏了这段 `..`（R9 在 Linux 上失败就是这个原因）。
+    const unified = p.replace(/\\/g, "/");
+    const resolved = resolve(unified).replace(/\/+$/, "");
+    return ci ? resolved.toLowerCase() : resolved;
+  };
+  const target = norm(cwd);
+  return roots.some((r) => {
+    const root = norm(r);
+    return target === root || target.startsWith(root + "/");
+  });
 }

@@ -1,7 +1,7 @@
 // src/skills.ts — Markdown 技能加载/匹配/保存，与 Python 版 nyra/skills.py 同语义。
 import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 
 export interface Skill {
   name: string;
@@ -256,11 +256,14 @@ function blockedInlineReason(cmd: string): string | null {
 /** 技能文件是否位于受信任根目录下（路径规范化后按前缀比较）。 */
 export function isTrustedSkillPath(skillPath: string, trustedRoots: string[]): boolean {
   if (!skillPath || !trustedRoots.length) return false;
-  const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  // 与 execDaemon 的 isWithinRoots 同款问题：只做分隔符归一不折叠 `..` 时，
+  // `/trusted/../etc/x` 会被当成在 `/trusted` 里。posix.normalize 是纯词法折叠，
+  // 不碰文件系统、不依赖 cwd，够堵这个口子。
+  const norm = (p: string) => posix.normalize(p.replace(/\\/g, "/")).replace(/\/+$/, "").toLowerCase();
   const sp = norm(skillPath);
   return trustedRoots.some((root) => {
     const r = norm(root);
-    return Boolean(r) && (sp === r || sp.startsWith(r + "/"));
+    return Boolean(r) && r !== "." && (sp === r || sp.startsWith(r + "/"));
   });
 }
 
