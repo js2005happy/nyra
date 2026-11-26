@@ -21,13 +21,16 @@ Nyra 的 MCP 分两半：**客户端**（Nyra 调别人的 MCP 服务器）与**
 ```
 
 - **stdio**：启子进程（原有行为），子进程默认拿不到你的 API Key，可走沙箱。
-- **http**：Streamable HTTP——每个请求都是独立的 POST（JSON-RPC 2.0），响应
-  是 JSON 或 SSE；有状态的服务器回 `Mcp-Session-Id` 时，后续请求自动带上。
-  不启子进程、不走沙箱（沙箱只约束本地子进程）；`url` 只接受 `http://` /
-  `https://`；`headers`（可放 `Authorization` 等）绝不写进日志与事件。
+- **http**：Streamable HTTP（2026-07-28 无状态）——每个请求都是独立的 POST
+  （JSON-RPC 2.0），响应是 JSON 或 SSE；**没有会话**：客户端不存、不发
+  `Mcp-Session-Id`，老式有状态服务器回了也忽略；每个请求自带协议版本
+  （`_meta` 里 `io.modelcontextprotocol/protocolVersion` + `MCP-Protocol-Version`
+  请求头）。不启子进程、不走沙箱（沙箱只约束本地子进程）；`url` 只接受
+  `http://` / `https://`；`headers`（可放 `Authorization` 等）绝不写进日志与事件。
 - 两边协商同款：先 `server/discover` 探现代版（2026-07-28），失败回退旧版
   `initialize`（2025-11-25）；`tools/list` 分页、`tools/call` 文本拼法一致；
   服务器要求补充输入（`input_required`，多轮往返）时直接报错，Nyra 暂不支持。
+  （`server/discover` 是主路；`initialize` 只留给不会 discover 的老服务器作兼容回退。）
 - 成本与上限不变：`cost_per_call_usd` / `mcp_cost_limit_usd` 对两种传输都生效
   （见 `GET /api/mcp/spend`）。
 
@@ -61,10 +64,14 @@ Nyra 的 MCP 分两半：**客户端**（Nyra 调别人的 MCP 服务器）与**
   运行目录；事件里只记参数指纹 `args_hash`，不记参数原文）；每次调用另写
   一行审计 `~/.nyra/mcp-server-audit.jsonl`（鉴权失败也记）。`ping` 与
   `notifications/*` 是协议噪声，只进审计、不进运行记录。
-- **协议**：无状态 Streamable HTTP——只回 JSON（暂不支持 SSE 流式回包），
-  不要求 `Mcp-Session-Id`；批量请求（数组）不支持；通知（无 id）不执行、
-  不回包（202）。协议层错误（未知方法 -32601、参数无效 -32602）回 JSON-RPC
-  错误码；工具执行层失败（审查拦截、删除冲突、入队失败）回 `isError` 结果。
+- **协议**：无状态 Streamable HTTP（2026-07-28）——只回 JSON（暂不支持 SSE
+  流式回包），没有会话、不要求也不理会 `Mcp-Session-Id`；主路是
+  `server/discover`（回支持的版本列表 + capabilities + `_meta` 里的 serverInfo
+  + 缓存提示 `ttlMs`/`cacheScope`）；请求带了不支持的协议版本时回 -32022
+  并列出支持的版本；`initialize` 只留给不会 discover 的老客户端作兼容。
+  批量请求（数组）不支持；通知（无 id）不执行、不回包（202）。协议层错误
+  （未知方法 -32601、参数无效 -32602）回 JSON-RPC 错误码；工具执行层失败
+  （审查拦截、删除冲突、入队失败）回 `isError` 结果。
 
 ## 开关（CLI）
 
