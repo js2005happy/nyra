@@ -85,3 +85,61 @@ nyra group route --room room-1 --message "帮我查一下这周的报错"
 - token 估算是字符数 / 4，不是模型真实计费口径；预算只是停表，
   不是成本硬顶。
 - Windows/macOS 真机未验证。
+
+## 群聊会话（Bot 群聊批）
+
+房间只是个容器：机主在外面看着，Bot 按顺序各说各的。会话是房间里
+的一场联合讨论——机主是正式成员，能直接在会话里说话、@ 某台 Bot
+交活、看每台 Bot 在干什么。
+
+```sh
+nyra group session create room-1 --name "周会"        # 开会话（同一房间同时只一个 open，旧的自动 paused）
+nyra group session list                                # 列会话
+nyra group session show gs-xxxxxxxx                    # 看成员、轮次、指派
+nyra group session send gs-xxxxxxxx "大家先看这个报错" # 发一轮（默认 3 轮）
+nyra group session send gs-xxxxxxxx "@bot-a 你先查" --rounds 5
+nyra group session members gs-xxxxxxxx                 # 看成员与在线状态
+nyra group session assign gs-xxxxxxxx @bot-a "写一份复盘"  # 指派
+nyra group session done gs-xxxxxxxx asg-xxxxxxxx       # 指派完成
+nyra group session presence gs-xxxxxxxx                # 机主与各 Bot 在不在线
+nyra group session invite gs-xxxxxxxx --card <URL|好友名>  # 名片邀请成员进会话
+nyra group session end gs-xxxxxxxx                     # 结束会话
+```
+
+- 轮次规矩：@ 点名 > 交接（上一条 Bot 消息里写 `HANDOFF: 某 Bot`）
+  > 指派 > 路由 > 轮询；同一台 Bot 连续最多 2 轮；每轮最多 20 条；
+  机主一提问（以 ? 或 ？结尾，或含 @owner）只跑 1 轮；空回复与
+  重复回复算 pass，该 Bot 本轮不再被选中。
+- 每台 Bot 的账分开记：发言前按 `group:<会话>:<bot>` 预留预算，
+  某台触顶只跳过它自己；批准按（Bot，工具）记，一次性消耗，别台
+  的批准不能复用。指派轮与 @ 点名轮发言前须有该 Bot 未消耗的
+  指派批准（建指派时记一条），缺了就跳过并记 `group_approval`
+  事件（approved: false）。
+- 指派：@ 点名自动建一条（任务就是去掉 @ 点名后的消息）；负责人
+  回复里含“完成”自动结掉；5 轮没动静的指派算 stale（`staleAssignments`
+  判）；`done` / 丢弃用 `nyra group session done` 与接口里的
+  `dropAssignment`。
+- presence：机主走网关桌面活跃（`isDesktopActive`），Bot 看
+  `lastActiveAt`，同 5 分钟窗口；`nyra group session presence`
+  一次看全。
+- 名片邀请：好友名走好友账本 + `fetchAgentCard` + `parseAgentCard`
+  复验，URL 直接取卡；拉黑的好友拒绝；邀请进来的成员只读、Key
+  为空走默认链，回复必过拦截器；房间创建时只许 readonly Bot 的
+  规矩不变，会话不放宽执行型能力。
+- 模型工具（工具总数 48→51）：`group_session_create`（room 必填）、
+  `group_session_send`（session/message 必填）、`group_session_assign`
+  （session/bot/task 必填）。模型工具不接 router（落到轮询），
+  CLI send 接了与 `group route` 同款的 Jev + 本地路由链。
+- 会话文件在 `~/.nyra/group-sessions/<gs-id>.json`（0600），7 类
+  运行事件已注册（`group_session_created` / `group_session_ended` /
+  `group_turn` / `group_assignment` / `group_member` / `group_approval` /
+  `group_budget`）。
+
+### 诚实边界
+
+- FTS5 会话搜索本批没接：会话 id 是 `gs-` 形，不进 conversations.db；
+  会话可查靠会话文件 + 运行事件 + `nyra group session show`。
+- 预算预留默认是 0（limitsFor 默认 []、estimateUsd 默认 null；每 Bot
+  分开记账与触顶只停该 Bot 的逻辑是假账本验的，生产上限未接真数）。
+- 只在临时 home / 假 provider 上验过；真模型没跑；Windows/macOS
+  真机未验证。

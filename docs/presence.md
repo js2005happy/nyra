@@ -54,3 +54,11 @@ nyra gw presence-heartbeat --surface mobile   # 显式报 mobile 端面
 - 桌面端还没开始报心跳：目前只有 owner 回合能点亮桌面活跃；桌面应用接上心跳接口后，桌面活跃才真正实时。
 - 手机端还没按 `should_notify_mobile` 做推送静默：网关只给决定，执行在手机端。
 - 5 分钟窗口与 10 秒节流是写死的常量（`PRESENCE_ACTIVE_WINDOW_MS`、`PRESENCE_HEARTBEAT_MIN_INTERVAL_MS`，见 `src/gatewayPresence.ts`），没进配置。
+
+## 群聊会话里的 presence
+
+群聊会话（`src/groupSession.ts` 的 `sessionPresence`）复用同一套
+口径：机主走网关桌面活跃（`isDesktopActive`），各 Bot 看
+`lastActiveAt`，同 5 分钟窗口；`nyra group session presence <会话>`
+一次看全。Bot 发言后 `lastActiveAt` 会刷新；名片邀请进来的成员
+同样看 `lastActiveAt`。
