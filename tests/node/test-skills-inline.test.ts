@@ -73,6 +73,10 @@ test("isTrustedSkillPath：前缀比较、分隔符归一、大小写不敏感",
   expect(isTrustedSkillPath("/home/u/.nyra/skills-other/a.md", TRUSTED)).toBe(false);
   expect(isTrustedSkillPath("/repo/skills/a.md", TRUSTED)).toBe(false);
   expect(isTrustedSkillPath("/home/u/.nyra/skills/a.md", [])).toBe(false);
+  // 同款 `..` 逃逸：只归一分隔符不折叠 `..` 时会被当成在受信根里
+  expect(isTrustedSkillPath("/home/u/.nyra/skills/../etc/a.md", TRUSTED)).toBe(false);
+  expect(isTrustedSkillPath("/home/u/.nyra/skills/sub/../../etc/a.md", TRUSTED)).toBe(false);
+  expect(isTrustedSkillPath("/home/u/.nyra/skills/sub/./a.md", TRUSTED)).toBe(true);
 });
 
 test("NYRA_ALLOW_UNTRUSTED_SKILL_COMMANDS=1 可放开项目技能（显式自担风险）", () => {
