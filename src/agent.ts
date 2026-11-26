@@ -28,6 +28,7 @@ import { loadSkills, canonicalSkillDirs, matchSkills, matchSkillsByPaths, parseS
 import { recordSkillUse } from "./skillUsage.ts";
 import { pluginSkillDirs } from "./plugins.ts";
 import { loadMemorySummary, loadAgentsMd, newSessionId, saveSession, buildMemorySection } from "./memory.ts";
+import { buildSemanticFactsSection } from "./semanticFacts.ts";
 import { isActiveMemoryEnabled, recallBeforeReply } from "./activeMemory.ts";
 import { loadStyleProfile, buildStyleSection } from "./style.ts";
 import {
@@ -1646,6 +1647,12 @@ export class Agent {
     // 同类任务的结论，两边都留。
     const memory = buildMemorySection(this.memoryPath, this.home, task);
     if (memory) sections.push(memory);
+    // 十年清单第 2 项：语义事实段——已确认的原子事实（带时间戳与有效期，
+    // 附来源与关联记忆条目）。没有事实时返回 ""，零影响；读库失败也不拦运行。
+    try {
+      const facts = buildSemanticFactsSection(this.home, task);
+      if (facts) sections.push(facts);
+    } catch { /* ignore */ }
     // G-P1-31 主动记忆：本轮回复前召回的段落（runLoopInner 里算好；没开
     // 或没命中时是 null，零影响）。与 buildMemorySection 的 MEMORY.md
     // 检索互补：这里还含知识库与会话历史。

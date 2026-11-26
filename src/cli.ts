@@ -316,7 +316,7 @@ nyra plugin <list|search|install|uninstall|enable|disable|verify|audit|pin|unpin
 nyra hooks list                列出已安装的钩子（~/.nyra/hooks/<事件>.d/ 下的脚本，详见 docs/hooks.md）
 nyra status                    诊断清单：损坏的配置、不可用沙箱、被忽略的权限设置、永不匹配的 hook matcher（只读，详见 docs/status.md）
 nyra creator "<一句话需求>" [--yes]   创造模式：一句话搓出插件（先验证、经确认才安装）
-nyra memory <export|export-prompt|import|local|import-zip|search|forget|remember|entries|entry|update|rejections|recall|extract|review>  记忆交换与检索/删除；remember/entries/entry/update/rejections 走记忆证据门（写记忆须附用户原话依据，详见 docs/memory.md）；remember/entries 支持 --org 组织记忆；recall 是主动记忆开关与试跑（默认关，详见 docs/memory.md）；extract/review 是对话里自动提炼候选记忆、进库前人工确认（详见 docs/memory.md）
+nyra memory <export|export-prompt|import|local|import-zip|search|forget|remember|entries|entry|update|rejections|recall|extract|review|facts>  记忆交换与检索/删除；remember/entries/entry/update/rejections 走记忆证据门（写记忆须附用户原话依据，详见 docs/memory.md）；remember/entries 支持 --org 组织记忆；recall 是主动记忆开关与试跑（默认关，详见 docs/memory.md）；extract/review 是对话里自动提炼候选记忆、进库前人工确认（详见 docs/memory.md）；facts 是语义事实的查看与过期清扫（确认进库的记忆的原子化视图，带时间戳与有效期）
 nyra soul <show|status|list|init|add|remove|enable|disable|edit|export|import>  Soul 身份层：每 agent 的身份与 Tenets（不变量进规则层、代码拦截；Charter 角色契约见 nyra soul charter <set|show|clear>，详见 docs/soul.md 与 docs/team.md）
 nyra style <learn|show|list|delete|export|import>  分应用文风学习（详见 docs/style.md）
 nyra doctor [--provider 名字] [--deep]  中文自检：运行时、配置文件、配置目录、Key、网络、磁盘、写权限、密码箱权限；--deep 追加免疫体检（大脑自检，不合格的进隔离区，详见 docs/immune.md）
@@ -490,7 +490,7 @@ nyra plugin <list|search|install|uninstall|enable|disable|verify|audit|pin|unpin
 nyra hooks list                list installed hooks (~/.nyra/hooks/<event>.d/, see docs/hooks.md)
 nyra status                    diagnose broken configs, unavailable sandbox, ignored permission rules, never-matching hook matchers (read-only, see docs/status.md)
 nyra creator "<one-line idea>" [--yes]   creator mode: build a plugin from one sentence (verified, installed only after you confirm)
-nyra memory <export|export-prompt|import|local|import-zip|search|forget|remember|entries|entry|update|rejections|recall|extract|review>  memory exchange, search and forget; remember/entries/entry/update/rejections go through the memory evidence gate (writes need verbatim user quotes, see docs/memory.md); remember/entries support --org org memory; recall is the active-memory switch and dry run (off by default, see docs/memory.md); extract/review auto-extracts candidate memories from a conversation and confirms them before they enter the store (see docs/memory.md)
+nyra memory <export|export-prompt|import|local|import-zip|search|forget|remember|entries|entry|update|rejections|recall|extract|review|facts>  memory exchange, search and forget; remember/entries/entry/update/rejections go through the memory evidence gate (writes need verbatim user quotes, see docs/memory.md); remember/entries support --org org memory; recall is the active-memory switch and dry run (off by default, see docs/memory.md); extract/review auto-extracts candidate memories from a conversation and confirms them before they enter the store (see docs/memory.md); facts lists and expires semantic facts (the atomized view of confirmed memories, with timestamps and validity periods)
 nyra soul <show|status|list|init|add|remove|enable|disable|edit|export|import>  Soul identity layer: per-agent identity and Tenets (invariants compile into the rule layer and are enforced by code; role Charter via nyra soul charter <set|show|clear>, see docs/soul.md and docs/team.md)
 nyra style <learn|show|list|delete|export|import>  per-channel writing style profiles (see docs/style.md)
 nyra doctor [--provider name] [--deep]  self-check: runtime, config, home dir, key, network, disk, write access, vault permissions; --deep adds the immune check (self-check of the brain, failures go to quarantine, see docs/immune.md)
@@ -4241,6 +4241,11 @@ async function handleMemory(argv: string[], home: string): Promise<number> {
   if (cmd === "extract" || cmd === "review") {
     const { handleMemoryProposals } = await import("./memoryProposalCli.ts");
     return handleMemoryProposals(argv, home);
+  }
+  // 十年清单第 2 项：语义事实——确认进库的记忆的原子化视图（facts list/show/search/expire）。
+  if (cmd === "facts") {
+    const { handleSemanticFacts } = await import("./semanticFactsCli.ts");
+    return handleSemanticFacts(argv.slice(1), home);
   }
   // 缺口 1：nyra memory search <关键词> [--limit N] [--session <会话 id>]
   if (cmd === "search") {

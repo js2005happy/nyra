@@ -80,6 +80,6 @@ export const SUBCOMMAND_FLAGS: Record<string, { value: readonly string[]; bool: 
     bool: ["--print-url-json", "--exit-on-stdin-close", "--pair", "--verbose", "--open"],
   },
   doctor: { value: ["--provider", "--model", "--lang"], bool: ["--deep"] },
-  dream: { value: ["--at", "--summarize-with-model", "--prune-stale-days"], bool: ["--with-model"] },
+  dream: { value: ["--at", "--summarize-with-model", "--prune-stale-days", "--semantic-facts", "--semantic-facts-max"], bool: ["--with-model"] },
   setup: { value: ["--provider", "--model", "--lang"], bool: [] },
 };

@@ -32,6 +32,7 @@ import { loadSession } from "./memory.ts";
 import {
   listMemoryGateEntries, MemoryGateError, recordGateRejection, rememberMemoryEntry,
 } from "./memoryGate.ts";
+import { createSemanticFact } from "./semanticFacts.ts";
 
 /** 待确认候选记忆账本文件名（~/.nyra 下）。 */
 export const MEMORY_PROPOSALS_FILE = "memory-proposals.json";
@@ -68,6 +69,8 @@ export interface MemoryProposal {
   decisionReason: string | null;
   /** 确认进库后对应的结构化记忆条目 id（memg_…）；未进库为 null。 */
   entryId: string | null;
+  /** 模型抽取给的有效期（只有来源明确说了结束时间才有；老候选没有，为 null）。 */
+  validUntil?: string | null;
 }
 
 /** 提炼出的候选草稿（还没进账本，纯函数 extractCandidates 的返回值）。 */
@@ -77,6 +80,8 @@ export interface MemoryProposalDraft {
   content: string;
   evidenceQuotes: string[];
   evidenceSource: string;
+  /** 模型抽取给的有效期（只有来源明确说了结束时间才有；规则抽取没有）。 */
+  validUntil?: string | null;
 }
 
 function proposalsPath(home: string): string {
@@ -108,6 +113,8 @@ function isValidProposal(raw: unknown): raw is MemoryProposal {
   if (!Array.isArray(p.evidenceQuotes) || typeof p.evidenceSource !== "string") return false;
   if (typeof p.sourceSession !== "string") return false;
   if (p.status !== "pending" && p.status !== "confirmed" && p.status !== "rejected") return false;
+  // validUntil 是后加的可选字段：老候选没有，有的话须是字符串或 null。
+  if (p.validUntil !== undefined && p.validUntil !== null && typeof p.validUntil !== "string") return false;
   return true;
 }
 
@@ -214,6 +221,64 @@ export interface ExtractResult {
 }
 
 /**
+ * 把事实草稿（规则抽取或模型抽取的产物）插进待确认队列。
+ * 去重：同一规范化正文在队列里已有、已进结构化记忆库、或 isKnown
+ * 判定已知（调用方用它挡已成事实的正文）时跳过；一次最多新增 5 条。
+ * 写账本失败返回 added 0（调用方自理，提炼失败绝不能破坏对话本身）。
+ */
+export function addProposalDrafts(
+  home: string | undefined,
+  sessionId: string,
+  drafts: readonly MemoryProposalDraft[],
+  opts: { now?: Date; isKnown?: (normalizedContent: string) => boolean } = {},
+): ExtractResult {
+  if (!drafts.length) return { added: 0, skipped: 0, total: readMemoryProposals(home).length };
+  const existing = readMemoryProposals(home);
+  const known = new Set(existing.map((p) => normalizeProposalContent(p.content)));
+  // 已进结构化记忆库的同样不再重复提。
+  try {
+    for (const e of listMemoryGateEntries(home, { status: "confirmed" })) {
+      known.add(normalizeProposalContent(e.content));
+    }
+  } catch { /* 读库失败只影响去重，不拦提炼 */ }
+  const now = (opts.now ?? new Date()).toISOString();
+  let added = 0;
+  let skipped = 0;
+  const next = [...existing];
+  for (const d of drafts) {
+    if (added >= MEMORY_PROPOSAL_MAX_PER_SESSION) { skipped++; continue; }
+    const norm = normalizeProposalContent(d.content);
+    if (known.has(norm) || opts.isKnown?.(norm)) { skipped++; continue; }
+    known.add(norm);
+    next.push({
+      id: `memp_${randomBytes(6).toString("hex")}`,
+      scope: "user",
+      category: d.category,
+      subject: d.subject,
+      content: d.content,
+      evidenceQuotes: d.evidenceQuotes,
+      evidenceSource: d.evidenceSource,
+      sourceSession: sessionId,
+      status: "pending",
+      createdAt: now,
+      decidedAt: null,
+      decisionReason: null,
+      entryId: null,
+      validUntil: d.validUntil ?? null,
+    });
+    added++;
+  }
+  if (added > 0) {
+    try {
+      writeMemoryProposals(home, next);
+    } catch {
+      return { added: 0, skipped: drafts.length, total: existing.length };
+    }
+  }
+  return { added, skipped, total: next.length };
+}
+
+/**
  * 从一个会话的对话记录里提炼候选记忆进待确认队列。messages 不给时读
  * 会话文件；会话不存在返回 0 条。写账本失败不抛错（返回 added 0，
  * 调用方照常跑——提炼失败绝不能破坏对话本身）。
@@ -233,49 +298,7 @@ export function extractMemoryProposals(
     }
   }
   const drafts = extractCandidates(turns);
-  if (!drafts.length) return { added: 0, skipped: 0, total: readMemoryProposals(home).length };
-  const existing = readMemoryProposals(home);
-  const known = new Set(existing.map((p) => normalizeProposalContent(p.content)));
-  // 已进结构化记忆库的同样不再重复提。
-  try {
-    for (const e of listMemoryGateEntries(home, { status: "confirmed" })) {
-      known.add(normalizeProposalContent(e.content));
-    }
-  } catch { /* 读库失败只影响去重，不拦提炼 */ }
-  const now = (opts.now ?? new Date()).toISOString();
-  let added = 0;
-  let skipped = 0;
-  const next = [...existing];
-  for (const d of drafts) {
-    if (added >= MEMORY_PROPOSAL_MAX_PER_SESSION) { skipped++; continue; }
-    const norm = normalizeProposalContent(d.content);
-    if (known.has(norm)) { skipped++; continue; }
-    known.add(norm);
-    next.push({
-      id: `memp_${randomBytes(6).toString("hex")}`,
-      scope: "user",
-      category: d.category,
-      subject: d.subject,
-      content: d.content,
-      evidenceQuotes: d.evidenceQuotes,
-      evidenceSource: d.evidenceSource,
-      sourceSession: sessionId,
-      status: "pending",
-      createdAt: now,
-      decidedAt: null,
-      decisionReason: null,
-      entryId: null,
-    });
-    added++;
-  }
-  if (added > 0) {
-    try {
-      writeMemoryProposals(home, next);
-    } catch {
-      return { added: 0, skipped: drafts.length, total: existing.length };
-    }
-  }
-  return { added, skipped, total: next.length };
+  return addProposalDrafts(home, sessionId, drafts, opts);
 }
 
 /** 列出候选（默认只看待确认的；新的在前）。 */
@@ -338,6 +361,20 @@ export function approveMemoryProposal(
       status: "confirmed",
       evidenceQuotes: proposal.evidenceQuotes,
     }, proposal.evidenceSource, { actor: opts.actor ?? "cli", checkVerbatim: true });
+    // 确认进库的记忆同时记一条语义事实（带时间戳与有效期；同一主题不同
+    // 正文的旧事实自动标被取代，新旧并存）。事实是记忆库的派生视图，
+    // 建不进去不破坏确认进库本身。
+    try {
+      createSemanticFact(home, {
+        subject: proposal.subject,
+        content,
+        category: proposal.category,
+        sourceSession: proposal.sourceSession,
+        entryId: entry.id,
+        evidenceQuotes: proposal.evidenceQuotes,
+        validUntil: proposal.validUntil ?? null,
+      }, { actor: opts.actor ?? "cli", now: opts.now });
+    } catch { /* 事实建失败不破坏确认 */ }
     proposal.status = "confirmed";
     proposal.content = content;
     proposal.entryId = entry.id;

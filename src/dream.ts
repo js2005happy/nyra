@@ -18,11 +18,16 @@ import { join } from "node:path";
 import { loadConfig, resolveProvider } from "./config.ts";
 import { listSessions, resolveNyraHome } from "./memory.ts";
 import {
+  addProposalDrafts,
   extractMemoryProposals,
   listMemoryProposals,
   normalizeProposalContent,
   rejectMemoryProposal,
 } from "./memoryProposals.ts";
+import {
+  expireStaleFacts, runModelExtraction, semanticFactsConfig, listSemanticFacts, normalizeFactContent,
+  type SemanticModelRunner,
+} from "./semanticFacts.ts";
 import {
   listMemoryGateEntries,
   updateMemoryEntry,
@@ -93,10 +98,14 @@ export interface DreamCounts {
   stale_rejected: number;
   contradictions: number;
   pending_total: number;
+  /** 本夜模型抽取新增的语义事实候选数（十年清单第 2 项）。 */
+  facts_added: number;
+  /** 本夜到期失效的语义事实数（只标过期，不删除）。 */
+  facts_expired: number;
 }
 
 export function emptyDreamCounts(): DreamCounts {
-  return { sessions_scanned: 0, proposals_added: 0, duplicates_pruned: 0, stale_rejected: 0, contradictions: 0, pending_total: 0 };
+  return { sessions_scanned: 0, proposals_added: 0, duplicates_pruned: 0, stale_rejected: 0, contradictions: 0, pending_total: 0, facts_added: 0, facts_expired: 0 };
 }
 
 export function dreamStatePath(home: string): string {
@@ -140,6 +149,8 @@ export function readDreamState(home: string): DreamState | null {
         stale_rejected: num("stale_rejected"),
         contradictions: num("contradictions"),
         pending_total: num("pending_total"),
+        facts_added: num("facts_added"),
+        facts_expired: num("facts_expired"),
       },
     };
   } catch {
@@ -216,6 +227,8 @@ export interface DreamRunResult {
   contradictions: string[];
   /** 本次运行里被模型润色花掉的钱（没调模型时为 null）。 */
   spentUsd: number | null;
+  /** 本次运行里模型抽取事实花掉的钱（没调模型时为 null）。 */
+  factsSpentUsd: number | null;
 }
 
 /** 模型润色注入点：测试传假 runner，真跑走默认的 Provider.chat。 */
@@ -245,11 +258,17 @@ function buildDeterministicSummary(counts: DreamCounts, contradictions: string[]
   if (counts.proposals_added > 0) {
     lines.push(`扫了 ${counts.sessions_scanned} 个会话，提炼出 ${counts.proposals_added} 条新候选（待你确认，未直接写入记忆）。`);
   }
+  if (counts.facts_added > 0) {
+    lines.push(`其中模型抽取的语义事实候选 ${counts.facts_added} 条（同样待你确认）。`);
+  }
   if (counts.duplicates_pruned > 0) {
     lines.push(`剪掉 ${counts.duplicates_pruned} 条重复记忆（旧版已标删除，修订历史可查）。`);
   }
   if (counts.stale_rejected > 0) {
     lines.push(`清掉 ${counts.stale_rejected} 条超过 ${pruneStaleDays} 天未决的旧候选。`);
+  }
+  if (counts.facts_expired > 0) {
+    lines.push(`有 ${counts.facts_expired} 条语义事实到期失效（只标过期，不删除）。`);
   }
   if (contradictions.length > 0) {
     lines.push(`发现 ${contradictions.length} 组同主题不同说法，等你定：${contradictions.slice(0, 5).join("、")}。`);
@@ -267,13 +286,24 @@ function buildDeterministicSummary(counts: DreamCounts, contradictions: string[]
  */
 export async function runDreamMetabolism(
   home: string,
-  opts: { now?: Date; withModel?: boolean; modelRunner?: DreamModelRunner } = {},
+  opts: { now?: Date; withModel?: boolean; modelRunner?: DreamModelRunner; /** 模型抽取事实的注入点（不给时走默认的 Provider.chat）。 */ factRunner?: SemanticModelRunner } = {},
 ): Promise<DreamRunResult> {
   const now = opts.now ?? new Date();
   const config = loadConfig(home);
   const cfg = dreamConfig(config);
+  const sfc = semanticFactsConfig(config);
   const state = readDreamState(home);
   const counts = emptyDreamCounts();
+  let factsSpentUsd: number | null = null;
+  // 已成事实的正文不再重复提（本夜只读一次；做梦不确认进库，事实库本夜不变）。
+  const knownFactNorms = new Set<string>();
+  if (sfc.enabled) {
+    try {
+      for (const f of listSemanticFacts(home, { includeSuperseded: true, includeExpired: true })) {
+        knownFactNorms.add(normalizeFactContent(f.content));
+      }
+    } catch { /* 读事实库失败只影响去重 */ }
+  }
   const prunedIds: string[] = [];
   const staleIds: string[] = [];
   const contradictionSubjects: string[] = [];
@@ -306,6 +336,23 @@ export async function runDreamMetabolism(
       counts.proposals_added += extracted.added;
     } catch {
       // 单个会话提炼失败不破坏整夜做梦。
+    }
+    // 模型抽取（十年清单第 2 项）：开关开着才跑；先过月度上限，没凭证/
+    // 超支/模型失败都跳过，不破坏做梦本身。抽出的草稿同样先进待审队列。
+    if (sfc.enabled) {
+      try {
+        const fr = await runModelExtraction(home, meta.id, { now, modelRunner: opts.factRunner });
+        if (fr.spentUsd !== null) factsSpentUsd = (factsSpentUsd ?? 0) + fr.spentUsd;
+        if (fr.drafts.length) {
+          const queued = addProposalDrafts(home, meta.id, fr.drafts, {
+            now,
+            isKnown: (norm) => knownFactNorms.has(norm),
+          });
+          counts.facts_added += queued.added;
+        }
+      } catch {
+        /* 模型抽取失败不破坏做梦 */
+      }
     }
   }
 
@@ -375,7 +422,15 @@ export async function runDreamMetabolism(
 
   // 待确认总数（写进小结，方便用户一眼看到队列深度）。
   try {
-    counts.pending_total = listMemoryProposals(home).filter((p) => p.status === "pending").length;
+    // 2d. 事实过期扫：validUntil 已过的生效中事实标 expired（只标过期，不删除）。
+  try {
+    const { expired } = expireStaleFacts(home, now);
+    counts.facts_expired = expired.length;
+  } catch {
+    counts.facts_expired = 0;
+  }
+
+  counts.pending_total = listMemoryProposals(home).filter((p) => p.status === "pending").length;
   } catch {
     counts.pending_total = 0;
   }
@@ -441,6 +496,7 @@ export async function runDreamMetabolism(
     staleIds,
     contradictions: contradictionSubjects,
     spentUsd,
+    factsSpentUsd,
   };
 
   // 落盘：状态 + 运行账本 + 证据 + 运行事件。
@@ -459,9 +515,12 @@ export async function runDreamMetabolism(
     stale_rejected: counts.stale_rejected,
     contradictions: counts.contradictions,
     pending_total: counts.pending_total,
+    facts_added: counts.facts_added,
+    facts_expired: counts.facts_expired,
     model_summary: modelSummary !== null,
     model_summary_skipped: modelSummarySkipped ?? null,
     spent_usd: spentUsd,
+    facts_spent_usd: factsSpentUsd,
   });
   recordDreamEvent(home, "dream_run", {
     sessions_scanned: counts.sessions_scanned,
@@ -469,6 +528,8 @@ export async function runDreamMetabolism(
     duplicates_pruned: counts.duplicates_pruned,
     stale_rejected: counts.stale_rejected,
     contradictions: counts.contradictions,
+    facts_added: counts.facts_added,
+    facts_expired: counts.facts_expired,
     model_summary: modelSummary !== null,
   });
   return result;
