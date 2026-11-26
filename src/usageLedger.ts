@@ -238,6 +238,41 @@ export class UsageLedger {
     }
     return { spentUsd: mine.spentUsd, incomplete, totalTokens: mine.totalTokens, calls: mine.calls };
   }
+
+  // ---- M1（OpenMausBot 用量上限借鉴）：按日按 agent 分组 ----
+  // 与 monthSpendByAgent 同款口径，只是窗口换成自然日（本地日期
+  // YYYY-MM-DD）。日上限的判定与月上限同一份数、同一诚实边界。
+
+  /** 某自然日按 agent 分组的花费 + 未归属部分（一次读盘）。 */
+  daySpendByAgent(date: string): { byAgent: Map<string, AgentMonthSpend>; unattributed: AgentMonthSpend } {
+    const byAgent = new Map<string, AgentMonthSpend>();
+    const unattributed: AgentMonthSpend = { spentUsd: 0, totalTokens: 0, calls: 0 };
+    for (const rec of this.readAll()) {
+      if (rec.date !== date) continue;
+      const target = typeof rec.agent === "string" && rec.agent
+        ? (byAgent.get(rec.agent) ?? { spentUsd: 0, totalTokens: 0, calls: 0 })
+        : unattributed;
+      if (typeof rec.agent === "string" && rec.agent) byAgent.set(rec.agent, target);
+      target.totalTokens += rec.total_tokens || 0;
+      target.calls += rec.calls || 0;
+      if (typeof rec.spent_usd === "number") target.spentUsd += rec.spent_usd;
+    }
+    return { byAgent, unattributed };
+  }
+
+  /** 某 agent 某自然日的花费；incomplete 的口径与 monthAgentTotal 同款。 */
+  dayAgentTotal(date: string, agent: string): { spentUsd: number; incomplete: boolean; totalTokens: number; calls: number } {
+    const { byAgent, unattributed } = this.daySpendByAgent(date);
+    const mine = byAgent.get(agent) ?? { spentUsd: 0, totalTokens: 0, calls: 0 };
+    let incomplete = unattributed.spentUsd > 0 || unattributed.totalTokens > 0;
+    if (!incomplete) {
+      for (const rec of this.readAll()) {
+        if (rec.date !== date) continue;
+        if (rec.agent === agent && typeof rec.spent_usd !== "number" && (rec.total_tokens || 0) > 0) { incomplete = true; break; }
+      }
+    }
+    return { spentUsd: mine.spentUsd, incomplete, totalTokens: mine.totalTokens, calls: mine.calls };
+  }
 }
 
 const HEAT_BLOCKS = ["·", "░", "▒", "▓", "█"];

@@ -211,7 +211,7 @@ nyra peer circle delete work        # 删圈须先移空
   详见 `docs/circles.md`），名片拉取的 per-circle 可见性仍未做
   （留给后续批次）。
 - 人的权限和 agent 的权限分开管：这里只管 agent 这一侧；人那一侧是
-  视频通话面板（`docs/design/video-call/SPEC.md`）的事。
+  视频通话面板的事（设计稿已从公开站点下线）。
 
 ### 只共享任务产物
 

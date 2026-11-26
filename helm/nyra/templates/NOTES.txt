@@ -1,0 +1,7 @@
+Nyra 已装好（单机版，{{ .Values.replicaCount }} 副本）。
+
+访问：kubectl port-forward svc/{{ include "nyra.fullname" . }} {{ .Values.port }}:{{ .Values.service.port }}
+然后打开 http://127.0.0.1:{{ .Values.port }}（首次打开按页面提示完成首次运行）。
+
+数据在 {{ if .Values.persistence.enabled }}PersistentVolumeClaim {{ include "nyra.fullname" . }}-data{{ else }}emptyDir（随 Pod 删而丢，只适合试跑；真用时把 persistence.enabled 打开）{{ end }} 里。
+升级：helm upgrade <release> ./helm/nyra（先备份数据卷，见 docs/deploy.md）。

@@ -455,6 +455,13 @@ export function createAguiServerEventMapper(
             proposals.push({ proposalId, tool });
             recordServerEvent(home, "agui_server_tool_proposed", { thread: opts.threadId, run: opts.runId, tool, proposal: proposalId });
           }
+        } else if (kind === "component_rendered") {
+          // O7：模型调 render_component 渲染了白名单组件——按 AG-UI 自定义事件
+          // 推给网页端（网页端按组件名渲染；桌面端渲染是桌面端的界面工作）。
+          const component = typeof data.component === "string" ? data.component : "";
+          if (component) {
+            opts.sink({ type: "CUSTOM", name: "component_rendered", value: { component, props: data.props ?? {} } });
+          }
         }
       } catch { /* 观察器故障绝不破坏主循环 */ }
     },

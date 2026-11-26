@@ -1,6 +1,6 @@
 // 品牌标志（方块头 = 应用图标 C：紫色圆角方块 + 两只竖眼）：几何来源唯一、与应用图标一致、生成文件同步、各处引用的是真标志。
 import { expect, test } from "bun:test";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { inflateSync } from "node:zlib";
@@ -28,19 +28,17 @@ test("方块头几何 = 应用图标 C（同色、眼睛逐点一致、圆角 22
     for (let i = 0; i < 2; i++) for (const k of ["x", "y", "w", "h"] as const) expect(a[i][k]).toBeCloseTo(b[i][k], 6);
   }
   for (const px of [16, 20, 24, 28, 32, 64]) expect(markEyeScaleFor(px)).toBe(eyeScaleFor(px));
-  // 开机动画（设计源与运行时）用同一套方块头几何与配色。
+  // 开机动画（运行时）用同一套方块头几何与配色。设计源 docs/design/splash/splash.js
+  // 已随官网下线内部资料移出发布路径（内容留 git 历史），运行时文件是唯一来源。
   const splash = readFileSync(join(ROOT, "src", "assets", "mobile-splash.js.txt"), "utf-8");
-  const design = readFileSync(join(ROOT, "docs", "design", "splash", "splash.js"), "utf-8");
   const e = markEyes(1)[0];
-  for (const src of [splash, design]) {
-    expect(src).toContain(`BG="${SPLASH_BG}",BODY="${MARK_BODY}",EYE="${MARK_EYE}"`);
-    expect(src).toContain(`RAD=${MARK_TILE.r}, EW=${e.w.toFixed(2)}, EH=${e.h.toFixed(2)}, EDX=${(50 - e.x - e.w / 2).toFixed(2)}, ECY=${(e.y + e.h / 2).toFixed(2)}`);
-  }
-  // 运行时的 frame 与设计源逐字一致。
-  const body = (src: string) => src.slice(src.indexOf("const W=1280"), src.indexOf("\n}", src.indexOf("function frame(")) + 2);
-  expect(body(splash)).toBe(body(design));
+  expect(splash).toContain(`BG="${SPLASH_BG}",BODY="${MARK_BODY}",EYE="${MARK_EYE}"`);
+  expect(splash).toContain(`RAD=${MARK_TILE.r}, EW=${e.w.toFixed(2)}, EH=${e.h.toFixed(2)}, EDX=${(50 - e.x - e.w / 2).toFixed(2)}, ECY=${(e.y + e.h / 2).toFixed(2)}`);
   // 结尾不弯成笑眼：终帧（也是减少动态效果时显示的帧）是两只正常竖眼、正视。
-  const S = require(join(ROOT, "docs", "design", "splash", "splash.js"));
+  const splashDir = mkdtempSync(join(tmpdir(), "nyra-splash-"));
+  const splashJs = join(splashDir, "splash.js");
+  writeFileSync(splashJs, splash + "\nmodule.exports = NyraSplash;\n");
+  const S = require(splashJs);
   for (const t of [3.3, 3.45, S.END, 4.05]) {
     const svg: string = S.frame(t);
     expect(svg).not.toContain("stroke-linecap");

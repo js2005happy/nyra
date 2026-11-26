@@ -1,0 +1,308 @@
+{
+  "description": "Nyra 脑文件夹（~/.nyra）结构契约 v1：列出已知的顶层条目（文件/目录、是否必需、权限位）。只核对顶层一层，不递归子目录。未登记的条目只上报、不判失败——新功能往 ~/.nyra 加文件时，先更新本 schema，再让 doctor 通过；删条目同理。",
+  "entries": [
+    {
+      "kind": "file",
+      "note": "主配置，nyra setup 生成；缺了 doctor 会先报配置文件失败",
+      "path": "config.json",
+      "required": true
+    },
+    {
+      "kind": "file",
+      "note": "长期记忆源文件，只读派生见 DESIGN.md 单向编译一节",
+      "path": "MEMORY.md",
+      "required": false
+    },
+    {
+      "kind": "file",
+      "note": "全局项目说明源文件",
+      "path": "AGENTS.md",
+      "required": false
+    },
+    {
+      "kind": "file",
+      "note": "人设源文件",
+      "path": "SOUL.md",
+      "required": false
+    },
+    {
+      "kind": "file",
+      "mode": "0600",
+      "note": "密码箱，0600",
+      "path": "vault.json",
+      "required": false
+    },
+    {
+      "kind": "file",
+      "mode": "0600",
+      "note": "界面保存的模型 Key（密码箱未解锁时），0600；解锁后搬进密码箱并删掉",
+      "path": "keys.json",
+      "required": false
+    },
+    {
+      "kind": "file",
+      "note": "会话索引",
+      "path": "sessions.json",
+      "required": false
+    },
+    {
+      "kind": "file",
+      "note": "已配对设备",
+      "path": "devices.json",
+      "required": false
+    },
+    {
+      "kind": "file",
+      "note": "账号",
+      "path": "accounts.json",
+      "required": false
+    },
+    {
+      "kind": "file",
+      "note": "账号会话",
+      "path": "account-sessions.json",
+      "required": false
+    },
+    {
+      "kind": "file",
+      "note": "账号会话（单条）",
+      "path": "account-session.json",
+      "required": false
+    },
+    {
+      "kind": "file",
+      "note": "网关审计（H1 逐回合记客户端）",
+      "path": "gateway-audit.jsonl",
+      "required": false
+    },
+    {
+      "kind": "file",
+      "note": "网关最近客户端账本（H1）",
+      "path": "gateway-clients.json",
+      "required": false
+    },
+    {
+      "kind": "file",
+      "note": "网关在线状态账本（H2）",
+      "path": "gateway-presence.json",
+      "required": false
+    },
+    {
+      "kind": "file",
+      "note": "记忆提炼待审队列",
+      "path": "memory-proposals.json",
+      "required": false
+    },
+    {
+      "kind": "file",
+      "note": "结构化记忆条目",
+      "path": "memory-entries.jsonl",
+      "required": false
+    },
+    {
+      "kind": "file",
+      "note": "记忆门拒绝记录",
+      "path": "memory-gate-rejections.jsonl",
+      "required": false
+    },
+    {
+      "kind": "file",
+      "note": "成本账本",
+      "path": "budget-ledger.json",
+      "required": false
+    },
+    {
+      "kind": "file",
+      "note": "每日用量",
+      "path": "usage_daily.jsonl",
+      "required": false
+    },
+    {
+      "kind": "file",
+      "note": "夜间做梦代谢状态（H3）",
+      "path": "dream-state.json",
+      "required": false
+    },
+    {
+      "kind": "file",
+      "note": "夜间做梦运行记录（H3）",
+      "path": "dream-runs.jsonl",
+      "required": false
+    },
+    {
+      "kind": "file",
+      "note": "免疫体检报告（H4）",
+      "path": "immune-report.json",
+      "required": false
+    },
+    {
+      "kind": "file",
+      "note": "模型健康检查",
+      "path": "model-health.json",
+      "required": false
+    },
+    {
+      "kind": "file",
+      "note": "任务队列",
+      "path": "work-queue.json",
+      "required": false
+    },
+    {
+      "kind": "file",
+      "note": "心跳唤醒记录",
+      "path": "heartbeat-seen.json",
+      "required": false
+    },
+    {
+      "kind": "file",
+      "note": "CEL 策略（O1）",
+      "path": "policy.json",
+      "required": false
+    },
+    {
+      "kind": "file",
+      "note": "策略审计",
+      "path": "policy-audit.jsonl",
+      "required": false
+    },
+    {
+      "kind": "file",
+      "note": "审批审计",
+      "path": "approvals_audit.jsonl",
+      "required": false
+    },
+    {
+      "kind": "file",
+      "note": "对端审计",
+      "path": "peer-audit.jsonl",
+      "required": false
+    },
+    {
+      "kind": "file",
+      "note": "视频通话账本",
+      "path": "video-calls.json",
+      "required": false
+    },
+    {
+      "kind": "file",
+      "note": "语音通话账本",
+      "path": "voice-calls.json",
+      "required": false
+    },
+    {
+      "kind": "file",
+      "note": "写门状态",
+      "path": "write-gate.json",
+      "required": false
+    },
+    {
+      "kind": "file",
+      "note": "写门审计",
+      "path": "write-gate-audit.jsonl",
+      "required": false
+    },
+    {
+      "kind": "file",
+      "note": "受信工作区",
+      "path": "trusted_workspaces.json",
+      "required": false
+    },
+    {
+      "kind": "dir",
+      "note": "会话文件（.jsonl）",
+      "path": "sessions",
+      "required": false
+    },
+    {
+      "kind": "dir",
+      "note": "运行记录",
+      "path": "runs",
+      "required": false
+    },
+    {
+      "kind": "dir",
+      "note": "证据链",
+      "path": "evidence",
+      "required": false
+    },
+    {
+      "kind": "dir",
+      "note": "知识库分块",
+      "path": "knowledge",
+      "required": false
+    },
+    {
+      "kind": "dir",
+      "note": "群聊数据",
+      "path": "groups",
+      "required": false
+    },
+    {
+      "kind": "dir",
+      "note": "任务数据",
+      "path": "tasks",
+      "required": false
+    },
+    {
+      "kind": "dir",
+      "note": "免疫体检隔离区（H4，只进不出，不删除）",
+      "path": "quarantine",
+      "required": false
+    },
+    {
+      "kind": "dir",
+      "note": "步级检查点",
+      "path": "step-checkpoints",
+      "required": false
+    },
+    {
+      "kind": "dir",
+      "note": "会话检查点",
+      "path": "checkpoints",
+      "required": false
+    },
+    {
+      "kind": "dir",
+      "note": "模板",
+      "path": "templates",
+      "required": false
+    },
+    {
+      "kind": "dir",
+      "note": "简报",
+      "path": "briefings",
+      "required": false
+    },
+    {
+      "kind": "dir",
+      "note": "学习记录",
+      "path": "learning",
+      "required": false
+    },
+    {
+      "kind": "dir",
+      "note": "子 agent 数据",
+      "path": "agents",
+      "required": false
+    },
+    {
+      "kind": "dir",
+      "note": "组织目录",
+      "path": "org-catalog",
+      "required": false
+    },
+    {
+      "kind": "dir",
+      "note": "样式",
+      "path": "styles",
+      "required": false
+    },
+    {
+      "kind": "dir",
+      "note": "用户技能源文件（只读派生见 DESIGN.md 单向编译一节）",
+      "path": "skills",
+      "required": false
+    }
+  ],
+  "version": 1
+}

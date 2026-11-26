@@ -27,7 +27,8 @@ import { createHash, randomBytes } from "node:crypto";
 import { loadWorkflowDefinitionFile, loadWorkflowRegistry, runWorkflowByName } from "./workflow.ts";
 import type { IncomingEvent } from "./eventTriggers.ts";
 import {
-  appendCronIncident, cronMatches, findActiveCostPause, missedCronMinutes, minuteKey, parseMinuteKey,
+  appendCronIncident, cronMatches, cronMinIntervalMinutes, findActiveCostPause, missedCronMinutes, minuteKey, parseMinuteKey,
+  MAX_CONSECUTIVE_FAILURES, MAX_ENABLED_ROUTINES, MIN_CRON_INTERVAL_MINUTES,
 } from "./cronMaturity.ts";
 
 /** cron 匹配仍从这里导出（threads.ts 与旧测试的 import 不用改）。 */
@@ -87,6 +88,18 @@ export interface WorkflowTriggerState {
   quota_hold_minutes?: number;
   /** G-P1-38 配额 hold 到期时间（ISO）；未到时间前触发全部挂起。 */
   quota_hold_until?: string | null;
+  /**
+   * O6：每个触发器的连续失败次数（键 `${工作流名}\n${触发器下标}`）。
+   * 成功一次清零；满 10 次自动停用（见 disabled_triggers）。
+   */
+  consecutive_failures?: Record<string, number>;
+  /**
+   * O6：已自动停用的触发器（键同上）。停用原因在值里：failures 为连败次数
+   * （满 10 次），error 为最后一次错误或低于下限的说明；at 为停用时间。
+   * 停用的触发器不再触发（漏跑也不记），须 `nyra workflow triggers re-enable`
+   * 显式恢复。
+   */
+  disabled_triggers?: Record<string, { at: string; failures: number; error: string }>;
 }
 
 export function workflowTriggersPath(home: string): string {
@@ -133,6 +146,26 @@ export function loadWorkflowTriggerState(home: string): WorkflowTriggerState {
     out.quota_hold_minutes = Math.floor(r.quota_hold_minutes);
   }
   if (typeof r.quota_hold_until === "string" && r.quota_hold_until) out.quota_hold_until = r.quota_hold_until;
+  if (r.consecutive_failures && typeof r.consecutive_failures === "object") {
+    const cf: Record<string, number> = {};
+    for (const [k, v] of Object.entries(r.consecutive_failures as Record<string, unknown>)) {
+      if (typeof v === "number" && Number.isFinite(v) && v > 0) cf[k] = Math.floor(v);
+    }
+    if (Object.keys(cf).length > 0) out.consecutive_failures = cf;
+  }
+  if (r.disabled_triggers && typeof r.disabled_triggers === "object") {
+    const dt: Record<string, { at: string; failures: number; error: string }> = {};
+    for (const [k, v] of Object.entries(r.disabled_triggers as Record<string, unknown>)) {
+      if (!v || typeof v !== "object") continue;
+      const row = v as Record<string, unknown>;
+      dt[k] = {
+        at: typeof row.at === "string" ? row.at : "",
+        failures: typeof row.failures === "number" ? row.failures : 0,
+        error: typeof row.error === "string" ? row.error : "",
+      };
+    }
+    if (Object.keys(dt).length > 0) out.disabled_triggers = dt;
+  }
   return out;
 }
 
@@ -205,6 +238,153 @@ export interface QuotaHoldInfo {
 }
 
 /** 只读看 hold 状态（不写盘、不打戳，status 命令用；状态文件损坏时当没有 hold）。 */
+/** O6：触发器在状态文件里的键。 */
+export function routineKey(workflow: string, triggerIndex: number): string {
+  return `${workflow}\n${triggerIndex}`;
+}
+
+/** O6：这个触发器是否已被自动停用。 */
+export function isTriggerDisabled(state: WorkflowTriggerState, workflow: string, triggerIndex: number): boolean {
+  return Boolean(state.disabled_triggers?.[routineKey(workflow, triggerIndex)]);
+}
+
+/** O6：已启用的例行数（active 工作流的触发器数，自动停用的不算）。 */
+export function countEnabledRoutineTriggers(home: string): number {
+  const state = loadWorkflowTriggerState(home);
+  let n = 0;
+  for (const wf of listActiveWorkflowTriggers(home)) {
+    for (let i = 0; i < wf.triggers.length; i++) {
+      if (!isTriggerDisabled(state, wf.name, i)) n += 1;
+    }
+  }
+  return n;
+}
+
+/** O6：护栏总览（CLI status 用）。 */
+export function describeRoutineGuardrails(home: string): {
+  minIntervalMinutes: number;
+  maxEnabled: number;
+  maxConsecutiveFailures: number;
+  enabledCount: number;
+  disabledCount: number;
+} {
+  const state = loadWorkflowTriggerState(home);
+  return {
+    minIntervalMinutes: MIN_CRON_INTERVAL_MINUTES,
+    maxEnabled: MAX_ENABLED_ROUTINES,
+    maxConsecutiveFailures: MAX_CONSECUTIVE_FAILURES,
+    enabledCount: countEnabledRoutineTriggers(home),
+    disabledCount: Object.keys(state.disabled_triggers ?? {}).length,
+  };
+}
+
+/**
+ * O6：把 routine_auto_disabled 事件镜像进那次工作流运行的事件链（有 runId
+ * 才做；运行记录可能在 tasks/ 或 runs/ 目录下，两个都试；失败不破坏触发）。
+ */
+async function mirrorRoutineDisabledEvent(
+  home: string, runId: string | null, workflow: string, triggerIndex: number, failures: number,
+): Promise<void> {
+  if (!runId) return;
+  try {
+    const { RunStore } = await import("./runs.ts");
+    for (const dir of ["tasks", "runs"]) {
+      try {
+        const store = new RunStore(join(home, dir));
+        store.load(runId);
+        store.appendEvent(runId, "routine_auto_disabled", { workflow, trigger_index: triggerIndex, failures });
+        return;
+      } catch { /* 不在这个目录，换下一个 */ }
+    }
+  } catch { /* 事件镜像失败不破坏触发 */ }
+}
+
+/**
+ * O6：停用一个触发器（失败满 10 次，或间隔低于 15 分钟下限时调）。
+ * 停用即通知：事故账记 auto_disabled（`nyra cron incidents` 可见）+
+ * routine_auto_disabled 运行事件（有 runId 时镜像进那次运行）。
+ * 返回 true 表示本次刚停用（之前没停用过），false 表示早已停用。
+ */
+export async function disableTrigger(
+  home: string, workflow: string, triggerIndex: number,
+  reason: { failures: number; error: string; runId?: string | null },
+): Promise<boolean> {
+  const state = loadWorkflowTriggerState(home);
+  const key = routineKey(workflow, triggerIndex);
+  if (state.disabled_triggers?.[key]) return false;
+  if (!state.disabled_triggers) state.disabled_triggers = {};
+  state.disabled_triggers[key] = {
+    at: new Date().toISOString(),
+    failures: reason.failures,
+    error: reason.error.slice(0, 200),
+  };
+  delete (state.consecutive_failures ?? {})[key];
+  saveWorkflowTriggerState(home, state);
+  appendCronIncident(home, {
+    kind: "auto_disabled", source: "workflow", workflow, trigger_index: triggerIndex,
+    consecutive_failures: reason.failures, error: reason.error.slice(0, 200),
+    note: reason.failures >= MAX_CONSECUTIVE_FAILURES
+      ? `连续失败 ${reason.failures} 次，已自动关闭（nyra workflow triggers re-enable ${workflow} ${triggerIndex} 恢复）`
+      : `间隔低于 ${MIN_CRON_INTERVAL_MINUTES} 分钟下限，已自动关闭（改 cron 后 nyra workflow triggers re-enable ${workflow} ${triggerIndex} 恢复）`,
+    run_id: reason.runId ?? null,
+  });
+  await mirrorRoutineDisabledEvent(home, reason.runId ?? null, workflow, triggerIndex, reason.failures);
+  return true;
+}
+
+/**
+ * O6：记一次触发结果。成功清零连败；失败 +1，满 10 次自动停用（先记事故 +
+ * 运行事件再停，不存在“悄悄关了”的情况）。返回本次是否刚停用。
+ */
+export async function recordTriggerResult(
+  home: string, workflow: string, triggerIndex: number,
+  ok: boolean, error?: string, runId?: string | null,
+): Promise<boolean> {
+  const state = loadWorkflowTriggerState(home);
+  const key = routineKey(workflow, triggerIndex);
+  if (ok) {
+    if (state.consecutive_failures?.[key]) {
+      delete state.consecutive_failures[key];
+      saveWorkflowTriggerState(home, state);
+    }
+    return false;
+  }
+  const prev = state.consecutive_failures?.[key] ?? 0;
+  const next = prev + 1;
+  if (!state.consecutive_failures) state.consecutive_failures = {};
+  state.consecutive_failures[key] = next;
+  saveWorkflowTriggerState(home, state);
+  if (next < MAX_CONSECUTIVE_FAILURES) return false;
+  return disableTrigger(home, workflow, triggerIndex, {
+    failures: next, error: error ?? "", runId: runId ?? null,
+  });
+}
+
+/**
+ * O6：重新启用一个已自动停用的触发器（事故账记 re_enabled，留审计痕迹）。
+ * 返回 false 表示它本来就没停用。
+ */
+export function reEnableTrigger(home: string, workflow: string, triggerIndex: number): boolean {
+  const state = loadWorkflowTriggerState(home);
+  const key = routineKey(workflow, triggerIndex);
+  if (!state.disabled_triggers?.[key]) return false;
+  delete state.disabled_triggers[key];
+  if (state.consecutive_failures) delete state.consecutive_failures[key];
+  saveWorkflowTriggerState(home, state);
+  appendCronIncident(home, {
+    kind: "re_enabled", source: "workflow", workflow, trigger_index: triggerIndex,
+    note: "机主手动恢复（nyra workflow triggers re-enable）",
+  });
+  return true;
+}
+
+/** O6：低于 15 分钟下限的定时触发器（执行路径的后备：激活时已拦，手改注册表绕过的在这里停用）。 */
+export function isBelowFloorTrigger(t: { type: "schedule" | "event"; cron?: string }): boolean {
+  if (t.type !== "schedule" || !t.cron) return false;
+  const interval = cronMinIntervalMinutes(t.cron);
+  return interval !== null && interval < MIN_CRON_INTERVAL_MINUTES;
+}
+
 export function describeQuotaHold(home: string, now = new Date()): QuotaHoldInfo {
   let state: WorkflowTriggerState;
   try {
@@ -391,6 +571,9 @@ async function fireOne(
       run_id: runId, error: (error ?? "").slice(0, 200),
     });
   }
+  // O6：记一次触发结果——成功清零连败，失败满 10 次自动停用（先记事故 +
+  // 运行事件再停，不存在“悄悄关了”的情况）。
+  await recordTriggerResult(home, workflow, triggerIndex, status === "ok", error, runId);
   return { workflow, triggerIndex, triggerType, runId, status, ...(error ? { error } : {}) };
 }
 
@@ -433,6 +616,16 @@ export async function runDueWorkflowTriggers(
       if (fired.length >= MAX_RUNS_PER_ROUND) break;
       const t = wf.triggers[i];
       if (t.type !== "schedule" || !t.cron) continue;
+      // O6：已自动停用的不跑（漏跑也不记）；低于 15 分钟下限的（手改注册表
+      // 绕过激活才可能出现）在这里停用一次并记事故，之后不再跑。
+      if (isTriggerDisabled(state, wf.name, i)) continue;
+      if (isBelowFloorTrigger(t)) {
+        await disableTrigger(home, wf.name, i, {
+          failures: state.consecutive_failures?.[`${wf.name}\n${i}`] ?? 0,
+          error: `定时触发器间隔低于 ${MIN_CRON_INTERVAL_MINUTES} 分钟下限（cron：${t.cron}）`,
+        });
+        continue;
+      }
       const key = `${wf.name}\n${i}`;
       const dueNow = cronMatches(t.cron, now);
       const prevLast = state.lastFired[key];
@@ -519,6 +712,8 @@ export async function fireWorkflowEventTriggers(
       const t = wf.triggers[i];
       if (t.type !== "event" || !t.event) continue;
       if (t.event !== event.eventType) continue;
+      // O6：已自动停用的不跑。
+      if (isTriggerDisabled(state, wf.name, i)) continue;
       const key = `${wf.name}\n${i}\n${event.eventId}`;
       if (state.firedEvents[key]) continue;
       state.firedEvents[key] = new Date().toISOString();
@@ -532,18 +727,26 @@ export async function fireWorkflowEventTriggers(
   return { skipped: null, fired, missed: [] };
 }
 
-/** CLI status 用：开关 + 各 active 工作流的触发器清单 + G-P1-38 策略与 hold。 */
+/** CLI status 用：开关 + 各 active 工作流的触发器清单 + G-P1-38 策略与 hold + O6 护栏。 */
 export function describeWorkflowTriggers(home: string): {
   enabled: boolean;
   workflows: ActiveWorkflowTriggers[];
   policy: CronPolicy;
   hold: QuotaHoldInfo;
+  guardrails: ReturnType<typeof describeRoutineGuardrails>;
+  disabled: Array<{ workflow: string; triggerIndex: number; failures: number; error: string; at: string }>;
 } {
   const state = loadWorkflowTriggerState(home);
+  const disabled = Object.entries(state.disabled_triggers ?? {}).map(([key, v]) => {
+    const [workflow, idx] = key.split("\n");
+    return { workflow: workflow ?? key, triggerIndex: Number(idx ?? 0), failures: v.failures, error: v.error, at: v.at };
+  });
   return {
     enabled: state.enabled,
     workflows: listActiveWorkflowTriggers(home),
     policy: resolveCronPolicy(state),
     hold: describeQuotaHold(home),
+    guardrails: describeRoutineGuardrails(home),
+    disabled,
   };
 }

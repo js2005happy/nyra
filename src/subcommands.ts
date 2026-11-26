@@ -12,19 +12,19 @@ export const SUBCOMMANDS: readonly string[] = [
   // 运行与结论
   "verdict", "guard", "redlines", "evidence", "restore", "timeline", "replay", "regression", "contract", "golden", "checkpoint", "interrupt", "intervention", "admission", "middleware", "delegate", "agent",
   // 成本与用量
-  "cost", "savings", "stats", "budget", "telemetry",
+  "cost", "savings", "stats", "budget", "telemetry", "usage",
   // 配置与开关
   "config", "features", "tools", "models", "reviewer", "judge", "verifier", "account", "cloud",
   // 记忆与复用
   "recall", "memory", "soul", "style", "skills", "bughunt", "market",
   // 后台与协作
-  "ui", "gw", "schedule", "events", "task", "review", "hitl", "mail-inbox", "responsibility", "bot", "channels", "kanban", "subagent", "roster", "side-effects", "heartbeat", "fanout", "governance", "optimize", "sso", "team", "goal", "trust", "workflow", "template", "script", "handover", "reconciler", "watch", "session", "group", "org", "thread", "automation", "cron",
+  "ui", "gw", "schedule", "events", "task", "review", "hitl", "mail-inbox", "responsibility", "bot", "channels", "kanban", "subagent", "roster", "side-effects", "heartbeat", "fanout", "governance", "policy", "learn", "components", "optimize", "sso", "team", "goal", "trust", "workflow", "template", "script", "handover", "reconciler", "watch", "session", "group", "org", "thread", "automation", "cron",
   // 扩展与集成
   "plugin", "creator", "kb", "knowledge", "search", "hooks", "permissions", "eigenflux", "gmail", "shopify", "slack", "connector", "mcp", "peer", "circle", "voice", "video", "call", "sfu", "agui", "acp", "a2a", "screen", "computer", "backend", "export", "media", "meeting", "rendezvous", "queue", "editor",
   // 入职与模板
   "init", "templates", "wake",
   // 自检与运维
-  "doctor", "status", "setup", "vault", "eval",
+  "doctor", "status", "setup", "vault", "eval", "update-check", "dream", "router",
 ] as const;
 
 /** 供 `Set` 用法与文档校验共用。 */

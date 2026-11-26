@@ -1,0 +1,96 @@
+# 对外事实检查：用户照着做会不会失败（会联网）。
+#
+# 为什么单独一条工作流：一行安装命令曾经指向一个还没发布的版本（新用户全部 404），
+# seatbelt/jobobject 沙箱在命令行里报“无效后端”，而 Node CI 一直是绿的。
+#
+#   installer-release-check  三份安装脚本的默认版本一致，且对应的 Release 已发布、
+#                            5 个 Node 二进制 + SHA256SUMS 都能下载（1 字节 GET，不用 HEAD），
+#                            桌面安装包与 APK 也都在。
+#   site-link-check          官网 docs/*.html：相对链接文件存在，本站/仓库内绝对链接按本地文件核对，
+#                            Release 下载链接联网核对。
+#   sandbox-flag-test        三平台各跑一次 --sandbox seatbelt / jobobject 的端到端测试
+#                            （本平台支持时走到 buildAgent 之后，其他平台给“只支持某系统”的提示）。
+#
+# 发版顺序（见 docs/installers.md）：先推 tag，等 Release 附件挂齐，再改安装脚本的默认版本。
+# 每天跑一次，Release 附件被删或官网链接坏掉时能尽早发现。
+
+name: Release facts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'scripts/install-node*'
+      - 'scripts/check-release-facts.ts'
+      - 'src/sandbox.ts'
+      - 'src/config.ts'
+      - 'tests/node/test-sandbox-os-backends.test.ts'
+      - '.github/workflows/release-facts.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'scripts/install-node*'
+      - 'scripts/check-release-facts.ts'
+      - 'src/sandbox.ts'
+      - 'src/config.ts'
+      - 'tests/node/test-sandbox-os-backends.test.ts'
+      - '.github/workflows/release-facts.yml'
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-facts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  installer-release-check:
+    name: Installer default version is a released, complete Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.4'
+      - name: Check installer default version against GitHub Releases
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bun scripts/check-release-facts.ts installers
+
+  site-link-check:
+    name: Website link check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.4'
+      - name: Check docs/*.html links
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bun scripts/check-release-facts.ts site
+
+  sandbox-flag-test:
+    name: Sandbox flag e2e (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.4'
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: --sandbox seatbelt / jobobject end to end
+        run: bun test tests/node/test-sandbox-os-backends.test.ts --timeout 60000

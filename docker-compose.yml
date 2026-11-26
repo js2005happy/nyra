@@ -1,0 +1,24 @@
+# Nyra 单机自托管（O4）：一个容器 + 一个数据目录 + 8765 端口。
+# 数据（账号、会话、记忆、审计、密钥库）直接落在宿主的 $NYRA_HOME
+#（默认 ~/.nyra），bind mount 进容器 /home/nyra/.nyra：删容器不丢数据，
+# 备份就是拷一份目录（见 scripts/deploy.sh）；容器按调用者的 UID/GID 跑，
+# 写出来的文件属主与宿主一致，不会变成 root 的文件。
+services:
+  nyra:
+    build: .
+    image: nyra:latest
+    container_name: nyra
+    restart: unless-stopped
+    user: "${NYRA_UID:-1000}:${NYRA_GID:-1000}"
+    ports:
+      - "${NYRA_PORT:-8765}:8765"
+    volumes:
+      - ${NYRA_HOME:-~/.nyra}:/home/nyra/.nyra
+    environment:
+      NYRA_HOME: /home/nyra/.nyra
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:8765/api/health').then((r) => { if (!r.ok) process.exit(1); }).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3

@@ -100,19 +100,23 @@ jobs:
               echo "$NAMES" | grep -qx "$b" || MISSING=1
             done
             # 桌面安装包（Tauri 打包的文件名带版本号，用后缀匹配）与手机 APK：
-            # .dmg（macOS 通用包）、.msi 与 -setup.exe（Windows）、nyra-android-debug.apk。
+            # .dmg（macOS 通用包）、.msi 与 -setup.exe（Windows）。
             echo "$NAMES" | grep -q '\.dmg$' || MISSING=1
             echo "$NAMES" | grep -q '\.msi$' || MISSING=1
             echo "$NAMES" | grep -q '\-setup\.exe$' || MISSING=1
-            echo "$NAMES" | grep -qx 'nyra-android-debug.apk' || MISSING=1
+            # 0.5.13 起：APK 稳定名 nyra-android.apk（发版 tag 构建必须正式签名），
+            # 桌面安装包另有不带版本号的稳定名副本（README「下载」按钮用）。
+            for b in nyra-android.apk Nyra-windows-x64-setup.exe Nyra-windows-x64.msi Nyra-macos-universal.dmg Nyra-linux-x86_64.AppImage Nyra-linux-amd64.deb; do
+              echo "$NAMES" | grep -qx "$b" || MISSING=1
+            done
             [ "$MISSING" = 0 ] && break
-            echo "等待产物挂到 Release（第 $i/150 次）：5 个 Node 二进制 + .dmg + .msi + -setup.exe + 安卓 APK ..."
+            echo "等待产物挂到 Release（第 $i/150 次）：5 个 Node 二进制 + 桌面安装包（含稳定名副本）+ 安卓 APK ..."
             sleep 20
           done
           # fail-closed：等满 50 分钟仍缺产物就直接失败，不签不全的清单。
           # （以前这里没有出口，超时后会照常下载、签名一份不全的清单。）
           if [ "$MISSING" != "0" ]; then
-            echo "::error::等了 50 分钟，Release $TAG 上仍缺产物（5 个 Node 二进制 + .dmg + .msi + -setup.exe + 安卓 APK），不签不全的清单"
+            echo "::error::等了 50 分钟，Release $TAG 上仍缺产物（5 个 Node 二进制 + 桌面安装包（含稳定名副本）+ 安卓 APK），不签不全的清单"
             exit 1
           fi
           mkdir -p dist

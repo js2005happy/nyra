@@ -1,6 +1,6 @@
 // src/orgCli.ts — 缺口 49 第一批：nyra org 命令行。
 //
-// 子命令：create / list / show / add / remove / role / delete / check。
+// 子命令：create / list / show / add / remove / role / delete / check / sso。
 // 退出码：0 成功、1 业务错误（没权限、不存在、重复等）、2 用法错误。
 // 破坏性操作（remove / role / delete）须 --yes；add 不须（可逆、有审计）。
 import { AccountStore } from "./accounts.ts";
@@ -18,6 +18,7 @@ import {
   removeMember,
   resolveAccountRef,
   setMemberRole,
+  setOrgSso,
 } from "./orgs.ts";
 import { effectiveOrgIsolation } from "./orgSharing.ts";
 import { SHARING_USAGE, handleOrgSharing } from "./orgSharingCli.ts";
@@ -30,6 +31,7 @@ const ORG_USAGE = "用法：\n"
   + " nyra org remove <组织> <邮箱或账号id> --yes     回收成员（移出组织）\n"
   + " nyra org role <组织> <邮箱或账号id> <admin|member|viewer> --yes   改成员角色\n"
   + " nyra org delete <组织> --yes                     删组织（成员随组织一起删；操作者须机主或该组织 admin）\n"
+  + " nyra org sso <组织> <on|off> [--provider <id>] [--domains a.com,b.com]   开/关组织强制 SSO（须机主或该组织 admin；开后成员只能走 SSO 登录）\n"
   + " nyra org check <组织> <邮箱或账号id> [read|write|manage]   看一个账号在组织里是什么角色、能不能做这个动作\n"
   + "角色：admin 管成员与设置，member 可读写，viewer 只读；机主是超级管理员，任何组织都能管。\n"
   + "组织成员只认全局账号（缺口 41）：账号不存在或已停用时开通直接拒绝；停用账号的组织权限立即失效。\n"
@@ -90,6 +92,7 @@ export async function handleOrg(argv: string[], home: string): Promise<number> {
       process.stdout.write(`建于：${org.created_at}（${org.created_by}）\n`);
       const iso = effectiveOrgIsolation(org);
       process.stdout.write(`隔离：数据${iso.data ? "开（硬边界）" : "关"}；设置${iso.settings ? "开" : "关"}；用量${iso.usage ? "开" : "关"}；工作区：${org.workspace_dir ?? "没绑"}；共享 Bot：${(org.shared_bots ?? []).length} 个；私有目录：${org.private_catalog ? "已开" : "没开"}\n`);
+      process.stdout.write(`SSO：${org.require_sso ? "强制（成员只能走 SSO 登录）" : "没强制"}；身份提供方：${org.sso_provider ?? "没绑"}；绑定域名：${(org.sso_domains ?? []).join("、") || "没绑"}\n`);
       if (!org.members.length) {
         process.stdout.write("成员：无（机主仍可管理；开通：nyra org add " + org.name + " <邮箱>）\n");
         return 0;
@@ -200,6 +203,27 @@ export async function handleOrg(argv: string[], home: string): Promise<number> {
       const allowed = await canOrg(home, ref, account.id, action);
       process.stdout.write(`${account.email}：${org.name} 的${ROLE_TEXT[role] ?? role}，${action} ${allowed ? "允许" : "拒绝"}\n`);
       return allowed ? 0 : 1;
+    }
+    if (cmd === "sso") {
+      const ref = argv[1];
+      const onOff = argv[2];
+      if (!ref || (onOff !== "on" && onOff !== "off")) {
+        process.stderr.write("用法：nyra org sso <组织> <on|off> [--provider <id>] [--domains a.com,b.com]\n");
+        return 2;
+      }
+      const by = await actor();
+      const domains = flagValue("--domains");
+      const org = await setOrgSso(home, ref, {
+        require_sso: onOff === "on",
+        ...(flagValue("--provider") !== undefined ? { sso_provider: flagValue("--provider") ?? "" } : {}),
+        ...(domains !== undefined ? { sso_domains: domains.split(",").map((d) => d.trim()).filter(Boolean) } : {}),
+        by,
+      });
+      process.stdout.write(`组织 ${org.name} 的强制 SSO 已${org.require_sso ? "开启" : "关闭"}（身份提供方：${org.sso_provider ?? "没绑"}；绑定域名：${(org.sso_domains ?? []).join("、") || "没绑"}）\n`);
+      if (org.require_sso && !org.sso_provider) {
+        process.stdout.write("提醒：还没绑定身份提供方——先注册（nyra sso provider add），再用 --provider 绑定，否则成员登录会被拦且提示里没有可走的提供方。\n");
+      }
+      return 0;
     }
     // 第二批：共享 Bot / 租户隔离 / 组织内私有目录（不是第二批的子命令时返回 null，再回用法说明）。
     const sharing = await handleOrgSharing(argv, home);

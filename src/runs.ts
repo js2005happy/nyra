@@ -10,7 +10,6 @@ readdirSync, renameSync, rmSync, statSync, writeFileSync, writeSync, fsyncSync,
 import { hostname} from "node:os";
 import { join, resolve, dirname, sep, basename } from "node:path";
 import { enforcedOnly } from "./enforcedConfig.ts";
-import { pythonJsonDump} from "./pyjson.ts";
 import { ApprovalRequired} from "./tools.ts";
 import { checkApproval, checkShellDenied, defaultShell, wrapShellCommand, workspaceShellCwd, idempotencyKey, RESUME_IDEMPOTENT_TOOLS, type ToolContext} from "./tools.ts";
 import { loadSession, saveSession} from "./memory.ts";
@@ -29,12 +28,18 @@ resumed: ["interrupted_tool_calls", "turn"],
 mode_override: ["from", "to"],
 verify_started: ["command"],
 verify_result: ["exit_code", "passed", "attempt", "tests_modified"],
-run_started: [],
+run_started: ["initiator"],
 turn: ["turn"],
 tool_start: ["id", "name", "args_hash"],
 tool_result: ["id", "name", "ok", "args_hash"],
 approval_wait: ["tool"],
 approval_done: ["tool", "approved"],
+// O1：策略网关命中进运行证据链（deny 记规则与动作，ask/dry-run 记规则）。
+policy_denied: ["tool", "rule", "action"],
+policy_ask: ["tool", "rule"],
+policy_dry_run: ["tool", "rule", "would"],
+// O6：例行连续失败满 10 次自动关闭（或间隔低于下限被停用），镜像进那次运行。
+routine_auto_disabled: ["workflow", "trigger_index", "failures"],
 // 缺口 9：影子快照与联合回滚进证据链——snapshot 记哪次批准写操作前拍了
 // 哪个快照（什么后端、拍了哪几个文件）；restore 记回滚到哪个检查点、谁触
 // 发的、恢复了什么文件与会话范围（files 为逗号分隔的相对路径）。
@@ -107,6 +112,12 @@ responsibility_cancelled: ["responsibility_id", "responsibility_name"],
 responsibility_expired: ["responsibility_id", "responsibility_name"],
 responsibility_escalated: ["responsibility_id", "responsibility_name", "condition", "item_id"],
 briefing_generated: ["date", "progress_items", "decision_items", "anomaly_items", "quiet"],
+// H3：夜间做梦代谢——扫了几个会话、提炼几条候选、剪掉几条重复、清掉几条过期、
+// 矛盾几组、模型润色小结开没开（只记计数，不记记忆正文、不记绝对路径）。
+dream_run: ["sessions_scanned", "proposals_added", "duplicates_pruned", "stale_rejected", "contradictions", "model_summary"],
+// H4：免疫体检——查了几项、几项没过、隔离了几个（只记计数与隔离区相对名）。
+immune_check: ["checks", "failed", "quarantined"],
+immune_quarantined: ["kind", "name", "detail"],
 // 缺口 33：外部文档知识库检索进证据链——哪个库、问了什么、命中几条、
 // 最高分多少（只记元数据与分数，不记笔记正文、不记绝对路径）。
 knowledge_search: ["base", "query", "hits", "top_score"],
@@ -134,6 +145,7 @@ cloud_sync_conflict: ["scope", "key", "kept"],
 // 绝对路径在 ~/.nyra/marketplace-installed.json 账本里（与缺口 11 同理）。
 marketplace_installed: ["item_name", "item_version", "kind", "source", "bot_ready", "reviewer_model"],
 marketplace_uninstalled: ["item_name", "kind"],
+marketplace_updated: ["item_name", "item_version", "kind", "source", "previous_version"],
 marketplace_published: ["item_name", "item_version", "kind", "license", "bot_ready"],
 // 缺口 17：对外 MCP 服务调用进证据链——哪个工具、谁调的（owner/device）、
 // 参数指纹（args_hash 单向指纹，不可还原原文）、成功还是失败、审查结论
@@ -382,6 +394,9 @@ friend_code_regenerated: ["code_hash"],
 // 只记圈名、身份名、引入者与渠道，不记发件人 id 以外的任何消息内容。
 circle_created: ["circle", "by"],
 circle_deleted: ["circle", "by"],
+// H6：删圈墓碑被显式重建清掉时记一条（与 circle_created 是两件事：
+// 前者是新建，后者是删过的圈又建回来了，审计里要分得清）。
+circle_recreated: ["circle", "by"],
 circle_invited: ["circle", "peer", "by", "channel"],
 circle_revoked: ["circle", "peer", "by"],
 circle_binding_set: ["channel", "sender", "identity"],
@@ -392,6 +407,13 @@ org_deleted: ["org_id", "by"],
 org_member_added: ["org_id", "account_id", "role", "by"],
 org_member_removed: ["org_id", "account_id", "by"],
 org_role_changed: ["org_id", "account_id", "role", "by"],
+org_sso_changed: ["org_id", "require_sso", "sso_provider", "by"],
+learning_proposed: ["learning_id", "kind"],
+learning_approved: ["learning_id", "kind"],
+learning_rejected: ["learning_id", "kind"],
+learning_published: ["learning_id", "kind"],
+learning_shared: ["learning_id", "kind", "org_id"],
+component_rendered: ["component", "bot"],
 // 缺口 49 第二批：共享 Bot / 租户隔离 / 组织内私有目录进证据链——
 // 共享与写授权、教学待审、隔离违反（越权访问被拦下）、工作区绑定、
 // 跨租户读授权、私有目录发布与安装。只记 id 与动作，不记内容原文与绝对路径。
@@ -632,6 +654,16 @@ group_chat_started: ["room", "mode", "speakers"],
 group_chat_turn: ["room", "speaker", "turn"],
 group_chat_handoff: ["room", "from", "to"],
 group_chat_terminated: ["room", "reason", "turns"],
+// M2：Jev 式快速决策路由进证据链——房间、选中的成员、置信度、
+// 是否回落全员回答、回落原因。只记 id 与结论，不记消息全文。
+jev_routed: ["room", "member", "confidence", "fallback", "reason"],
+// 本地小路由：每次本地分类都记一笔——判了什么标签、置信度、
+// 是否回落、为什么。只记标签与结论，不记消息全文。
+local_router_decision: ["label", "confidence", "fallback", "reason"],
+// M3：队伍包安装进证据链——队伍、版本、机器人（逗号分隔）、
+// 来源（本地路径或 https URL，不记文件内容）。
+team_pack_installed: ["team", "version", "bots", "source"],
+team_pack_install_failed: ["team", "version", "bots", "reason"],
 // 第 2 批 G-P1-3：团队租约 + 纪元进证据链——团队、lead、纪元。只记
 // 身份与纪元号，不记消息内容。
 team_lease_acquired: ["team_id", "lead", "epoch"],
@@ -975,6 +1007,8 @@ workdir: string;
 mode: string;
 /** 缺口 8：无人值守巡查（daemon 巡查）；为 true 时写操作在工具层直接拒绝。 */
 unattended?: boolean;
+/** O2：触发方（person|routine|cron|webhook|handoff|group|gateway；旧运行没有该字段）。 */
+initiator?: string;
 status: string;
 turn: number;
 max_turns: number;
@@ -1050,7 +1084,7 @@ if (typeof state.status!== "string" ||!RUN_STATUSES.has(state.status)) {
 throw new Error("运行状态无效");
 }
 const required = new Set(["session_id", "task", "workdir", "mode", "turn", "max_turns", "created_at", "updated_at", "verify_cmd", "verify_result", "changed_files", "error", "pid", "host"]);
-const allowed = new Set([...required, "schema_version", "run_id", "status", "pending_approval", "file_hashes", "usage_summary", "unattended", "contract_id", "contract_hash", "contract_verdict", "contract_passed", "contract_total"]);
+const allowed = new Set([...required, "schema_version", "run_id", "status", "pending_approval", "file_hashes", "usage_summary", "unattended", "initiator", "contract_id", "contract_hash", "contract_verdict", "contract_passed", "contract_total"]);
 const keys = Object.keys(state);
 if (keys.some((k) =>!allowed.has(k)) || ![...required].every((k) => keys.includes(k)) ||!Array.isArray(state.changed_files)) {
 throw new Error("运行记录字段无效");
@@ -1073,6 +1107,7 @@ if (!strKeys.every((k) => typeof state[k] === "string") ||
 typeof (state.usage_summary as Record<string, unknown>).cost_status !== "string" && (state.usage_summary as Record<string, unknown>).cost_status !== null)) ||
 (state.pending_approval!== undefined && state.pending_approval!== null && (typeof state.pending_approval!== "object" || Array.isArray(state.pending_approval))) ||
 (state.unattended!== undefined && typeof state.unattended!== "boolean") ||
+(state.initiator!== undefined && typeof state.initiator!== "string") ||
 (state.contract_id!== undefined && state.contract_id!== null && typeof state.contract_id!== "string") ||
 (state.contract_hash!== undefined && state.contract_hash!== null && typeof state.contract_hash!== "string") ||
 (state.contract_verdict!== undefined && state.contract_verdict!== null && typeof state.contract_verdict!== "string") ||
@@ -1092,7 +1127,7 @@ const tmp = join(join(path, ".."), `.state-${process.pid}-${randomBytes(4).toStr
 try {
 const fd = openSync(tmp, "w", 0o600);
 try {
-writeSync(fd, pythonJsonDump(state), null, "utf-8");
+writeSync(fd, JSON.stringify(state), null, "utf-8");
 fsyncSync(fd);
 } finally {
 closeSync(fd);
@@ -1105,7 +1140,7 @@ try { rmSync(tmp, { force: true});} catch { /* ignore */}
 }
 }
 
-create(task: string, sessionId: string, workdir: string, mode: string, maxTurns: number, status = "running", verifyCmd?: string | null, extra?: { unattended?: boolean }): RunState {
+create(task: string, sessionId: string, workdir: string, mode: string, maxTurns: number, status = "running", verifyCmd?: string | null, extra?: { unattended?: boolean; initiator?: string }): RunState {
 if (!RUN_STATUSES.has(status)) throw new Error("运行状态无效");
 if (existsSync(this.baseDir) && lstatSync(this.baseDir).isSymbolicLink()) throw new Error("运行目录不安全");
 mkdirSync(this.baseDir, { recursive: true, mode: 0o700});
@@ -1130,13 +1165,14 @@ const state: RunState = {
 schema_version: 1, run_id: runId!, session_id: sessionId,
 task: redact(task)?? "", workdir: String(workdir), mode, status,
 unattended: extra?.unattended ?? false,
+initiator: extra?.initiator ?? "person",
 turn: 0, max_turns: maxTurns, created_at: nowIso(), updated_at: nowIso(),
 verify_cmd: verifyCmd?? null, verify_result: null, changed_files: [], file_hashes: {}, usage_summary: null, error: null,
 contract_id: null, contract_hash: null, contract_verdict: null, contract_passed: null, contract_total: null,
 pid: process.pid, host: hostname(),
 };
 this.write(state);
-this.appendEvent(runId!, "run_started");
+this.appendEvent(runId!, "run_started", { initiator: state.initiator });
 return state;
 }
 
@@ -1206,7 +1242,7 @@ const path = this.filePath(runId, "events.jsonl");
 const fd = openSync(path, "a", 0o600);
 try {
 privateChmod(path, 0o600);
-writeSync(fd, pythonJsonDump(event) + "\n", null, "utf-8");
+writeSync(fd, JSON.stringify(event) + "\n", null, "utf-8");
 fsyncSync(fd);
 } finally {
 closeSync(fd);
@@ -1253,6 +1289,8 @@ workdir: string;
 mode: string;
 maxTurns: number;
 turn: number;
+/** O2：本次运行的触发方（Agent 提供；未提供时按 person 记）。 */
+initiator?: string;
 /** 缺口 20：用量快照与最近成本估算（Agent 真实提供；测试替身可不提供）。 */
 usage?: { snapshot(): { calls: number; prompt_tokens: number | null; completion_tokens: number | null; total_tokens: number | null } };
 lastCost?: { status: string; spentUsd: number | null } | null;
@@ -1317,7 +1355,7 @@ this.verifyRetries = opts?.verifyRetries?? DEFAULT_VERIFY_RETRIES;
 agent.turn = this.turn;
 this.position = agent.checkpoints? agent.checkpoints.recordPosition(): 0;
 if (!opts?.state) {
-this.runId = store.create(task, agent.sessionId, agent.workdir, agent.mode, agent.maxTurns, "running", opts?.verifyCmd?? null).run_id;
+this.runId = store.create(task, agent.sessionId, agent.workdir, agent.mode, agent.maxTurns, "running", opts?.verifyCmd?? null, { initiator: agent.initiator ?? "person" }).run_id;
 if (opts?.verifySkipReason) {
 store.update(this.runId, { verify_result: { skip_reason: opts.verifySkipReason}});
 }

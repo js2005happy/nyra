@@ -95,3 +95,7 @@ cd src-tauri && cargo test                      # 外壳的单元测试
 - **没有在真机上手动验证**：只在 CI 上构建通过、在 Linux 上编译并跑过外壳单元测试；macOS / Windows 上的实际启动、Python 查找、退出清理还没在真机上点过。
 - 没有菜单栏 / 托盘、没有多窗口；网页界面里 `target="_blank"` 的同源链接不会打开新窗口。
 - 单实例：第二次启动直接聚焦已有窗口，不会再起一个本机服务。
+
+## 发版缓存隔离（H9，2026-11-25）
+
+桌面构建工作流（`.github/workflows/desktop.yml`）的缓存键钉死分支/tag（`github.ref`）：npm 缓存用显式 `actions/cache`（键 `npm-<os>-<ref>-<锁文件哈希>`，restore-keys 只回落同一分支前缀），Rust 缓存用 `Swatinem/rust-cache` 的 `key: ${{ github.ref }}`。不用 `setup-node` 内置的 npm 缓存——它的键不含分支，一个分支的缓存会被另一个分支直接复用。发版 tag 构建（`v*`）每次都是新键，从干净缓存起步。守门测试：`tests/node/test-release-cache-isolation.test.ts`；其他工作流（node-ci / node-binaries / mobile / release-facts / release-sign）目前全都不用缓存，天然隔离，有人加缓存时测试会逼他按同一条规则钉死分支。

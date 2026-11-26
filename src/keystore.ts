@@ -45,6 +45,38 @@ export function validateKey(value: unknown): string {
   return v;
 }
 
+export const OAUTH_TOKEN_PREFIXES = ["gho_", "ghp_", "github_pat_", "ya29.", "1//", "xoxb-", "xoxp-", "xoxa-", "xoxr-"];
+
+export function oauthTokenPrefix(value: string): string | null {
+  for (const p of OAUTH_TOKEN_PREFIXES) if (value.startsWith(p)) return p;
+  return null;
+}
+
+/**
+ * H5：凭证类型纪律——模型 Key 的入口校验（validateKey + OAuth 形状拒绝）。
+ * OAuth token 绝不当 API Key 用（Hermes fix(gemini)/fix(model-metadata)
+ * 的同款教训：Gemini 探针曾把密钥错当 x-goog-api-key 发、Anthropic 探针曾
+ * 把 OAuth token 当 x-api-key 发）。
+ * 以下前缀一眼能认出是 OAuth/平台 token，不是模型服务商的 API Key：
+ * gho_（GitHub OAuth）、ghp_/github_pat_（GitHub PAT）、ya29.（Google
+ * OAuth access token）、1//（Google OAuth refresh token）、xoxb-/xoxp-/
+ * xoxa-/xoxr-（Slack）。
+ *
+ * 注意作用域：这道拦只放在模型 Key 的两个入口——网关测 Key（testKey）与
+ * 界面保存 Key（saveKey）。通用的 validateKey/setKey 不拦：Bot 电脑凭证
+ * （src/bot/computer.ts 的 storeComputerCredential）存的就是任意账号
+ * secret，GitHub PAT（ghp_…）是合法的电脑凭证，不能因为长得像 OAuth
+ * token 就拒收。API Key 只去模型服务商，OAuth token 只去它自己的服务
+ * （GitHub token 去 api.github.com，Google token 去 Google API，各走各
+ * 的 Bearer，见 accounts.ts）。
+ */
+export function validateProviderKey(value: unknown): string {
+  const v = validateKey(value);
+  const hit = oauthTokenPrefix(v);
+  if (hit) throw new Error(`这看起来像 OAuth token（以 ${hit} 开头），不能当 API Key 用：API Key 只去模型服务商，OAuth token 只去它自己的服务`);
+  return v;
+}
+
 export function validEnvName(name: unknown): name is string {
   return typeof name === "string" && ENV_NAME_RE.test(name);
 }

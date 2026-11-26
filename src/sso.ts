@@ -37,6 +37,7 @@ import {
 } from "./accounts.ts";
 import { buildAuthUrl, codeChallengeS256, newAuthState, newCodeVerifier, postForm, startLoopbackCallbackServer, type FetchFn } from "./oauth.ts";
 import { Vault } from "./vault.ts";
+import { emailDomain, findOrgForEmailDomain, type Org } from "./orgs.ts";
 
 export class SsoError extends Error {
   constructor(message: string) {
@@ -214,6 +215,21 @@ export function removeSsoProvider(
 
 export function getSsoProvider(home: string, providerId: string): SsoProvider | null {
   return loadSsoProviders(home).find((p) => p.id === providerId) ?? null;
+}
+
+// ---- O3：按邮箱域名路由到组织与身份提供方 ------------------------------
+
+/**
+ * 邮箱 → 组织 → 身份提供方。组织没绑域名返回 null；组织绑了域名但没绑提供方时
+ * provider 为 null（调用方提示先绑提供方）。只做路由建议，不拦登录本身。
+ */
+export function routeSsoForEmail(
+  home: string,
+  email: string,
+): { org: Org; provider: SsoProvider | null } | null {
+  const org = findOrgForEmailDomain(home, email);
+  if (!org) return null;
+  return { org, provider: org.sso_provider ? getSsoProvider(home, org.sso_provider) : null };
 }
 
 // ---- SSO/SCIM 审计与事件镜像 ------------------------------------------
@@ -461,11 +477,12 @@ export async function loginWithSso(opts: {
 
 function ssoUsage(): string {
   return (
-    "用法：nyra sso <provider|login|status|scim> [选项]\n" +
+    "用法：nyra sso <provider|login|route|status|scim> [选项]\n" +
     "  nyra sso provider add --id <id> --issuer <issuer> --client-id <id> [--name <名>] [--scopes <a,b>]  注册 SSO 身份提供方（client_secret 交互输入，只存密码箱）\n" +
     "  nyra sso provider list              列出已注册的身份提供方\n" +
     "  nyra sso provider remove <id> [--yes]  移除身份提供方（注册表 + 密码箱客户端一起清）\n" +
     "  nyra sso login <id>                 用该身份提供方登录（OIDC 授权码 + PKCE + 回环回调）\n" +
+    "  nyra sso route <邮箱>               按邮箱域名看该走哪个身份提供方登录（组织绑定的域名路由）\n" +
     "  nyra sso status                     当前 SSO 配置与登录状态\n" +
     "  nyra sso scim token [--yes]         签发 SCIM Bearer token（只显示一次，只存 SHA-256）\n" +
     "  nyra sso scim revoke-token          吊销 SCIM Bearer token\n" +
@@ -650,6 +667,28 @@ export async function handleSso(argv: string[], home: string): Promise<number> {
       }
       throw err;
     }
+  }
+
+  if (cmd === "route") {
+    const email = argv[1];
+    if (!email || !emailDomain(email)) {
+      process.stderr.write("用法：nyra sso route <邮箱>（按邮箱域名看该走哪个身份提供方登录）\n");
+      return 2;
+    }
+    const routed = routeSsoForEmail(home, email);
+    if (!routed) {
+      process.stdout.write("这个邮箱域名没有绑定任何组织：走默认登录（nyra account login）。\n");
+      return 0;
+    }
+    const { org, provider } = routed;
+    process.stdout.write(`邮箱域名属于组织「${org.name}」${org.require_sso ? "（强制 SSO）" : "（未强制 SSO，建议走 SSO）"}\n`);
+    if (provider) {
+      process.stdout.write(`身份提供方：${provider.name}（${provider.id}，${provider.issuer}）\n`);
+      process.stdout.write(`登录：nyra sso login ${provider.id}\n`);
+    } else {
+      process.stdout.write("该组织还没绑定身份提供方：先让组织管理员跑 nyra org sso <组织> on --provider <id> 绑定。\n");
+    }
+    return 0;
   }
 
   if (cmd === "status") {

@@ -9,13 +9,13 @@
 # （Nyra 终端 / Nyra 网页界面，带 Nyra 图标），不写注册表、不装服务。
 # 网页界面快捷方式调的是真实命令 `nyra ui --open`（0.4.0 起有 ui 子命令）。
 #
-# 默认版本钉在下面 param 的 $Version = "v0.5.12"（发版时改这一处，
+# 默认版本钉在下面 param 的 $Version = "v0.5.15"（发版时改这一处，
 # 同时改 install-node.sh、install-node-macos.sh 与 docs/installers.md）；
 # 不再默认 latest。下载后先对同一 Release 的 SHA256SUMS 校验再安装：
 # 下不到 SHA256SUMS、清单里没有这个文件、哈希对不上，一律拒绝安装。
 # -FromFile 从本地文件装，不联网、不校验（日志里会写明未校验）。
-# 注意：v0.5.12 尚未正式发版（本批不打 tag、不发 Release），在它发版
-# 之前默认安装会因下载不到而拒绝——这是有意的 fail-closed，不是 bug。
+# 默认版本只指向已经发布、附件齐全（含 SHA256SUMS）的 Release：发版流程在新 Release
+# 挂齐附件之后才改这里，CI（installer-release-check）会核对这一点。
 #
 # 注意（诚实写，不编造）：
 #   - exe 未签名：首次运行 SmartScreen 会弹警告，点“更多信息”→“仍要运行”；
@@ -24,7 +24,7 @@
 #     烟雾测试；真机首次运行体验待用户反馈后补充。
 #   - 旧的 Python 版安装脚本 scripts/install.ps1 已在 0.4.0 删除。
 param(
-    [string]$Version = "v0.5.12",
+    [string]$Version = "v0.5.15",
     [string]$InstallDir = "$env:USERPROFILE\nyra",
     [string]$FromFile = "",
     [switch]$Uninstall
@@ -78,6 +78,25 @@ function Test-Sha256 {
     Write-Info "哈希校验通过：$Asset"
 }
 
+# 下载前先确认这个版本真的发布了：Release 里没有这个文件时 GitHub 回 404，
+# 这时直接说“还没发布”，不再让人去查网络。用 1 字节的 GET 探测（不用 HEAD）。
+# 网络本身不通时不在这里拦，交给下载报错。
+function Assert-Released {
+    param([string]$Url)
+    $Probe = [System.IO.Path]::GetTempFileName()
+    try {
+        Invoke-WebRequest -Uri $Url -Method Get -Headers @{ Range = "bytes=0-0" } -UseBasicParsing -OutFile $Probe | Out-Null
+    } catch {
+        $code = $null
+        try { $code = [int]$_.Exception.Response.StatusCode } catch { }
+        if ($code -eq 404) {
+            Remove-Item $Probe -Force -ErrorAction SilentlyContinue
+            Write-ErrAndExit "版本 $Version 还没发布（Release 里找不到 $Asset）。请用 -Version 指定一个已发布的版本（见 https://github.com/$Repo/releases），或稍后再试。"
+        }
+    }
+    Remove-Item $Probe -Force -ErrorAction SilentlyContinue
+}
+
 if ($Uninstall) {
     # 卸载：删安装目录、两个桌面快捷方式、从用户级 PATH 摘掉安装目录；保留 ~/.nyra 数据。
     $Desktop = [Environment]::GetFolderPath("Desktop")
@@ -111,6 +130,7 @@ if ($FromFile -ne "") {
     Write-Info "从本地文件安装：$FromFile（本地文件，不联网、不做哈希校验）"
     Copy-Item $FromFile $Exe -Force
 } else {
+    Assert-Released -Url $Url
     Write-Info "下载 $Url"
     try {
         Invoke-WebRequest -Uri $Url -OutFile $Exe -UseBasicParsing

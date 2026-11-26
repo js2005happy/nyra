@@ -32,6 +32,9 @@ nyra a2a card                    # 打印本机的 A2A 名片（JSON）
   `securitySchemes: { bearer: { type: "http", scheme: "bearer" } }`。
   开了名片签名（`peer_card.signing`）且密码箱里有钥匙时，名片带 JWS
   签名与公钥 JWK；没钥匙发素名片，不报错、不假装签过。
+- 名片里带 `contract` 字段：最小稳定契约 `nyra-contract-v1` 与它的 10 条
+  命令（问、记、查任务、列技能……），对方照着调就行；详见
+  `docs/agent-contract.md`。
 
 ## 调用：JSON-RPC 2.0（POST /）
 

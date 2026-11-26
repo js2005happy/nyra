@@ -33,10 +33,13 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve, dirname, basename, relative } from "node:path";
 import { checkPanelSelfContained, verifyStagedPlugin, HIGH_PRIVILEGE_TOOLS, KNOWN_TOOLS } from "./creator.ts";
-import { installPlugin, uninstallPlugin, pluginDir, sha256File, PLUGIN_NAME_RE, PROTECTED_BUILTIN_SKILLS } from "./plugins.ts";
+import { installPlugin, uninstallPlugin, pluginDir, sha256File, loadLock, PLUGIN_NAME_RE, PROTECTED_BUILTIN_SKILLS } from "./plugins.ts";
 import { reviewToolCall, buildReviewerRunner, type ReviewerLike, type ReviewVerdict } from "./reviewer.ts";
 import { parseSkillFile, parseSkillText } from "./skills.ts";
 import { checkEvidenceHygiene } from "./bughunt.ts";
+import { validateAgentDecl, saveAgentDecl, removeStoredAgentDecl, storedAgentDeclPath, loadStoredAgentDecl, type AgentDecl } from "./agentDecl.ts";
+import { knownModelNames, validateOpts } from "./agentDeclCli.ts";
+import { createSession, endSession, loadSessionBook, findSession } from "./session.ts";
 import {
   parseTemplateText, validateTemplateDefinition, templateWorkflowTools,
   collectWorkflowTools, templateSlug, templatesDir, importTemplateText,
@@ -103,7 +106,7 @@ export interface InstalledEntry {
   item_name: string;
   kind: MarketKind;
   version: string;
-  /** 市场源名（本机发布记 "self"）。 */
+  /** 市场源名（本机发布记 "self"；单 Bot URL 安装记来源 slug，完整 URL 在 source_url）。 */
   source: string;
   author?: string;
   license?: string;
@@ -121,6 +124,24 @@ export interface InstalledEntry {
   uninstalled_files?: string[];
   published_at?: string;
   published_out_dir?: string;
+  /** B2：安装时钉住的模型（bot.json 的 model 字段，须是已配置模型）。 */
+  model?: string;
+  /** B3：安装时核对过的环境变量声明（只记名字/说明/必填，不记值）。 */
+  env_requires?: EnvRequirement[];
+  /** B7：安装时声明的交接目标。 */
+  hands_off_to?: HandoffTarget[];
+  /** B5：单 Bot URL 安装时的完整 git 地址（源名记 slug，地址本身记这里）。 */
+  source_url?: string;
+  /** B6：安装时是否已把机器人登记进声明式 agent 花名册。 */
+  agent_decl?: boolean;
+  /** B6：花名册机器人的常驻会话 id（sessions.json 里那段会话）。 */
+  agent_session_id?: string;
+  /** B1：bot.json / routines.json 安装时的哈希（更新时判断用户有没有改过它们）。 */
+  manifest_hashes?: Record<string, string>;
+  /** B1：最近一次更新的时间（首次安装时不写）。 */
+  updated_at?: string;
+  /** B1：更新前的版本号（首次安装时不写）。 */
+  previous_version?: string;
 }
 
 export function marketplaceSourcesPath(home: string): string {
@@ -186,6 +207,35 @@ function sourceNameFromInput(input: string): string {
   const base = basename(input.replace(/\.git$/, "").replace(/\/+$/, "")) || "market";
   const cleaned = base.toLowerCase().replace(/[^a-z0-9_-]/g, "-").replace(/-+/g, "-").replace(/^-+|-+$/g, "");
   return cleaned || "market";
+}
+
+/**
+ * B5：是不是单个 Bot 的 git 地址（与 addMarketSource 的判定同款，
+ * 另接受 file:// 本地地址——测试用本地仓库，不联网；裸 .zip 不接受，
+ * 中央短链服务不建，git 地址本身就是链接）。
+ */
+export function isMarketGitUrl(input: string): boolean {
+  const trimmed = input.trim();
+  if (!trimmed) return false;
+  if (/\.zip$/i.test(trimmed)) return false;
+  if (trimmed.startsWith("http://")) return false;
+  return trimmed.startsWith("https://") || trimmed.startsWith("file://")
+    || /^git@[^:]+:/.test(trimmed) || trimmed.endsWith(".git");
+}
+
+/**
+ * B5 修复（Windows CI #792 实败）：file:// 地址先规范化再用。Windows 上手写
+ * `file://D:\repos\bot`（反斜杠、两斜杠盘符）直接喂给 git clone 会失败；
+ * 这里把反斜杠换成斜杠、盘符补成三斜杠（`file:///D:/repos/bot`）。
+ * 非 file:// 地址原样返回；`file://主机名/...`（UNC 或误拼的主机名）不动，
+ * 交给 git 去报错。纯字符串操作，不依赖平台，Linux 上也能测。
+ */
+export function normalizeMarketGitUrl(input: string): string {
+  const trimmed = input.trim();
+  if (!trimmed.startsWith("file://")) return trimmed;
+  let rest = trimmed.slice("file://".length).replace(/\\/g, "/");
+  if (/^[A-Za-z]:\//.test(rest)) rest = `/${rest}`;
+  return `file://${rest}`;
 }
 
 /**
@@ -385,6 +435,25 @@ export interface BotRoutine {
   mode?: BotMode;
 }
 
+/** B3：机器人要用的环境变量声明（只声明、不带值；安装时逐项核对）。 */
+export interface EnvRequirement {
+  /** 环境变量名（大写字母开头，只含大写字母、数字、下划线）。 */
+  name: string;
+  description?: string;
+  /** 必填时本机没设就明确告诉用户，不静默跳过。 */
+  required?: boolean;
+  /** 非密钥类的默认值（如有）；密钥不要写默认值。 */
+  default?: string;
+}
+
+/** B7：机器人声明的交接目标（只声明意图，不自动放行写操作）。 */
+export interface HandoffTarget {
+  /** 目标机器人名（市场里另一台 Bot 的名字）。 */
+  target: string;
+  /** 什么情况下交过去（一句话条件，可空）。 */
+  when?: string;
+}
+
 export interface BotManifest {
   name: string;
   version: string;
@@ -397,6 +466,12 @@ export interface BotManifest {
   permissions?: string[];
   /** 市场条目不许声明 full：新装机器人默认只读起步，写操作须用户显式放开。 */
   mode?: BotMode;
+  /** B2：per-Bot 模型钉选（须是已配置的模型；不写则用配置默认模型）。 */
+  model?: string;
+  /** B3：要用的环境变量声明。 */
+  env_requires?: EnvRequirement[];
+  /** B7：交接目标声明（契约层 H7 未定之前只做声明与校验 + 已装目标的委派接线）。 */
+  hands_off_to?: HandoffTarget[];
 }
 
 export function parseBotManifest(dir: string): BotManifest {
@@ -431,6 +506,65 @@ export function parseBotManifest(dir: string): BotManifest {
   if (mode !== undefined && mode !== "readonly" && mode !== "auto") {
     throw new MarketplaceError("bot.json 的 mode 只允许 readonly|auto：市场条目不许声明 full 模式（新装机器人默认只读起步）");
   }
+  // B2：模型钉选只校验形状（非空字符串 ≤128 字）；是不是已配置的模型
+  // 由安装/更新准备时用 validateBotModel 再核（parseBotManifest 拿不到
+  // home，拼不出已知模型表；形状先拦，存在性后拦，两道都不放过）。
+  const model = m.model;
+  if (model !== undefined && (typeof model !== "string" || !model.trim() || model.length > 128)) {
+    throw new MarketplaceError("bot.json 的 model 须是非空字符串（最长 128 字）");
+  }
+  // B3：环境变量声明——只认名字/说明/必填/默认值四个字段，名字只许
+  // 大写字母、数字、下划线；值一律不带（默认值也只许非密钥类的占位）。
+  const envRequires = m.env_requires;
+  let env_requires: EnvRequirement[] | undefined;
+  if (envRequires !== undefined) {
+    if (!Array.isArray(envRequires)) throw new MarketplaceError("bot.json 的 env_requires 必须是非空字符串数组");
+    env_requires = [];
+    for (const e of envRequires as Record<string, unknown>[]) {
+      if (!e || typeof e !== "object") throw new MarketplaceError("bot.json 的 env_requires 里有非对象条目");
+      if (typeof e.name !== "string" || !/^[A-Z][A-Z0-9_]*$/.test(e.name)) {
+        throw new MarketplaceError("bot.json 的 env_requires.name 无效（大写字母开头，只含大写字母、数字、下划线）");
+      }
+      if (e.description !== undefined && (typeof e.description !== "string" || e.description.length > 200)) {
+        throw new MarketplaceError(`bot.json 的 env_requires.${e.name}.description 须是不超过 200 字的字符串`);
+      }
+      if (e.required !== undefined && typeof e.required !== "boolean") {
+        throw new MarketplaceError(`bot.json 的 env_requires.${e.name}.required 只允许 true/false`);
+      }
+      if (e.default !== undefined && (typeof e.default !== "string" || e.default.length > 200)) {
+        throw new MarketplaceError(`bot.json 的 env_requires.${e.name}.default 须是不超过 200 字的字符串（密钥不要写默认值）`);
+      }
+      env_requires.push({
+          name: e.name,
+          ...(typeof e.description === "string" ? { description: e.description } : {}),
+          ...(typeof e.required === "boolean" ? { required: e.required } : {}),
+          ...(typeof e.default === "string" ? { default: e.default } : {}),
+        });
+    }
+    if (!env_requires.length) throw new MarketplaceError("bot.json 的 env_requires 写了就不能为空数组");
+  }
+  // B7：交接目标声明——只认 target（机器人名）与 when（一句话条件）；
+  // 目标存不存在安装时再核（目标可能后装），这里只校验名字形状。
+  const handsOff = m.hands_off_to;
+  let hands_off_to: HandoffTarget[] | undefined;
+  if (handsOff !== undefined) {
+    if (!Array.isArray(handsOff)) throw new MarketplaceError("bot.json 的 hands_off_to 必须是非空字符串数组");
+    hands_off_to = [];
+    for (const h of handsOff as Record<string, unknown>[]) {
+      if (!h || typeof h !== "object") throw new MarketplaceError("bot.json 的 hands_off_to 里有非对象条目");
+      if (typeof h.target !== "string" || !PLUGIN_NAME_RE.test(h.target)) {
+        throw new MarketplaceError("bot.json 的 hands_off_to.target 无效（只允许小写字母、数字、- 和 _，以字母或数字开头）");
+      }
+      if (h.when !== undefined && (typeof h.when !== "string" || !h.when.trim() || h.when.length > 500)) {
+        throw new MarketplaceError(`bot.json 的 hands_off_to.${h.target}.when 须是 1–500 字的字符串`);
+      }
+      hands_off_to.push({
+          target: h.target,
+          ...(typeof h.when === "string" ? { when: h.when.trim() } : {}),
+        });
+    }
+    if (!hands_off_to.length) throw new MarketplaceError("bot.json 的 hands_off_to 写了就不能为空数组");
+  }
   return {
     name,
     version,
@@ -442,7 +576,23 @@ export function parseBotManifest(dir: string): BotManifest {
     tools: tools === undefined ? undefined : [...(tools as string[])],
     permissions: permissions === undefined ? undefined : [...(permissions as string[])],
     mode: mode === undefined ? undefined : (mode as BotMode),
+    ...(model === undefined ? {} : { model: (model as string).trim() }),
+    ...(env_requires === undefined ? {} : { env_requires }),
+    ...(hands_off_to === undefined ? {} : { hands_off_to }),
   };
+}
+
+/**
+ * B2：bot.json 钉的模型是不是已配置的模型（内置模型目录 + 模型缓存 +
+ * config 里的模型，复用 agentDeclCli 的 knownModelNames）。未知模型
+ * 直接拒绝安装/更新，不静默回落到默认模型（回落等于悄悄换模型）。
+ * key 仍在密码箱里，Bot 只拿模型名字，不复制、不新建任何静态 key。
+ */
+export function validateBotModel(home: string, model: string): void {
+  const known = knownModelNames(home);
+  if (!known.includes(model.trim())) {
+    throw new MarketplaceError(`bot.json 钉的模型 ${model.trim()} 不是已配置的模型（内置模型目录、模型缓存、config 里的模型都不认它；先配好模型再装）`);
+  }
 }
 
 export function parseRoutines(dir: string): BotRoutine[] {
@@ -1008,6 +1158,10 @@ export interface InstallPrepared {
   botReady: BotReady;
   review: ReviewVerdict;
   plannedChanges: string[];
+  /** B5：单 Bot URL 安装时的临时克隆目录清理函数（调用方装完/取消后调）。 */
+  cleanup?: () => void;
+  /** B5：单 Bot URL 安装时的完整 git 地址（记进账本 source_url）。 */
+  sourceUrl?: string;
 }
 
 function eventItemName(name: string): string {
@@ -1021,6 +1175,32 @@ function recordMarketEvent(store: RunStore | undefined, runId: string | undefine
   try {
     store.appendEvent(runId, type, fields);
   } catch { /* 运行目录没了只丢审计副本，不破坏安装本身 */ }
+}
+
+/**
+ * B4：routine 预览写全文，不只写个数（与审批卡盖住真参数同一条线）。
+ * 每条一行名 + 时间表/事件 + 任务全文；任务超过 400 字截断并注明全文
+ * 在条目目录的 routines.json 里，不为预览单独造渲染。
+ */
+export function formatRoutinesForDisplay(routines: BotRoutine[]): string[] {
+  const lines: string[] = [];
+  lines.push(`routine：${routines.length} 个（只随机器人安装，不自动执行，须手动启用）`);
+  for (const r of routines) {
+    const when = r.kind === "schedule" ? `定时 ${r.schedule}` : `事件 ${r.event}`;
+    const task = r.task.length > 400 ? `${r.task.slice(0, 400)}……（全文在条目目录 routines.json 里）` : r.task;
+    lines.push(`  - ${r.name}（${when}，${r.mode ?? "readonly"}）：${task}`);
+  }
+  return lines;
+}
+
+/** B3：按 env_requires 生成 .env.EXAMPLE 文本（只写名字与说明，不写值）。 */
+export function envExampleText(manifest: BotManifest): string {
+  const lines: string[] = ["# 市场机器人需要的环境变量（照着填进你自己的 .env，不要提交）："];
+  for (const e of manifest.env_requires ?? []) {
+    if (e.description) lines.push(`# ${e.name}：${e.description}`);
+    lines.push(`${e.name}=${e.default ?? ""}`);
+  }
+  return lines.join("\n") + "\n";
 }
 
 export function describeInstallPlan(prepared: InstallPrepared): string {
@@ -1040,8 +1220,22 @@ export function describeInstallPlan(prepared: InstallPrepared): string {
   if (prepared.verification.highPrivilegeTools.length) {
     lines.push(`⚠ 高权限工具：${prepared.verification.highPrivilegeTools.join("、")}——装完后每次调用仍需审批，请确认你真的需要它。`);
   }
+  // B3：环境变量逐项核对（只报“已设置/未设置”，绝不打印值）。
+  const manifest = prepared.verification.manifest;
+  if (manifest?.env_requires?.length) {
+    lines.push("环境变量：");
+    for (const e of manifest.env_requires) {
+      const set = process.env[e.name] !== undefined && process.env[e.name] !== "";
+      lines.push(`  - ${e.name}${e.required ? "（必填）" : "（选填）"}：${set ? "已设置" : "未设置"}${e.description ? `——${e.description}` : ""}`);
+    }
+    lines.push("  （装完后在机器人目录里有 .env.EXAMPLE，照着填进你自己的 .env；安装时不替你填 key。）");
+  }
+  // B7：交接目标声明（目标装没装、接没接线，装时再核）。
+  if (manifest?.hands_off_to?.length) {
+    lines.push(`交接目标：${manifest.hands_off_to.map((h) => `${h.target}${h.when ? `（${h.when}）` : ""}`).join("、")}（交接不自动放行写操作，写操作仍须审批）`);
+  }
   if (prepared.verification.routines.length) {
-    lines.push(`routine：${prepared.verification.routines.length} 个（只随机器人安装，不自动执行，须手动启用）`);
+    lines.push(...formatRoutinesForDisplay(prepared.verification.routines));
   }
   for (const w of prepared.verification.warnings) lines.push(`提醒：${w}`);
   lines.push(`Bot Ready：${prepared.botReady.score}/100${prepared.botReady.missing.length ? `（缺：${prepared.botReady.missing.join("、")}）` : "（满分）"}`);
@@ -1057,6 +1251,15 @@ export async function prepareMarketplaceInstall(
 ): Promise<InstallPrepared> {
   const resolved = resolveMarketEntry(home, id);
   if (!resolved) throw new MarketplaceError(`市场里没有条目 ${id}（先 nyra market list 看看）`);
+  return prepareMarketplaceInstallFromResolved(home, resolved, opts);
+}
+
+/** 三道门（已解析的条目版）：安装与更新共用，更新时传新版的 resolved。 */
+export async function prepareMarketplaceInstallFromResolved(
+  home: string,
+  resolved: ResolvedEntry,
+  opts: { config: Record<string, unknown>; runner?: ReviewerLike | null },
+): Promise<InstallPrepared> {
   // 缺口 44 深化：连接器条目只验证、不安装——内置连接器已在代码里（nyra
   // connector list），包里的四件套（声明/工具/流程/红线）没有地方可以“装”
   // 进去：声明是代码、凭证只存密码箱。第三方连接器安装是下一批（须先有
@@ -1068,6 +1271,8 @@ export async function prepareMarketplaceInstall(
   if (!verification.ok) {
     throw new MarketplaceError(`清单校验不过，拒绝安装：\n${verification.errors.map((e) => `- ${e}`).join("\n")}`, "manifest");
   }
+  // B2：钉的模型须是已配置的模型，未知模型直接拒绝，不静默回落默认模型。
+  if (verification.manifest?.model) validateBotModel(home, verification.manifest.model);
   const scanHits = scanMarketplaceEntry(resolved);
   if (scanHits.length) {
     throw new MarketplaceError(`确定性规则拦截，拒绝安装：\n${scanHits.map((h) => `- ${h.where}：${h.reason}`).join("\n")}`, "deterministic");
@@ -1102,6 +1307,70 @@ export async function prepareMarketplaceInstall(
   };
   prepared.plannedChanges = describeInstallPlan(prepared).split("\n");
   return prepared;
+}
+
+/**
+ * B5：单个 Bot 的一键 URL 安装——git clone 一个 Bot 仓库（根目录须含
+ * bot.json），走同一套三道门。只接 git 地址（https/git@/file://），
+ * 不支持裸 .zip，不建中央短链服务。克隆是临时目录（.git 随即删掉，
+ * 只留条目文件），调用方须在装完或取消后调 prepared.cleanup()。
+ */
+export async function prepareMarketplaceInstallFromUrl(
+  home: string,
+  url: string,
+  opts: { config: Record<string, unknown>; runner?: ReviewerLike | null },
+): Promise<InstallPrepared> {
+  const trimmed = normalizeMarketGitUrl(url);
+  if (!isMarketGitUrl(trimmed)) {
+    throw new MarketplaceError(`不是 git 地址：${trimmed}（单个 Bot 安装只接 git 仓库地址，裸 .zip 不支持）`);
+  }
+  // 临时克隆目录放在 ~/.nyra/marketplace-tmp/ 下，不在 /tmp 上：
+  // 有的机器 /tmp 只有 512M，装到一半写满就装不上（全量测试就这么败过）。
+  // 目录是本批一次性的，调用方须在装完或取消后调 prepared.cleanup()。
+  const tmpBase = join(home, ".nyra", "marketplace-tmp");
+  mkdirSync(tmpBase, { recursive: true });
+  const dir = mkdtempSync(join(tmpBase, "nyra-market-url-"));
+  const cleanup = () => { try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ } };
+  try {
+    execFileSync("git", ["clone", "--depth", "1", trimmed, dir], { timeout: 60000, stdio: "pipe", encoding: "utf-8" });
+  } catch (err: unknown) {
+    cleanup();
+    throw new MarketplaceError(`git 拉取失败：${trimmed}（${err instanceof Error ? err.message : String(err)}）`);
+  }
+  // 临时目录只留条目文件：.git 删掉，清单校验不扫它，安装也不带它走。
+  try { rmSync(join(dir, ".git"), { recursive: true, force: true }); } catch { /* ignore */ }
+  let manifest: BotManifest;
+  try {
+    manifest = parseBotManifest(dir);
+  } catch (err: unknown) {
+    cleanup();
+    throw new MarketplaceError(`这个仓库根目录不是单个 Bot（须含合法的 bot.json）：${err instanceof Error ? err.message : String(err)}`);
+  }
+  const slug = sourceNameFromInput(trimmed);
+  const entry: MarketEntryMeta = {
+    id: manifest.name,
+    kind: "bot",
+    name: manifest.name,
+    version: manifest.version,
+    description: manifest.description,
+    author: manifest.author,
+    license: manifest.license,
+    source: manifest.homepage ?? trimmed,
+    path: ".",
+    tools: manifest.tools,
+    permissions: manifest.permissions,
+    mode: manifest.mode,
+  };
+  const source: MarketSource = { name: slug, kind: "git", path: dir, url: trimmed, added_at: new Date().toISOString() };
+  try {
+    const prepared = await prepareMarketplaceInstallFromResolved(home, { entry, source, dir }, opts);
+    prepared.cleanup = cleanup;
+    prepared.sourceUrl = trimmed;
+    return prepared;
+  } catch (err: unknown) {
+    cleanup();
+    throw err;
+  }
 }
 
 function stageBotEntry(entryDir: string, manifest: BotManifest): { dir: string; cleanup: () => void } {
@@ -1146,6 +1415,112 @@ export interface InstallResult {
   files: string[];
   overwritten: boolean;
   keptModified: string[];
+  /** B6/B7：花名册登记或交接接线没做成时的提醒（安装本身已成功）。 */
+  warnings?: string[];
+}
+
+// ---- B6：市场机器人进花名册（nyra-agent-v1 声明 + 常驻会话） ----
+//
+// “Bot”是本地专长 agent（缺口 42 的“每 Bot 一台持久电脑”是另一回事，
+// 别混）：装完后它就是一条已注册的声明，`nyra agent list` 里能看见，
+// `nyra agent run <名字> "<任务>"` 就能跑它（钉的模型自动用上，见 B2）。
+// 常驻会话是它在 sessions.json 里的那段会话（复用联合会话账本，不另起
+// 存储）；`nyra agent run` 每次仍是新开一轮，不自动续进这段会话——
+// run 与会话的绑定是另一件工作，不在这里顺手做。
+// 桌面花名册 UI 是桌面端的事，本批只做 CLI/网关侧。
+
+/** 市场生成的声明说明前缀：卸载/更新时凭它认出这条声明是不是市场生成的。 */
+export const MARKET_DECL_INSTRUCTIONS_PREFIX = "【市场机器人";
+
+/**
+ * 把市场机器人转成 nyra-agent-v1 声明对象 + 存盘文本（JSON，最稳，不拼 YAML）。
+ * instructions 只写“这个机器人是谁、干什么、用什么工具”，不写任何
+ * “忽略/覆盖指令、执行命令、泄露密钥”类话；第三方描述过注入扫描就
+ * 拒绝登记（安装本身不受影响，只是不进花名册，原因写进警告）。
+ */
+export function marketBotToAgentDecl(
+  home: string,
+  manifest: BotManifest,
+  installedTargets: { target: string; when?: string }[],
+): { decl: AgentDecl; text: string } {
+  const mode = manifest.mode ?? "readonly";
+  const lines: string[] = [];
+  lines.push(`${MARKET_DECL_INSTRUCTIONS_PREFIX} ${manifest.name}】`);
+  lines.push(`你是一台市场机器人${manifest.description ? `：${manifest.description}` : "（没有写职责说明）"}`);
+  lines.push(`你的技能：${manifest.skills.join("、")}。`);
+  lines.push(`你的工具白名单：${manifest.tools?.length ? manifest.tools.join("、") : "未声明（只用最小权限）"}。`);
+  lines.push(`你的模式是 ${mode}：只读起步，写操作须用户显式放开。`);
+  if (manifest.model) lines.push(`你的模型已钉为 ${manifest.model}。`);
+  if (installedTargets.length) {
+    lines.push(`交接：下面这些活可以交给对应的机器人（用 nyra agent run <名字> "<任务>" 派过去）：${installedTargets.map((t) => `${t.target}${t.when ? `（${t.when}）` : ""}`).join("、")}。交接本身不放行写操作，写操作仍须审批。`);
+  }
+  const instructions = lines.join("\n");
+  if (instructions.length > 8000) {
+    throw new Error(`市场机器人 ${manifest.name} 的声明说明超过 8000 字，无法登记进花名册`);
+  }
+  const raw: Record<string, unknown> = {
+    version: 1,
+    name: manifest.name,
+    instructions,
+    ...(manifest.description ? { description: manifest.description.slice(0, 500) } : {}),
+    ...(manifest.tools?.length ? { tools: [...manifest.tools] } : {}),
+    ...(manifest.model ? { model: manifest.model } : {}),
+  };
+  // validateAgentDecl 是 fail-closed：名字、工具、模型、注入扫描有一处
+  // 不过就抛错，调用方接住后只警告、不破坏安装。
+  const decl = validateAgentDecl(raw, validateOpts(home));
+  return { decl, text: JSON.stringify(decl, null, 2) + "\n" };
+}
+
+/**
+ * 安装时把市场机器人登记进花名册 + 建一段常驻会话。
+ * 名字不符合声明规范（数字开头或超过 32 字）时不登记——声明名只能
+ * 小写字母开头，机器人名可以数字开头，两者规范不一样。
+ * 重装/更新时传 existingSessionId：旧会话还在就复用，不在才新建，
+ * 不每次重装都多一段会话。
+ * 返回声明存盘路径与常驻会话 id；任何一步失败都抛错，调用方只警告。
+ */
+export function enrollMarketBotInRoster(
+  home: string,
+  manifest: BotManifest,
+  existingSessionId?: string,
+): { declPath: string; sessionId: string } {
+  if (!/^[a-z][a-z0-9_-]{0,31}$/.test(manifest.name)) {
+    throw new Error(`机器人名 ${manifest.name} 不符合声明规范（须小写字母开头、最长 32 字），不进花名册（安装本身不受影响，用 nyra agent load 手动登记时请改名）`);
+  }
+  const installedTargets = (manifest.hands_off_to ?? []).filter((h) => {
+      try {
+        return storedAgentDeclPath(home, h.target) !== null;
+      } catch {
+        return false;
+      }
+    });
+  const { decl, text } = marketBotToAgentDecl(home, manifest, installedTargets);
+  const declPath = saveAgentDecl(home, decl, text, `${manifest.name}.json`, true);
+  let sessionId = existingSessionId;
+  if (sessionId) {
+    // 旧会话还在就复用；账本坏了或会话已不在才新建。
+    try {
+      if (!findSession(loadSessionBook(home), sessionId)) {
+        sessionId = createSession(home, `Bot ${manifest.name} 的常驻会话`, "market").id;
+      }
+    } catch {
+      sessionId = createSession(home, `Bot ${manifest.name} 的常驻会话`, "market").id;
+    }
+  } else {
+    sessionId = createSession(home, `Bot ${manifest.name} 的常驻会话`, "market").id;
+  }
+  return { declPath, sessionId };
+}
+
+/** B3：.env.EXAMPLE 跟着机器人走（只写名字与说明，不写值；没声明就删掉旧的）。 */
+export function writeEnvExample(destDir: string, manifest: BotManifest): void {
+  const path = join(destDir, ".env.EXAMPLE");
+  if (!manifest.env_requires?.length) {
+    try { rmSync(path, { force: true }); } catch { /* ignore */ }
+    return;
+  }
+  writeFileSync(path, envExampleText(manifest), "utf-8");
 }
 
 /** 确认后才执行安装：写文件 → 账本 → 事件（事件写失败不破坏安装）。 */
@@ -1199,7 +1574,9 @@ export function executeMarketplaceInstall(
       if (!report.ok) {
         throw new MarketplaceError(`插件验证未通过，拒绝安装：\n${report.errors.map((e) => `- ${e}`).join("\n")}`);
       }
-      const install = installPlugin(home, staged.dir);
+      // H6：市场安装是用户显式重装（墓碑由市场账本另管，update 仍拒绝
+      // 复活已卸载条目），所以这里带 force；插件自身的墓碑由这次安装清掉。
+      const install = installPlugin(home, staged.dir, { force: true });
       keptModified = install.keptModified;
       files.push(...install.files);
       // bot.json 与 routines.json 不在插件锁定文件里：随插件目录一起装，
@@ -1209,6 +1586,8 @@ export function executeMarketplaceInstall(
       if (existsSync(join(prepared.dir, "routines.json"))) {
         copyFileSync(join(prepared.dir, "routines.json"), join(dest, "routines.json"));
       }
+      // B3：.env.EXAMPLE 跟着机器人走（只写名字与说明，不写值）。
+      writeEnvExample(dest, manifest);
       installedPath = dest;
       overwritten = install.upgraded;
     } finally {
@@ -1219,6 +1598,38 @@ export function executeMarketplaceInstall(
   for (const rel of files) {
     const abs = entry.kind === "skill" || entry.kind === "template" ? join(home, rel) : join(installedPath, rel);
     try { hashes[rel] = sha256File(abs); } catch { /* 缺文件时不记哈希 */ }
+  }
+  // B1：bot.json / routines.json 安装时的哈希（更新时判断用户有没有改过它们）。
+  const manifestHashes: Record<string, string> = {};
+  if (entry.kind === "bot") {
+    for (const f of ["bot.json", "routines.json"]) {
+      const abs = join(installedPath, f);
+      try { if (existsSync(abs)) manifestHashes[f] = sha256File(abs); } catch { /* 缺文件时不记哈希 */ }
+    }
+  }
+  // B6：机器人进花名册（声明 + 常驻会话）。登记不上只警告，不破坏安装。
+  // 重装时复用旧会话（账本里还记着的那段），不每次重装都多一段会话。
+  const warnings: string[] = [];
+  let agentDecl = false;
+  let agentSessionId: string | undefined;
+  const botManifest = prepared.verification.manifest;
+  if (entry.kind === "bot" && botManifest) {
+    const previous = findInstalled(home, entry.name);
+    try {
+      const enrolled = enrollMarketBotInRoster(home, botManifest, previous?.agent_session_id);
+      agentDecl = true;
+      agentSessionId = enrolled.sessionId;
+    } catch (err: unknown) {
+      warnings.push(`花名册登记没做成：${err instanceof Error ? err.message : String(err)}（机器人本身已装好，nyra agent list 里暂时看不到它）`);
+    }
+    // B7：声明的交接目标还没装的，提醒一句（装完目标再更新本机器人即可接线）。
+    for (const h of botManifest.hands_off_to ?? []) {
+      try {
+        if (storedAgentDeclPath(home, h.target) === null && !findInstalled(home, h.target)) {
+          warnings.push(`交接目标 ${h.target} 尚未安装（先装它，再 nyra market update ${entry.name} 即可接线）`);
+        }
+      } catch { /* 账本读失败不挡安装 */ }
+    }
   }
   const record: InstalledEntry = {
     item_id: entry.id,
@@ -1237,6 +1648,13 @@ export function executeMarketplaceInstall(
     bot_ready: prepared.botReady.score,
     bot_ready_missing: prepared.botReady.missing,
     status: "installed",
+    ...(botManifest?.model ? { model: botManifest.model } : {}),
+    ...(botManifest?.env_requires ? { env_requires: botManifest.env_requires } : {}),
+    ...(botManifest?.hands_off_to ? { hands_off_to: botManifest.hands_off_to } : {}),
+    ...(prepared.sourceUrl ? { source_url: prepared.sourceUrl } : {}),
+    ...(agentDecl ? { agent_decl: true } : {}),
+    ...(agentSessionId ? { agent_session_id: agentSessionId } : {}),
+    ...(Object.keys(manifestHashes).length ? { manifest_hashes: manifestHashes } : {}),
   };
   const ledger = loadInstalledLedger(home);
   ledger.push(record);
@@ -1249,7 +1667,352 @@ export function executeMarketplaceInstall(
       bot_ready: prepared.botReady.score,
       reviewer_model: prepared.review.reviewerModel ?? "",
     });
-  return { installed: record, files, overwritten, keptModified };
+  return { installed: record, files, overwritten, keptModified, ...(warnings.length ? { warnings } : {}) };
+}
+
+// ---- B1：市场 Bot 更新流程（Hermes `profile update` 的合并语义） ----
+//
+// 两类所有权：作者域（技能、bot.json、routines.json、面板）替换，
+// 用户域（你改过的文件、记忆、会话、.env）永不碰。
+//  - 锁定文件（技能/面板）：installPlugin 的 curator lock——改过就保留。
+//  - bot.json：新版为准，但 mode 取“已装 mode 与新版 mode 里更严的那个”
+//    （更新永不悄悄放宽权限；readonly < auto）。
+//  - routines.json：按 routine 名合并——新版里的定义刷新、你自己加的
+//    routine 保留、新 routine 随文件进来（routine 本身不自动执行，
+//    新任务天然是暂停态，须手动启用）。
+//  - .env.EXAMPLE：按新版 env_requires 重新生成。
+// 绝不做整仓自动更新、绝不静默拉取：更新只针对你点名的这一台 Bot，
+// 且更新前先过同一套三道门 + 你确认。已卸载的条目更新不会复活（墓碑）。
+
+/** 找某台 Bot 的最新一条账本记录（安装/卸载/发布都可能有多条）。 */
+export function latestLedgerRecord(home: string, name: string): InstalledEntry | null {
+  const ledger = loadInstalledLedger(home);
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    if (ledger[i].item_name === name) return ledger[i];
+  }
+  return null;
+}
+
+/** 点分版本号比较（0.2.0 < 0.10.0；比不了的返回 null，不硬猜）。 */
+export function compareVersions(a: string, b: string): number | null {
+  const parse = (v: string): number[] | null => {
+    const clean = v.trim().replace(/^v/i, "");
+    if (!/^[0-9]+(\.[0-9]+)*([-.+].*)?$/.test(clean)) return null;
+    const core = clean.split(/[-+]/)[0];
+    return core.split(".").map((x) => Number(x));
+  };
+  const pa = parse(a);
+  const pb = parse(b);
+  if (!pa || !pb) return null;
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (d !== 0) return d < 0 ? -1 : 1;
+  }
+  return 0;
+}
+
+/** mode 取更严的那个：更新永不悄悄放宽权限（readonly < auto）。 */
+export function mergeBotMode(installedMode: BotMode | undefined, newMode: BotMode | undefined): BotMode {
+  const a = installedMode ?? "readonly";
+  const b = newMode ?? "readonly";
+  return a === "readonly" || b === "readonly" ? "readonly" : "auto";
+}
+
+/**
+ * routines.json 按 routine 名合并：新版里的定义刷新、你自己加的
+ * routine 保留、新 routine 按新版顺序排前面。
+ */
+export function mergeRoutines(installed: BotRoutine[], incoming: BotRoutine[]): BotRoutine[] {
+  const out: BotRoutine[] = [];
+  const seen = new Set<string>();
+  for (const r of incoming) {
+    out.push(r);
+    seen.add(r.name);
+  }
+  for (const r of installed) {
+    if (!seen.has(r.name)) {
+      out.push(r);
+      seen.add(r.name);
+    }
+  }
+  return out;
+}
+
+export interface MarketUpdatePlan {
+  name: string;
+  needsUpdate: boolean;
+  previousVersion: string;
+  newVersion: string;
+  record: InstalledEntry;
+  /** 三道门已过的新版准备（needsUpdate 为 false 时不存在）。 */
+  prepared?: InstallPrepared;
+  /** 更新前给用户看的计划（版本、要换的文件、会保留的修改、mode 与 routine 规则）。 */
+  planLines: string[];
+  /** 更新前已算出的“你改过、会保留”的锁定文件（名字）。 */
+  modifiedFiles: string[];
+  /** bot.json / routines.json 你有没有改过（改过也只在 mode 与 routine 合并规则内处理）。 */
+  manifestModified: string[];
+  /** 版本号无法比较时的提醒（空表示可比）。 */
+  versionNote: string;
+}
+
+export interface MarketUpdateResult {
+  updated: boolean;
+  name: string;
+  previousVersion: string;
+  version: string;
+  files: string[];
+  keptModified: string[];
+  /** 更新后实际生效的 mode（可能比新版声明的更严）。 */
+  mode: BotMode;
+  /** routines 合并后总数。 */
+  routinesMerged: number;
+  warnings: string[];
+}
+
+/**
+ * 更新准备（只读，不写任何文件）：找账本 → 找市场新版 → 比版本 →
+ * 过三道门 → 算出会保留的修改。已是最新版时 needsUpdate=false，
+ * 不跑三道门、不写东西。
+ */
+export async function prepareMarketplaceUpdate(
+  home: string,
+  name: string,
+  opts: { config: Record<string, unknown>; runner?: ReviewerLike | null },
+): Promise<MarketUpdatePlan> {
+  const record = latestLedgerRecord(home, name);
+  if (!record) throw new MarketplaceError(`没有已安装的市场条目 ${name}（先 nyra market installed 看看）`);
+  if (record.status === "uninstalled") {
+    throw new MarketplaceError(`${name} 已卸载，更新不会把它复活（删了就是删了，想用请重新安装）`);
+  }
+  if (record.kind !== "bot") {
+    throw new MarketplaceError(`nyra market update 只更新机器人配置；技能包与模板请用 nyra market install <条目 id> --force 重装`);
+  }
+  const resolved = resolveMarketEntry(home, record.item_id);
+  if (!resolved) {
+    throw new MarketplaceError(`市场里找不到条目 ${record.item_id}（源 ${record.source} 可能已移除，先 nyra market source add 登记回来）`);
+  }
+  const cmp = compareVersions(resolved.entry.version, record.version);
+  if (cmp === 0) {
+    return {
+      name,
+      needsUpdate: false,
+      previousVersion: record.version,
+      newVersion: resolved.entry.version,
+      record,
+      planLines: [`${name} 已是最新版 v${record.version}，不用更新。`],
+      modifiedFiles: [],
+      manifestModified: [],
+      versionNote: "",
+    };
+  }
+  if (cmp !== null && cmp < 0) {
+    throw new MarketplaceError(`市场里的版本 v${resolved.entry.version} 比已安装的 v${record.version} 旧，不降级（想回旧版请先卸载再装）`);
+  }
+  const versionNote = cmp === null
+    ? `版本号 ${record.version} 与 ${resolved.entry.version} 无法比较，按市场索引为准更新。`
+    : "";
+  const prepared = await prepareMarketplaceInstallFromResolved(home, resolved, opts);
+  // 更新前算出“你改过、会保留”的文件：锁定文件比哈希，bot.json /
+  // routines.json 比安装时记的哈希（老账本没记哈希时当没改过）。
+  const modifiedFiles: string[] = [];
+  const manifestModified: string[] = [];
+  const dest = pluginDir(home, name);
+  try {
+    const lock = loadLock(home).plugins[name];
+    if (lock) {
+      for (const [rel, hash] of Object.entries(lock.files)) {
+        const target = join(dest, rel);
+        try {
+          if (existsSync(target) && sha256File(target) !== hash) modifiedFiles.push(rel);
+        } catch { /* 读失败当没改过，安装时再定 */ }
+      }
+    }
+  } catch { /* 锁读失败不挡更新 */ }
+  for (const f of ["bot.json", "routines.json"]) {
+    const oldHash = record.manifest_hashes?.[f];
+    if (!oldHash) continue;
+    try {
+      const target = join(dest, f);
+      if (existsSync(target) && sha256File(target) !== oldHash) manifestModified.push(f);
+    } catch { /* ignore */ }
+  }
+  const planLines: string[] = [];
+  planLines.push(`${name}：v${record.version} → v${resolved.entry.version}`);
+  if (versionNote) planLines.push(versionNote);
+  planLines.push(`来源：${prepared.source.name}:${resolved.entry.id}（Bot Ready ${prepared.botReady.score}/100）`);
+  planLines.push("作者域替换：技能、bot.json、routines.json、面板按新版来；你改过的文件保留。");
+  if (modifiedFiles.length) planLines.push(`你改过、会保留的文件：${modifiedFiles.join("、")}`);
+  if (manifestModified.length) planLines.push(`你改过的清单文件：${manifestModified.join("、")}（bot.json 的 mode 按更严的留，routines 按名合并）`);
+  planLines.push("mode 规则：更新后取已装 mode 与新版 mode 里更严的那个，永不悄悄放宽。");
+  planLines.push("routine 规则：新版定义刷新、你自己加的 routine 保留、新 routine 不自动执行。");
+  const newManifest = prepared.verification.manifest;
+  if (newManifest?.env_requires?.length) planLines.push(`环境变量：新版要 ${newManifest.env_requires.map((e) => e.name).join("、")}（.env.EXAMPLE 会重新生成）`);
+  planLines.push(`审查：${prepared.review.source === "skipped" ? "已跳过（审查层未开启；只走了两道确定性门）" : `${prepared.review.decision === "ALLOW" ? "通过" : "拦截"}（${prepared.review.reviewerModel ?? ""}）`}`);
+  return {
+    name,
+    needsUpdate: true,
+    previousVersion: record.version,
+    newVersion: resolved.entry.version,
+    record,
+    prepared,
+    planLines,
+    modifiedFiles,
+    manifestModified,
+    versionNote,
+  };
+}
+
+/** 确认后执行更新：合并安装 → 账本原地改版本 → 事件 → 花名册声明重同步。 */
+export function executeMarketplaceUpdate(
+  home: string,
+  plan: MarketUpdatePlan,
+  opts?: { store?: RunStore; runId?: string },
+): MarketUpdateResult {
+  if (!plan.needsUpdate || !plan.prepared) {
+    return {
+      updated: false,
+      name: plan.name,
+      previousVersion: plan.previousVersion,
+      version: plan.newVersion,
+      files: [],
+      keptModified: [],
+      mode: "readonly",
+      routinesMerged: 0,
+      warnings: [],
+    };
+  }
+  const prepared = plan.prepared;
+  const newManifest = prepared.verification.manifest;
+  if (!newManifest) throw new MarketplaceError("机器人清单缺失，无法更新（先重新核对条目）");
+  const dest = pluginDir(home, plan.name);
+  const warnings: string[] = [];
+  const staged = stageBotEntry(prepared.dir, newManifest);
+  let keptModified: string[] = [];
+  let files: string[] = [];
+  try {
+    const report = verifyStagedPlugin(staged.dir);
+    if (!report.ok) {
+      throw new MarketplaceError(`插件验证未通过，拒绝更新：\n${report.errors.map((e) => `- ${e}`).join("\n")}`);
+    }
+    const install = installPlugin(home, staged.dir);
+    keptModified = install.keptModified;
+    files = [...install.files];
+  } finally {
+    staged.cleanup();
+  }
+  // bot.json：新版为准，mode 取已装与新版里更严的那个。
+  let mode: BotMode = newManifest.mode ?? "readonly";
+  try {
+    const installedBot = existsSync(join(dest, "bot.json"))
+      ? (JSON.parse(readFileSync(join(dest, "bot.json"), "utf-8")) as { mode?: BotMode })
+      : null;
+    mode = mergeBotMode(installedBot?.mode, newManifest.mode);
+  } catch { /* 旧 bot.json 读坏时按新版来 */ }
+  const mergedBotJson = { ...JSON.parse(readFileSync(join(prepared.dir, "bot.json"), "utf-8")), mode };
+  writeFileSync(join(dest, "bot.json"), JSON.stringify(mergedBotJson, null, 2) + "\n", "utf-8");
+  // routines.json：按名合并（新版定义刷新、你加的保留、新 routine 进来不自动执行）。
+  let routinesMerged = 0;
+  const newRoutinesPath = join(prepared.dir, "routines.json");
+  if (existsSync(newRoutinesPath)) {
+    const incoming = parseRoutines(prepared.dir);
+    let installed: BotRoutine[] = [];
+    try {
+      installed = existsSync(join(dest, "routines.json")) ? parseRoutines(dest) : [];
+    } catch {
+      installed = [];
+      warnings.push("已装的 routines.json 读坏了，按新版重建（你加的 routine 可能丢了，先检查备份）");
+    }
+    const merged = mergeRoutines(installed, incoming);
+    writeFileSync(join(dest, "routines.json"), JSON.stringify(merged, null, 2) + "\n", "utf-8");
+    routinesMerged = merged.length;
+  } else if (existsSync(join(dest, "routines.json"))) {
+    try {
+      routinesMerged = parseRoutines(dest).length;
+    } catch {
+      routinesMerged = 0;
+    }
+  }
+  // .env.EXAMPLE 按新版重新生成（没声明就删掉旧的）。
+  writeEnvExample(dest, newManifest);
+  // 账本原地改版本（不另起一条记录，卸载历史不断）。
+  const hashes: Record<string, string> = {};
+  for (const rel of files) {
+    try { hashes[rel] = sha256File(join(dest, rel)); } catch { /* 缺文件时不记哈希 */ }
+  }
+  const manifestHashes: Record<string, string> = {};
+  for (const f of ["bot.json", "routines.json"]) {
+    try { if (existsSync(join(dest, f))) manifestHashes[f] = sha256File(join(dest, f)); } catch { /* ignore */ }
+  }
+  const ledger = loadInstalledLedger(home);
+  let idx = -1;
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    if (ledger[i].item_name === plan.name && ledger[i].status === "installed") { idx = i; break; }
+  }
+  if (idx === -1) throw new MarketplaceError(`更新中途账本变了：找不到 ${plan.name} 的已安装记录（没改任何文件）`);
+  const old = ledger[idx];
+  ledger[idx] = {
+    ...old,
+    version: plan.newVersion,
+    author: prepared.entry.author ?? newManifest.author ?? old.author,
+    license: prepared.entry.license ?? newManifest.license ?? old.license,
+    files: hashes,
+    reviewer_source: prepared.review.source,
+    reviewer_model: prepared.review.reviewerModel,
+    reviewer_decision: prepared.review.decision,
+    bot_ready: prepared.botReady.score,
+    bot_ready_missing: prepared.botReady.missing,
+    updated_at: new Date().toISOString(),
+    previous_version: plan.previousVersion,
+    ...(newManifest.model ? { model: newManifest.model } : { model: undefined }),
+    ...(newManifest.env_requires ? { env_requires: newManifest.env_requires } : { env_requires: undefined }),
+    ...(newManifest.hands_off_to ? { hands_off_to: newManifest.hands_off_to } : { hands_off_to: undefined }),
+    ...(Object.keys(manifestHashes).length ? { manifest_hashes: manifestHashes } : {}),
+  };
+  // `{ model: undefined }` 这种条件展开会留下 undefined 键：JSON 写盘时
+  // 自动丢掉，但内存里的记录先清干净（旧版钉的模型更新后不留会误导）。
+  if (!newManifest.model) delete (ledger[idx] as Partial<InstalledEntry>).model;
+  if (!newManifest.env_requires) delete (ledger[idx] as Partial<InstalledEntry>).env_requires;
+  if (!newManifest.hands_off_to) delete (ledger[idx] as Partial<InstalledEntry>).hands_off_to;
+  saveInstalledLedger(home, ledger);
+  // 花名册声明重同步：只动市场生成的声明（你改过的声明不动，只警告）。
+  if (old.agent_decl) {
+    try {
+      const existing = loadStoredAgentDecl(home, plan.name, validateOpts(home));
+      if (existing.instructions.startsWith(MARKET_DECL_INSTRUCTIONS_PREFIX)) {
+        const { decl, text } = marketBotToAgentDecl(
+          home,
+          newManifest,
+          (newManifest.hands_off_to ?? []).filter((h) => {
+            try { return storedAgentDeclPath(home, h.target) !== null; } catch { return false; }
+          }),
+        );
+        saveAgentDecl(home, decl, text, `${plan.name}.json`, true);
+      } else {
+        warnings.push(`声明 ${plan.name} 你改过，本次更新没动它（新版模型/交接没同步进去）`);
+      }
+    } catch (err: unknown) {
+      warnings.push(`花名册声明重同步没做成：${err instanceof Error ? err.message : String(err)}（旧声明还在，功能不受影响）`);
+    }
+  }
+  recordMarketEvent(opts?.store, opts?.runId, "marketplace_updated", {
+      item_name: eventItemName(plan.name),
+      item_version: plan.newVersion,
+      kind: "bot",
+      source: `${prepared.source.name}:${prepared.entry.id}`,
+      previous_version: plan.previousVersion,
+    });
+  return {
+    updated: true,
+    name: plan.name,
+    previousVersion: plan.previousVersion,
+    version: plan.newVersion,
+    files,
+    keptModified,
+    mode,
+    routinesMerged,
+    warnings,
+  };
 }
 
 // ---- 卸载：只删哈希一致的文件，用户改过的文件留着并报告；账本留 uninstalled 记录 ----
@@ -1258,11 +2021,12 @@ export function uninstallMarketplaceEntry(
   home: string,
   name: string,
   opts?: { store?: RunStore; runId?: string },
-): { removed: string[]; kept: string[]; kind: MarketKind } {
+): { removed: string[]; kept: string[]; kind: MarketKind; warnings?: string[] } {
   const record = findInstalled(home, name);
   if (!record) throw new MarketplaceError(`没有已安装的市场条目 ${name}（先 nyra market installed 看看）`);
   let removed: string[] = [];
   let kept: string[] = [];
+  const warnings: string[] = [];
   if (record.kind === "template") {
     try {
       const entry = getTemplateEntry(home, name);
@@ -1286,10 +2050,33 @@ export function uninstallMarketplaceEntry(
     const result = uninstallPlugin(home, name);
     removed = result.removed;
     kept = [...result.keptModified, ...result.missing.map((m) => `${m}（文件已不在）`)];
-    for (const extra of ["bot.json", "routines.json"]) {
+    for (const extra of ["bot.json", "routines.json", ".env.EXAMPLE"]) {
       const p = join(pluginDir(home, name), extra);
       if (existsSync(p)) {
         try { rmSync(p, { force: true }); removed.push(extra); } catch { kept.push(extra); }
+      }
+    }
+    // B6：花名册登记是市场生成的才删（你改过的声明不动，只提醒）。
+    // 常驻会话一起结束；声明/会话清不掉不破坏卸载，只警告。
+    if (record.agent_decl) {
+      try {
+        const existing = loadStoredAgentDecl(home, name, validateOpts(home));
+        if (existing.instructions.startsWith(MARKET_DECL_INSTRUCTIONS_PREFIX)) {
+          removeStoredAgentDecl(home, name);
+          removed.push(`花名册声明 ${name}`);
+        } else {
+          warnings.push(`声明 ${name} 你改过，本次卸载没动它（nyra agent remove ${name} 可手动删）`);
+        }
+      } catch {
+        kept.push(`花名册声明 ${name}（读不到，保留未删）`);
+      }
+    }
+    if (record.agent_session_id) {
+      try {
+        endSession(home, record.agent_session_id);
+        removed.push(`常驻会话 ${record.agent_session_id}`);
+      } catch {
+        kept.push(`常驻会话 ${record.agent_session_id}（结束失败，保留未删）`);
       }
     }
   }
@@ -1307,7 +2094,7 @@ export function uninstallMarketplaceEntry(
       item_name: eventItemName(name),
       kind: record.kind,
     });
-  return { removed, kept, kind: record.kind };
+  return { removed, kept, kind: record.kind, ...(warnings.length ? { warnings } : {}) };
 }
 
 // ---- 发布：本地三道门 → 打包脱敏检查 → 生成可提交的条目包 ----
@@ -1597,6 +2384,19 @@ export function marketBotTemplate(): string {
       tools: ["read_file"],
       permissions: ["fs:read-workspace"],
       mode: "readonly",
+      // B2：模型钉选（可选）：机器人永远用这个模型跑，key 仍在密码箱，
+      // Bot 只拿模型名；写错名字安装时直接拒绝，不静默回落默认模型。
+      model: "deepseek-flash",
+      // B3：需要的环境变量（可选）：只声明名字与说明、不带值；安装时
+      // 逐项核对（只报已设置/未设置，不打印值），并生成 .env.EXAMPLE。
+      env_requires: [
+        { name: "MY_API_KEY", description: "这个机器人要调的第三方服务密钥", required: true },
+      ],
+      // B7：交接目标（可选）：这个机器人能把活交给哪些已装的机器人；
+      // 目标未装时只警告不拦安装，装完目标再更新本机器人即可接线。
+      hands_off_to: [
+        { target: "other-bot", when: "需要写文件时交给它" },
+      ],
     }, null, 2) + "\n";
 }
 

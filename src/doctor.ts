@@ -2,6 +2,7 @@
 // 检查项（每项中文说明 + 故障给中文修复步骤，最多 8 项）：
 // 1）运行时（含版本下限：Bun >= 1.4 或 Node >= 24；Node 22 及以下没有开箱即用的
 // node:sqlite，示例任务跑不起来）2）配置文件 3）配置目录（存在 + 0700）
+// 3b）脑文件夹结构（H10：~/.nyra 的版本化 schema 校验）
 // 4）provider 与 Key 5）网络 6）磁盘空间 7）写权限 8）vault.json 权限（存在时）。
 // vault.json 不存在时只有 7 项；配置文件损坏或 provider 未知时提前返回，
 // 后面的项本次不查（不是“通过”，是没查到）。
@@ -16,6 +17,8 @@ import { loadModelCache, manualWindowFromConfig, resolveContextWindow, type Wind
 import { vaultExists, vaultMode } from "./vault/index.ts";
 // 调研报告第 9 项：OS 级分级沙箱（学 Codex CLI）——doctor 加一项隔离级别检查。
 import { getSandboxStatus, sandboxLevelText } from "./sandbox.ts";
+// H10：脑文件夹结构校验（~/.nyra 的版本化 schema）。
+import { summarizeBrainSchema, validateBrainSchema } from "./brainSchema.ts";
 
 export interface DoctorCheck {
   name: string;
@@ -31,6 +34,8 @@ export interface DoctorOptions {
   fetchFn?: typeof fetch;
   /** 测试注入：替代默认的网络目标（默认用当前 provider 的 base_url 根）。 */
   networkUrl?: string;
+  /** H4：--deep 时追加“免疫体检”（大脑自检，见 src/immune.ts）。 */
+  deep?: boolean;
 }
 
 const MB = 1024 * 1024;
@@ -114,7 +119,7 @@ export async function runDoctor(opts: DoctorOptions): Promise<{ checks: DoctorCh
   const levelText = sandboxLevelText(sandboxStatus.level);
   checks.push({
     name: "隔离级别", ok: true,
-    detail: `沙箱后端 ${sandboxStatus.backend}，模式 ${sandboxStatus.mode}，隔离级别 ${levelText}，可用后端：bwrap ${sandboxStatus.bwrapAvailable ? "可用" : "不可用"}、Seatbelt ${sandboxStatus.seatbeltAvailable ? "可用" : "不可用"}、Job Object ${sandboxStatus.jobObjectAvailable ? "可用" : "不可用"}——${sandboxStatus.detail}`,
+    detail: `沙箱后端 ${sandboxStatus.backend}，模式 ${sandboxStatus.mode}，隔离级别 ${levelText}，可用后端：bwrap ${sandboxStatus.bwrapAvailable ? "可用" : "不可用"}、Seatbelt ${sandboxStatus.seatbeltAvailable ? "可用" : "不可用"}、Job Object ${sandboxStatus.jobObjectAvailable ? "可用" : "不可用"}——${sandboxStatus.detail}；seccomp 拒单（M4，只 Linux x86-64）${sandboxStatus.seccompAvailable ? "可用" : "不可用"}，出口代理与凭证经纪人在代码里（默认不开，用时由调用方起）。`,
   });
 
   // 3）配置目录（loadConfig 已建好；这里只验存在与 0700）
@@ -133,6 +138,25 @@ export async function runDoctor(opts: DoctorOptions): Promise<{ checks: DoctorCh
     checks.push({
       name: "配置目录", ok: modeOk, detail: `${home} 存在，${modeText}`,
       fix: modeOk ? undefined : `chmod 700 ${home}（目录权限太松时，别人可能读到你的配置）。`,
+    });
+  }
+
+  // 3b）脑文件夹结构（H10：~/.nyra 的版本化 schema，见
+  // src/assets/brain-schema.json.txt）。缺必需文件、类型不对、权限位不对
+  // 才失败；未登记的新文件只列出来，不判失败——新功能加文件时先更新
+  // schema，再让 doctor 通过。目录本身不存在时“配置目录”一项已报失败，
+  // 这里不再重复报。
+  try {
+    const schemaReport = validateBrainSchema(home);
+    checks.push({
+      name: "脑文件夹结构", ok: schemaReport.ok, detail: summarizeBrainSchema(schemaReport),
+      fix: schemaReport.ok ? undefined : "缺失/类型/权限有问题的条目按上面的问题处理；权限问题用 chmod 修（vault.json 应为 600、keys.json 应为 600）；缺失必需文件时重跑 nyra setup。",
+    });
+  } catch (err) {
+    checks.push({
+      name: "脑文件夹结构", ok: false,
+      detail: `schema 校验没跑起来：${err instanceof Error ? err.message : String(err)}`,
+      fix: "检查 src/assets/brain-schema.json.txt 是否完整（打包时缺失会导致本项失败）。",
     });
   }
 
@@ -226,6 +250,33 @@ export async function runDoctor(opts: DoctorOptions): Promise<{ checks: DoctorCh
       checks.push({
         name: "密码箱权限", ok, detail: `vault.json 存在，权限 ${mode.toString(8)}${ok ? "" : "（应为 600）"}`,
         fix: ok ? undefined : `chmod 600 ${join(home, "vault.json")}（密码箱权限太松时，别人可能读到你的凭据）。`,
+      });
+    }
+  }
+
+  // H4：--deep 时追加“免疫体检”（大脑自检：记忆证据、技能文件、配置、
+  // 密钥明文、账本、成本硬顶、权限位）。不合格的已隔离（移进 quarantine/，
+  // 不删除），报告写 immune-report.json；体检本身不调模型、不联网。
+  // 用动态 import：immune.ts 依赖 memoryGate，doctor.ts 不在启动路径上
+  // 静态拉它，避免循环依赖。
+  if (opts.deep) {
+    try {
+      const { runImmuneChecks } = await import("./immune.ts");
+      const report = runImmuneChecks(home);
+      for (const c of report.checks) {
+        checks.push({
+          name: `免疫体检：${c.name}`,
+          ok: c.ok,
+          detail: c.detail,
+          fix: c.fix,
+        });
+      }
+    } catch (err) {
+      checks.push({
+        name: "免疫体检",
+        ok: false,
+        detail: `免疫体检没跑起来：${err instanceof Error ? err.message : String(err)}`,
+        fix: "重跑 nyra doctor --deep；还失败就把报错原样发出来。",
       });
     }
   }

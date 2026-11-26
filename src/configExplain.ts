@@ -274,6 +274,37 @@ export function explainAll(input: ExplainInput): CapabilityExplain[] {
     });
   }
 
+  // 更新检查：默认关闭的 opt-in（隐私政策承诺不联网回报）。
+  {
+    const enabled = pick(cfg, "update_check_enabled") === true;
+    out.push({
+      capability: "update_check",
+      effective: enabled ? "开（`nyra update-check` 会联网查新版本）" : "关（不联网）",
+      source: pick(cfg, "update_check_enabled") !== undefined ? "config" : "default",
+      keys: ["update_check_enabled", "nyra update-check"],
+      note: enabled ? "只查 GitHub Releases latest，不发任何本地数据" : "默认关闭：不联网、不检查；开后才由 `nyra update-check` 联网查一次",
+    });
+  }
+
+  // M2：Jev 式快速决策路由——群聊没 @ 谁时，便宜模型先判该谁接。
+  // 默认关闭的 opt-in；判不出来回落全员回答，不静默丢消息。
+  {
+    const enabled = pick(cfg, "jev_router_enabled") === true;
+    const model = typeof pick(cfg, "jev_model") === "string" && (pick(cfg, "jev_model") as string).trim()
+      ? (pick(cfg, "jev_model") as string).trim()
+      : "deepseek-flash";
+    const threshold = typeof pick(cfg, "jev_confidence_threshold") === "number"
+      ? (pick(cfg, "jev_confidence_threshold") as number)
+      : 0.6;
+    out.push({
+      capability: "jev_router",
+      effective: enabled ? `开（路由模型 ${model}，置信度低于 ${threshold} 回落全员回答）` : "关（没 @ 谁时全员回答）",
+      source: pick(cfg, "jev_router_enabled") !== undefined ? "config" : "default",
+      keys: ["jev_router_enabled", "jev_model", "jev_confidence_threshold", "nyra group route"],
+      note: enabled ? "路由只决定谁回答，不决定能不能做；选中的 Bot 照样走审批、预算、证据链" : "默认关闭：群消息没 @ 谁时所有机器人都回答；干跑看分流结果用 nyra group route",
+    });
+  }
+
   return out;
 }
 

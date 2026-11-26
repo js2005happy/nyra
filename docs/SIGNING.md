@@ -7,6 +7,7 @@ Nyra 有三层签名，分别解决不同问题。**第 1 层在 0.5.12 起恢�
 | 1 | Release 产物 | 用户能证明下载的二进制确实由本仓库构建、且没被篡改 | ⚠️ 0.5.12 起恢复（v0.5.2–v0.5.11 缺失，原因见下） |
 | 2 | Git 提交 | 提交确实来自维护者本人 | ⚙️ 本地 SSH 签名（见下） |
 | 3 | Windows/macOS 二进制 | 消除 SmartScreen / Gatekeeper 首次运行警告 | ⚙️ 接线已就绪（0.5.1，条件式），证书未配置、产物仍未签名 |
+| 4 | 安卓 APK | 同一把密钥签每个版本，新版能直接覆盖安装 | ✅ 0.5.14 起正式签名（签名者 CN=Nyra，证书 SHA-256 以 `D3:CD:8C:92` 开头） |
 
 ---
 
@@ -34,7 +35,7 @@ git tag v0.5.0 && git push origin v0.5.0
 2. **签名工作流根本没启动**：Release 是 CI 用默认 `GITHUB_TOKEN` 建的（`node-binaries.yml` 的 softprops/action-gh-release），GitHub 不会因此触发 `release: published` 工作流——用 `GITHUB_TOKEN` 触发的事件（除 workflow_dispatch / repository_dispatch 外）不会再触发新的 workflow run。所以只靠 `release: published` 时，tag 推送建 Release 根本不会启动签名。已改走 `workflow_run`：Node binaries 跑完（它负责建 Release）即触发，等待循环再等桌面/手机产物挂齐；手动建的 Release 仍走 `release` 事件，手动重跑仍走 `workflow_dispatch`。
 3. **等待循环没有 fail-closed 出口**：以前等满 50 分钟仍缺产物时，脚本会照常下载、签名一份不全的清单。已补：等不到就直接失败，不签不全的清单。
 
-`SHA256SUMS` 从 0.5.12 起恢复；v0.5.2–v0.5.11 的 Release 不回头补（没法对已发版的产物事后证明“构建时”状态）。安装脚本默认钉住 v0.5.12 并强制校验：下载后先对同一 Release 的 `SHA256SUMS` 校验，哈希对不上、清单里没有、下载不到 `SHA256SUMS`，一律拒绝安装；`verify-release.sh` 在没有 `SHA256SUMS` 时直接报“没有 SHA256SUMS”并退出码 1。
+`SHA256SUMS` 从 0.5.12 起恢复。v0.5.11 在 2026-11-24 手动跑签名工作流补了 `SHA256SUMS` 与签名，好让安装脚本能装它；这份签名只证明“签名时 Release 上的这些文件”，不是构建时的来源证明。v0.5.2–v0.5.10 不回头补。安装脚本默认钉住一个已发布、附件齐全的版本（见 docs/installers.md）并强制校验：下载后先对同一 Release 的 `SHA256SUMS` 校验，哈希对不上、清单里没有、下载不到 `SHA256SUMS`，一律拒绝安装；`verify-release.sh` 在没有 `SHA256SUMS` 时直接报“没有 SHA256SUMS”并退出码 1。
 
 Release 页面会多出这些文件：
 
@@ -216,6 +217,28 @@ OV 证书签好后，Windows SmartScreen 的警告**不会立刻消失**，要�
 > 顺序建议：先把第 1、2 层跑顺（零成本、立刻生效），第 3 层等证书下来再补。**第 1 层比第 3 层更重要**——SmartScreen 只是"提示"，而产物签名解决的是"下载到的是不是官方构建"。
 
 ---
+
+## 第 4 层：安卓 APK 正式签名（0.5.13 起）
+
+以前的 APK 用 Gradle 在每台 CI 机器上临时生成的 debug 密钥签名，每个版本的签名都不一样，
+手机上没法直接覆盖升级。0.5.13 起 `mobile.yml` 支持固定的 release keystore：
+
+| Secret | 内容 |
+|---|---|
+| `ANDROID_KEYSTORE_BASE64` | keystore 文件（PKCS12，RSA 4096，别名 `nyra`）的 base64 |
+| `ANDROID_KEYSTORE_PASSWORD` | keystore 密码 |
+| `ANDROID_KEY_ALIAS` | `nyra` |
+| `ANDROID_KEY_PASSWORD` | 可不填；PKCS12 里与 keystore 密码相同 |
+
+- 三项都配了：构建 `assembleRelease`，用 `mobile/scripts/patch-android-signing.sh` 接上签名，
+  构建后用 `apksigner verify --print-certs` 验签（单独取退出码，不经管道），并断言每个签名者
+  都是 CN=Nyra、证书 SHA-256 以 `d3cd8c92` 开头，任何一项不符就失败。
+- 一项都没配：发版 tag 构建直接失败（正式发布必须正式签名）；只有手动触发的测试构建才退回
+  debug 签名，并在构建日志给警告。
+- 只配了一部分：直接失败，不悄悄退回 debug。
+- keystore 文件与密码只存在维护者自己的备份和仓库 secrets 里，不进仓库（`.gitignore` 已排除 `*.p12`/`*.jks`/`*.keystore`）。
+  **keystore 丢了就再也签不出能覆盖安装的新版**，务必另外备份。
+- 切换到正式签名的第一个版本是 0.5.14：装过 0.5.13 及更早（debug 签名）的手机要先卸载一次再装；之后的版本可以直接覆盖。
 
 ## 常见问题
 

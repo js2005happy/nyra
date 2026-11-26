@@ -357,8 +357,9 @@ test("统计头：真实运行的事件数进 events.jsonl，报告顶行有实�
   expect(seen).toContain("tool_start");
   expect(seen).toContain("tool_result");
   const events = readFileSync(join(home, "runs", rec.runId, "events.jsonl"), "utf-8");
-  expect(events).toContain('"type": "turn"');
-  expect(events).toContain('"type": "tool_start"');
+  // 只认语义不认字节（事件行用 JSON.stringify 写）。
+  expect(events.trim().split("\n").some((l) => (JSON.parse(l) as { type?: string }).type === "turn")).toBe(true);
+  expect(events.trim().split("\n").some((l) => (JSON.parse(l) as { type?: string }).type === "tool_start")).toBe(true);
   const state = store.load(rec.runId);
   expect(state.usage_summary?.calls).toBeGreaterThan(0);
   const stats = computeRunStats(store, rec.runId, state);

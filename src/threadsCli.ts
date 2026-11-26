@@ -21,8 +21,9 @@ const USAGE = [
   "  nyra thread state <线程 id> [--set <键=值> ...] [--unset <键> ...]   看状态，或合并写状态（--set 里写 null 表示删键；值 true/false/数字自动识别，其余当字符串）",
   "  nyra thread history <线程 id> [--limit <条数>]             看线程历史（新的在后，默认 50 条）",
   "  nyra thread runs <线程 id>                                 看线程上跑过的工作流",
-  "  nyra thread cron-add <线程 id> \"<cron>\" <工作流>           给线程绑一条定时触发器（create_for_thread，到点跑工作流）",
+  "  nyra thread cron-add <线程 id> \"<cron>\" <工作流>           给线程绑一条定时触发器（create_for_thread，到点跑工作流；间隔不得低于 15 分钟）",
   "  nyra thread cron-remove <线程 id> <cron id>                解绑一条线程 cron",
+  "  nyra thread cron-re-enable <线程 id> <cron id>             恢复一条被自动关闭的线程 cron（连续失败 10 次会自动关闭）",
   "  nyra thread crons <线程 id>                                列线程绑的 cron",
   "  nyra thread archive <线程 id>                              归档线程（归档后 cron 不再跑）",
   "  nyra thread unarchive <线程 id>                            取消归档",
@@ -167,12 +168,20 @@ export async function handleThread(argv: string[], home: string): Promise<number
       process.stdout.write("已解绑这条 cron。\n");
       return 0;
     }
+    if (cmd === "cron-re-enable") {
+      const [id, cronId] = [argv[1], argv[2]];
+      if (!id || !cronId) { process.stderr.write("错误：cron-re-enable 后面须跟 线程 id、cron id\n"); return 2; }
+      const { reEnableThreadCron } = await import("./threads.ts");
+      if (!reEnableThreadCron(home, id, cronId)) { process.stdout.write("这条 cron 本来就没停用，无须恢复。\n"); return 0; }
+      process.stdout.write("这条 cron 已恢复（下次到点会再跑；仍连续失败 10 次会再次自动关闭）。\n");
+      return 0;
+    }
     if (cmd === "crons") {
       const id = argv[1];
       if (!id) { process.stderr.write("错误：crons 后面须跟线程 id\n"); return 2; }
       const list = listThreadCrons(home, id);
       if (!list.length) { process.stdout.write("这条线程没绑 cron。\n"); return 0; }
-      for (const c of list) process.stdout.write(`  ${c.id}  ${c.cron} → ${c.workflow}${c.last_fired ? `（上次触发 ${c.last_fired}）` : ""}\n`);
+      for (const c of list) process.stdout.write(`  ${c.id}  ${c.cron} → ${c.workflow}${c.disabled ? "（已自动关闭，连续失败满 10 次）" : ""}${c.last_fired ? `（上次触发 ${c.last_fired}）` : ""}\n`);
       return 0;
     }
     if (cmd === "archive" || cmd === "unarchive") {

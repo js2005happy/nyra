@@ -848,7 +848,7 @@ async function defaultChatFn(messages: Record<string, unknown>[]): Promise<strin
   const { loadConfig, resolveProvider, resolveHome } = await import("./config.ts");
   const { Provider } = await import("./providers.ts");
   const config = loadConfig();
-  const provider = new Provider(resolveProvider({ home: resolveHome(), config, providerName: config.provider as string, model: config.model as string }));
+  const provider = new Provider(resolveProvider({ home: resolveHome(), config, providerName: config.provider as string }));
   const resp = await provider.chat(messages as never);
   const content = (resp as Record<string, unknown>).choices;
   if (!Array.isArray(content) || !content[0]) throw new KnowledgeError("模型返回了无法解析的回答");

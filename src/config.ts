@@ -9,8 +9,9 @@ import { getCredential } from "./vault.ts";
 import { getFileKey } from "./keystore.ts";
 
 import { effectiveValue } from "./enforcedConfig.ts";
+import { SANDBOX_BACKENDS } from "./sandbox.ts";
 
-export const VERSION = "0.5.12-dev";
+export const VERSION = "0.5.15";
 
 export interface ProviderPreset {
   baseUrl: string | null;
@@ -62,6 +63,15 @@ export const DEFAULT_CONFIG: Record<string, unknown> = {
   profiles: {},
   mcp_servers: {},
   mcp_enabled: false,
+  // 更新检查：默认关闭（隐私政策承诺不联网回报）。只有显式改成 true 后，
+  // `nyra update-check` 才会联网查 GitHub Releases latest；关闭时绝不联网。
+  update_check_enabled: false,
+  // M2：Jev 式快速决策路由（群聊没 @ 谁时，便宜模型先判该谁接）。
+  // 默认关闭（opt-in）；开了才分流，判不出来回落全员回答。
+  // jev_model 是路由用的便宜模型；jev_confidence_threshold 低于它就回落。
+  jev_router_enabled: false,
+  jev_model: "deepseek-flash",
+  jev_confidence_threshold: 0.6,
   // 缺口 17：对外 MCP 服务（Nyra 当 MCP 服务器，供别的 agent 调记忆与任务）。
   // 默认关闭；allow_writes 默认 false = 只读（search_memory / query_evidence），
   // 写操作（add_memory / forget_session / dispatch_task）须显式开 allow_writes，
@@ -229,6 +239,10 @@ export const DEFAULT_CONFIG: Record<string, unknown> = {
   // reviewer 的便宜模型链（smart_approvals.reviewer_*，再没有用 deepseek /
   // deepseek-flash）；rules 是用户用自然语言写的额外验收规则。
   verifier: { enabled: false, provider: null, model: null, rework: false, rules: [] },
+  // H3：夜间“做梦代谢”（默认关）。enabled 开关、at 每夜时间、summarize_with_model
+  // 写小结是否额外调一次模型润色（默认关）、prune_stale_days 待确认候选多少天
+  // 未决算过期清掉。详见 docs/dream.md。
+  dream: { enabled: false, at: "03:00", summarize_with_model: false, prune_stale_days: 90 },
   // 缺口 11：技能自沉淀闭环（学 OpenClaw Skill Workshop / Hermes 自写技能）。
   // 默认关闭（显式 opt-in）；开启后成功运行收尾时自动起草技能草稿（Markdown +
   // frontmatter，附来源运行与质量分），低质草稿出生即归档；安装永远要人批准
@@ -240,7 +254,9 @@ export const DEFAULT_CONFIG: Record<string, unknown> = {
 };
 
 export const VALID_MODES = ["readonly", "auto", "full", "creator"] as const;
-export const VALID_SANDBOXES = ["auto", "local", "bwrap", "e2b"] as const;
+// 沙箱后端只维护一份：直接复用 sandbox.ts 的 SANDBOX_BACKENDS（含 macOS seatbelt、
+// Windows jobobject），CLI 参数、config.json 与网关走同一张表。
+export const VALID_SANDBOXES = SANDBOX_BACKENDS;
 // 调研报告第 9 项：OS 级分级沙箱（学 Codex CLI）——三档沙箱模式。
 export const VALID_SANDBOX_MODES = ["read-only", "workspace-write", "danger-full-access"] as const;
 export const PLAINTEXT_HTTP_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
@@ -384,6 +400,40 @@ export function knownProviderNames(config?: Record<string, unknown> | null): Set
 
 export type KeySource = "env" | "vault" | "file" | "connector" | "none" | "local";
 
+/**
+ * 顶层 config.model 对某个 provider 是否生效：只有 config.provider 就是它、
+ * 且这个模型名不是“别家内置 provider 的模型”（比如首次启动写进 config.json
+ * 的默认 deepseek-flash）时才用。否则返回 null，由 provider 自己配置的
+ * default_model 生效——自定义 provider 不再必须在顶层再写一遍 model。
+ */
+export function configModelFor(
+  cfg: Record<string, unknown>,
+  providerName: string,
+  presets?: Record<string, ProviderPreset>,
+): string | null {
+  const model = typeof cfg.model === "string" ? cfg.model.trim() : "";
+  const cfgProvider = (typeof cfg.provider === "string" && cfg.provider) || "deepseek";
+  if (!model || cfgProvider !== providerName) return null;
+  let all: Record<string, ProviderPreset>;
+  try { all = presets ?? getProviderPresets(cfg); } catch { all = { ...PROVIDERS }; }
+  const own = all[providerName];
+  if (own && (own.models ?? []).includes(model)) return model;
+  if (own && own.defaultModel === model) return model;
+  for (const [other, preset] of Object.entries(PROVIDERS)) {
+    if (other === providerName) continue;
+    if ((preset.models ?? []).includes(model) || preset.defaultModel === model) return null;
+  }
+  return model;
+}
+
+/** 某个 provider 实际会用的模型名（显示用）：生效的顶层 model > provider 自己的默认模型。 */
+export function effectiveModelFor(cfg: Record<string, unknown>, providerName: string | null | undefined): string | null {
+  if (!providerName) return typeof cfg.model === "string" ? cfg.model : null;
+  let presets: Record<string, ProviderPreset>;
+  try { presets = getProviderPresets(cfg); } catch { return typeof cfg.model === "string" ? cfg.model : null; }
+  return configModelFor(cfg, providerName, presets) ?? presets[providerName]?.defaultModel ?? null;
+}
+
 export interface ResolvedProvider {
   name: string;
   baseUrl: string;
@@ -429,7 +479,7 @@ export function resolveProvider(opts: {
   }
   if (resolvedModel === undefined) resolvedModel = envVar("MODEL");
   if (resolvedModel === undefined) {
-    resolvedModel = cfg.provider === name && cfg.model ? (cfg.model as string) : preset.defaultModel ?? undefined;
+    resolvedModel = configModelFor(cfg, name, presets) ?? preset.defaultModel ?? undefined;
   }
 
   if (preset.auth === "cli") {
@@ -597,7 +647,9 @@ export function resolveProfile(
   const cfg = config ?? {};
   const base = {
     provider: (cfg.provider as string) || "deepseek",
-    model: (cfg.model as string | null) ?? null,
+    // 顶层 model 只在它属于当前 provider 时生效（见 configModelFor）：
+    // 自定义 provider 不再被首次启动写进去的默认 deepseek-flash 盖掉。
+    model: configModelFor(cfg, (cfg.provider as string) || "deepseek"),
     mode: (cfg.mode as string) || "auto",
   };
   const name = profileName || envVar("PROFILE") || (cfg.profile as string | undefined);

@@ -16,6 +16,12 @@ import {
   writeEvalJson,
 } from '../src/eval/runner.ts';
 import { makeLiveEvalAdapter } from '../src/eval/live.ts';
+import {
+  SCRIPTED_GOLDEN_DIR,
+  SCRIPTED_SUITE,
+  SCRIPTED_TASKS,
+  ScriptedAdapter,
+} from '../src/eval/scripted.ts';
 import { resolveHome } from '../src/config.ts';
 import {
   benchmarkTaskToEvalTask,
@@ -42,6 +48,8 @@ try {
     '--scenario',
     '--benchmark',
     '--probe',
+    '--mode',
+    '--task',
   ]);
   const seen = new Set<string>();
   for (let i = 1; i < args.length; i += 2) {
@@ -56,7 +64,7 @@ try {
   }
   if (!action || action === '--help') {
     console.log(
-      '用法：bun run scripts/eval.ts list [--scenario <code|browser|research|connector>|--benchmark <名>|--probe <名>] | run --out <报告.json> [--scenario <场景>|--benchmark <名>|--probe <名>] | rerun --from <报告.json> --out <新报告.json>\n可选：--model <模型名> --retries <0–2> --provider <ollama|deepseek>（默认 ollama；deepseek 走连接器助手通道、模型默认 deepseek-flash、每尝试上限 $1）；退出码 0 全部首次通过，3 有失败或阻塞，2 用法错误。',
+      '用法：bun run scripts/eval.ts list [--scenario <code|browser|research|connector>|--benchmark <名>|--probe <名>] | run --out <报告.json> [--scenario <场景>|--benchmark <名>|--probe <名>] | rerun --from <报告.json> --out <新报告.json> | scripted [--mode <record|replay>] [--out <报告.json>] [--task <任务 id>]\n可选：--model <模型名> --retries <0–2> --provider <ollama|deepseek>（默认 ollama；deepseek 走连接器助手通道、模型默认 deepseek-flash、每尝试上限 $1）；退出码 0 全部首次通过，3 有失败或阻塞，2 用法错误。scripted 不带 --out 只列脚本化任务；不调模型、不花钱（详见 docs/eval.md）。',
     );
   } else if (action === 'list') {
     // 场景 / 基准集 / 探针的任务清单（不含 testBody，与内置目录同款口径）。
@@ -119,6 +127,89 @@ try {
           2,
         ),
       );
+  } else if (action === 'scripted') {
+    // M5：脚本化行为评测（不调模型、不花钱的回放评测）。
+    const mode = flag('--mode') ?? 'replay';
+    if (!['record', 'replay'].includes(mode))
+      throw new Error('--mode 须是 record 或 replay');
+    const taskId = flag('--task');
+    const tasks = taskId
+      ? SCRIPTED_TASKS.filter((t) => t.id === taskId)
+      : SCRIPTED_TASKS;
+    if (taskId && !tasks.length)
+      throw new Error('没有这个脚本化任务：' + taskId);
+    const out = flag('--out');
+    if (!out) {
+      console.log(
+        JSON.stringify(
+          {
+            suite: SCRIPTED_SUITE,
+            tasks: tasks.map(({ solution, testBody, ...t }) => t),
+          },
+          null,
+          2,
+        ),
+      );
+    } else {
+      const { existsSync } = await import('node:fs');
+      if (existsSync(out)) throw new Error('报告已存在，请用新文件名');
+      const revision = spawnSync('git', ['rev-parse', 'HEAD'], {
+        cwd: root,
+        encoding: 'utf8',
+      });
+      if (revision.status !== 0) throw new Error('无法确定源码版本');
+      const sourceRevision = revision.stdout.trim();
+      const tracked = spawnSync('git', ['ls-files', 'src'], {
+        cwd: root,
+        encoding: 'utf8',
+      });
+      if (tracked.status !== 0) throw new Error('无法确定核心源码摘要');
+      const sourceHash = evalHash(
+        tracked.stdout
+          .trim()
+          .split('\n')
+          .filter((p) => Boolean(p) && !p.startsWith('src/eval/'))
+          .sort()
+          .map((p) => [p, readFileSync(join(root, p), 'utf8')]),
+      );
+      const harnessFiles = [
+        ...readdirSync(join(root, 'src/eval'))
+          .filter((x) => x.endsWith('.ts'))
+          .map((x) => 'src/eval/' + x),
+        'scripts/eval.ts',
+        'scripts/eval/worker.ts',
+      ];
+      const harnessHash = evalHash(
+        harnessFiles.sort().map((p) => [p, readFileSync(join(root, p), 'utf8')]),
+      );
+      const report = await runEvalSuite({
+        root: join(dirname(resolve(out)), '.eval-runs'),
+        sourceRevision,
+        sourceHash,
+        harnessHash,
+        conditions: {
+          ...DEFAULT_EVAL_CONDITIONS,
+          provider: 'scripted',
+          model: 'scripted-v1',
+        },
+        adapter: new ScriptedAdapter({
+          goldenDir: join(root, SCRIPTED_GOLDEN_DIR),
+          mode: mode as 'record' | 'replay',
+        }),
+        tasks,
+        suite: SCRIPTED_SUITE,
+        retries: 0,
+        onProgress: (id, status) =>
+          process.stderr.write(id + ' ' + status + '\n'),
+      });
+      writeEvalJson(out, report, process.cwd());
+      console.log(JSON.stringify(report.summary, null, 2));
+      process.exitCode =
+        report.summary.passed === report.summary.total &&
+        report.summary.total > 0
+          ? 0
+          : 3;
+    }
   } else if (action === 'run' || action === 'rerun') {
     const out = flag('--out');
     if (!out) throw new Error('必须指定 --out；不会覆盖旧基线');

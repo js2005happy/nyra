@@ -57,6 +57,16 @@ import { formatModelSwitchNotice, recordModelSwitch, switchTimeShort } from "./m
 import { decryptEntry, encryptEntry, Vault } from "./vault.ts";
 import type { SandboxMode } from "./sandbox.ts";
 import { RunStore } from "./runs.ts";
+import {
+  chainDeciders,
+  createJevDecider,
+  jevRouterConfig,
+  routeMessage,
+  type ChainedDecider,
+  type JevDecider,
+  type JevMember,
+} from "./jevRouter.ts";
+import { createLocalRouterDecider, localRouterConfig } from "./localRouter.ts";
 
 /**
  * G-P2-1：拦截事件进证据链（改写 / 丢弃才发，log 只记审计）。
@@ -471,6 +481,12 @@ export interface GroupStoreOptions {
    * （toolShell 拒绝执行、不静默裸奔）。未设置时保持旧行为（不解析、不提示）。
    */
   sandbox?: { backend?: string | null; mode?: SandboxMode; allowNet?: boolean } | null;
+  /**
+   * M2：Jev 路由 decider 注入缝（测试用；生产走配置）。undefined = 跟配置
+   * （jev_router_enabled 开了才分流）；null = 强制关（配置开了也不分流）；
+   * 传了函数就用它（测试时不读配置、不调真模型）。
+   */
+  jevDecider?: JevDecider | null;
 }
 
 function publicBot(raw: Bot): PublicBot {
@@ -491,6 +507,7 @@ export class GroupStore {
   readonly botTimeoutSeconds: number;
   readonly botRunner: BotRunner | null;
   readonly sandbox: { backend?: string | null; mode?: SandboxMode; allowNet?: boolean } | null;
+  readonly jevDecider: JevDecider | null | undefined;
   private sendQueue = new Map<string, Promise<void>>();
   /** 已解锁的密码箱缓存：600k 次 PBKDF2 只在进程里算一次（审查报告第 1 项的性能点）。 */
   private vaultCache: Vault | null | undefined = undefined;
@@ -504,6 +521,7 @@ export class GroupStore {
     this.botTimeoutSeconds = opts.botTimeoutSeconds ?? BOT_TIMEOUT_SECONDS;
     this.botRunner = opts.botRunner ?? null;
     this.sandbox = opts.sandbox ?? null;
+    this.jevDecider = opts.jevDecider;
   }
 
   // -- 群 Key 加密存储（审查报告第 7 项） --
@@ -1161,6 +1179,78 @@ export class GroupStore {
   }
 
   /**
+   * M2：Jev 式快速决策路由——没 @ 谁、多 Bot 时，便宜模型先判该谁接。
+   * 只在 send() 里用（交互消息）；队列与定时任务不走这里、不自动路由。
+   * 返回选中的 Bot；返回 null = 回落全员回答（原有行为），调用方照常跑。
+   * 路由结论进证据链（jev_routed，emit 没传时走 RunStore，与总线拦截同款）。
+   */
+  private async maybeRouteJev(
+    roomId: string,
+    message: string,
+    bots: Bot[],
+    emit?: (type: string, fields: Record<string, unknown>) => void,
+  ): Promise<Bot | null> {
+    let decider: JevDecider | null = null;
+    if (this.jevDecider === null) return null;
+    const cfg = jevRouterConfig(this.home);
+    if (this.jevDecider !== undefined) {
+      decider = this.jevDecider;
+    } else {
+      if (!cfg.enabled) return null;
+      const modelDecider = createJevDecider(this.home, { model: cfg.model });
+      // 本地小路由开了就先走它（零 token）：它判不出、置信度不够、
+      // 权重坏了时返回 null，链子自动落到便宜模型那一棒；模型也
+      // 判不出才回落全员回答。本地阈值取两边更严的那个——本地判
+      // 出但过不了 Jev 阈值的结论不该直接进 routeMessage，而该
+      // 给模型一次机会。测试注入的 decider（jevDecider 已定）不链。
+      const localCfg = localRouterConfig(this.home);
+      if (localCfg.enabled) {
+        decider = chainDeciders(
+          createLocalRouterDecider(this.home, {
+            threshold: Math.min(localCfg.threshold, cfg.threshold),
+            onDecision: (fields) => {
+              const lf: Record<string, unknown> = { ...fields };
+              try {
+                if (emit) emit("local_router_decision", lf);
+                else recordBusInterventionEvent(this.home, "local_router_decision", lf);
+              } catch { /* 审计写不上不影响群聊 */ }
+            },
+          }),
+          modelDecider,
+        );
+      } else {
+        decider = modelDecider;
+      }
+    }
+    const members: JevMember[] = bots.map((b) => ({
+      id: b.id, name: b.name, role: b.role, instructions: b.instructions,
+    }));
+    let decision;
+    try {
+      decision = await routeMessage(message, members, decider, { threshold: cfg.threshold });
+    } catch {
+      return null;
+    }
+    const fields: Record<string, unknown> = {
+      room: roomId,
+      member: decision.member,
+      confidence: decision.confidence,
+      fallback: decision.fallback,
+      // 本地小路由判中的那次，jev_routed 的原因要如实写本地，
+      // 别写成“Jev 路由”（那是模型那一棒的原因）。
+      reason: decision.member && (decider as ChainedDecider).lastSource === "first"
+        ? "本地小路由（零 token）"
+        : decision.reason,
+    };
+    try {
+      if (emit) emit("jev_routed", fields);
+      else recordBusInterventionEvent(this.home, "jev_routed", fields);
+    } catch { /* 审计写不上不影响群聊 */ }
+    if (!decision.member) return null;
+    return bots.find((b) => b.id === decision.member) ?? null;
+  }
+
+  /**
    * opts.onEntry：每条新记录写进群里后回调一次（网关把它转成群事件流，手机群聊页实时看到谁回了）；
    * 不改 send 本身的语义——仍然等本轮所有成员回答完才返回。
    */
@@ -1208,6 +1298,13 @@ export class GroupStore {
       }
       const selected =
         mentions.size === 0 ? bots : bots.filter((b) => mentions.has(b.id));
+      // M2：没 @ 谁、多 Bot 时 Jev 先分流（opt-in，配置开了才分流）；
+      // 判不出来/失败回落全员回答，selected 保持原样。
+      let routed: Bot | null = null;
+      if (mentions.size === 0 && selected.length > 1) {
+        routed = await this.maybeRouteJev(roomId, incomingText, bots, opts.emit);
+      }
+      const answering = routed ? [routed] : selected;
       const newEntries: RoomMessage[] = [];
       const userEntry: RoomMessage = {
         sender: "user",
@@ -1221,7 +1318,7 @@ export class GroupStore {
         // 轮内快照：并行 bot 看到同一份轮次开始前的记录。
         const transcript = [...room.messages];
         const results = await Promise.all(
-          selected.map((bot) => this.runBot(room, bot, transcript)),
+          answering.map((bot) => this.runBot(room, bot, transcript)),
         );
         for (const entry of results) {
           // G-P2-1：bot 的回复是总线上的 publish 消息，先过拦截器再进群记录；

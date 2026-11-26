@@ -54,11 +54,17 @@ import { appendInbox } from "./tasks.ts";
 import { buildPlan, renderPlan, savePlan, readApprovedPlan, approvedExecutionTask, PlanError } from "./planMode.ts";
 import { loadSkills, canonicalSkillDirs } from "./skills.ts";
 import { pluginSkillDirs } from "./plugins.ts";
+// H1：网关逐回合记客户端——每条 HTTP 发起的回合记审计 + 最近客户端账本。
+import { describeGatewayClient, listGatewayClients, recordGatewayRound } from "./gatewayClients.ts";
+// H2：网关 presence（桌面活跃 → 手机通知静默）。
+import { isDesktopActive, isPresenceSurface, listActivePresence, loadGatewayPresence, recordPresenceHeartbeat, shouldNotifyMobile, PRESENCE_ACTIVE_WINDOW_MS, type PresenceSurface } from "./gatewayPresence.ts";
 import { loadModelCache, manualWindowFromConfig, resolveContextWindow, type WindowSource } from "./modelCatalog.ts";
 import { resolveAuxRouting, resolvePlanActRouting } from "./modelRouting.ts";
 import { MCPToolManager, NyraMcpServer, appendMcpServerAudit, buildMcpManager, mcpServerConfig } from "./mcp.ts";
 import { McpCostTracker, estimateToolCost, costLimitUsd } from "./mcpCost.ts";
 import { DeviceRegistry, defaultDevicesPath, startDiscoveryResponder, PairingError } from "./pairing.ts";
+import { FullModeRequests } from "./fullModeRequests.ts";
+import { assertValidPairingPublicKey, encryptTokenForPeer, PairingCryptoError } from "./pairingCrypto.ts";
 import { memoryScopes, memoryView, memorySave, deleteMemoryForScope, MemoryBrowserError } from "./memoryBrowser.ts";
 import { listArtifacts, getArtifact } from "./artifacts.ts";
 import { summarizeLastTurn, type TurnSummary } from "./turnSummary.ts";
@@ -83,11 +89,13 @@ import { rewind as doRewind, storeHistoryToAgentMessages, type RewindAction } fr
 import { MANIFEST, CSP, solidPng } from "./webuiPage.ts";
 // 桌面端界面（按 docs/design 设计稿重做）；旧页 PAGE_HTML 仍从 webuiPage.ts 导出，不再挂在 / 上。
 import { DESKTOP_HTML } from "./webuiDesktop.ts";
-import { keyStatus, setKey, removeKey, maskKey, validateKey, openVault, vaultState, migrateKeysToVault, keysPath } from "./keystore.ts";
+import { keyStatus, setKey, removeKey, maskKey, validateKey, validateProviderKey, openVault, vaultState, migrateKeysToVault, keysPath } from "./keystore.ts";
 import { loadMcpServers } from "./mcp.ts";
-import { saveConfig, configPath } from "./config.ts";
+import { saveConfig, configPath, effectiveModelFor } from "./config.ts";
 import { listMarketplacePublic } from "./marketplace.ts";
 import { listDrafts } from "./skillDrafts.ts";
+import { listLearning, type LearningKind, type LearningStatus } from "./learning.ts";
+import { exportAudit } from "./costCaps.ts";
 import {
   AccountStore, AccountSessionStore, MagicLinkStore,
   loginWithMagicLink, AccountError, type Account,
@@ -118,6 +126,15 @@ export const FORBIDDEN_PAGE = `<!doctype html><meta charset="utf-8"><title>Nyra<
 
 export function isLoopbackHost(host: string): boolean {
   return host === "127.0.0.1" || host === "localhost" || host === "::1" || host === "[::1]";
+}
+
+/** 对端地址是不是本机回环（127.0.0.0/8、::1、IPv4 映射的 ::ffff:127.x）。 */
+export function isLoopbackPeer(addr: string | undefined | null): boolean {
+  if (!addr) return false;
+  const a = addr.trim().toLowerCase();
+  if (a === "::1") return true;
+  const v4 = a.startsWith("::ffff:") ? a.slice(7) : a;
+  return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(v4);
 }
 
 function clip(text: unknown, limit = MAX_EVENT_TEXT): string {
@@ -192,6 +209,17 @@ export interface GatewayOptions {
   shell?: string | null;
 }
 
+/** 路径的最后一段文件夹名：/ 与 \ 都当分隔符（Windows 路径在侧栏不再整串显示）。 */
+export function projectBaseName(path: string): string {
+  const parts = String(path || "").split(/[\\/]+/).filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : String(path || "");
+}
+
+/** 群聊机器人 / 总指挥团队成员的内部会话 id（groups.ts runBot：group-<房间>-<成员>）。 */
+export function isGroupMemberSessionId(id: string): boolean {
+  return /^group-[a-z][a-z0-9_-]*-[A-Za-z0-9_.-]+$/.test(id);
+}
+
 export class Gateway {
   home: string;
   workdir: string;
@@ -218,6 +246,8 @@ export class Gateway {
   server: Server | null = null;
   runs: Map<string, SessionRun> = new Map();
   approvals: Map<string, { run: SessionRun; pending: PendingApproval }> = new Map();
+  /** 手机开完全模式的待确认请求（内存，10 分钟过期，网关重启清掉）。 */
+  fullModeRequests = new FullModeRequests();
   devices: DeviceRegistry;
   /** 缺口 41 下一批：账号目录 / 会话 / magic link 存储（文件版；Postgres 网关接线见已知局限）。 */
   accountsDirectory: AccountStore;
@@ -227,8 +257,9 @@ export class Gateway {
   groups: GroupStore;
   /** 群事件流（总指挥分派、成员交回、群里异步发消息）：手机群聊页轮询 / SSE 读它。 */
   groupEvents = new GroupEventHub();
-  /** 总指挥团队分派起的 chief 会话：会话 id → 团队与纪元（GET /api/teams/runs/:id 用）。 */
-  teamRuns: Map<string, { team_id: string; team_name: string; chief: string; epoch: number | null; task: string; created_at: string }> = new Map();
+  /** 总指挥团队分派起的 chief 会话：会话 id → 团队与纪元（GET /api/teams/runs/:id 用）。 */  teamRuns: Map<string, { team_id: string; team_name: string; chief: string; epoch: number | null; task: string; created_at: string }> = new Map();
+  /** H1：本网关进程启动以来各会话最后一回合是哪个客户端发的（sessionsView 用；持久记录在 gateway-audit.jsonl 里）。 */
+  private lastClientBySession = new Map<string, string>();
   mcpManager: MCPToolManager | null = null;
   mcpCost: McpCostTracker;
   private providerInstance: ProviderLike | null = null;
@@ -259,7 +290,7 @@ export class Gateway {
     const gwProfile = resolveProfile(opts.profile ?? null, this.config);
     const gwManual = manualWindowFromConfig(this.config);
     const gwWindow = resolveContextWindow({
-      model: opts.model ?? gwProfile.model ?? (this.config.model as string | null) ?? null,
+      model: opts.model ?? gwProfile.model ?? effectiveModelFor(this.config, opts.providerName ?? gwProfile.provider) ?? null,
       provider: opts.providerName ?? gwProfile.provider ?? (this.config.provider as string | null) ?? null,
       manual: gwManual.value, manualKey: gwManual.key,
       cache: loadModelCache(this.home),
@@ -579,17 +610,52 @@ export class Gateway {
     // 设计稿 v8（手机列表副标题写结果）：最近 40 个会话附上最后一轮的真实汇总（改了几个文件、跑了几条命令、
     // 有没有 git push）；会话文件超过 4 MiB 的不读，outcome 记 null，界面退回原来的副标题。
     const recentIds = new Set([...byId.values()].sort((a, b) => String(b.mtime).localeCompare(String(a.mtime))).slice(0, 40).map((x) => x.id));
+    // 群聊 / 总指挥团队成员各自的内部会话（id = group-<房间>-<成员>，首条是
+    // 「以下是共享群聊记录…」提示词）不是用户自己的对话：从列表里拿掉，
+    // 归到所属总指挥任务下（member_sessions），会话本身照旧能按 id 打开。
+    const memberSessions = this.groupMemberSessions([...byId.values()]);
+    for (const id of memberSessions.ids) byId.delete(id);
     const sessions = [...byId.values()].map((item) => {
       const workdir = projects[item.id];
       // status：手机列表的状态点用（运行中 / 出错 / 空闲）；没有 live run 的会话一律 idle。
       const status = this.runs.get(item.id)?.status ?? "idle";
       const outcome = recentIds.has(item.id) && status !== "running" ? this.lastTurnOutcome(item.id) : null;
-      return { ...item, workdir: workdir ?? null, project: workdir ? workdir.split("/").pop() ?? null : null, status, outcome };
+      // H1：本网关进程启动以来，这个会话最后一回合是哪个客户端发的
+      // （没跑过回合时 null；持久记录在 gateway-audit.jsonl 里）。
+      const last_client = this.lastClientBySession.get(item.id) ?? null;
+      return { ...item, workdir: workdir ?? null, project: workdir ? projectBaseName(workdir) : null, status, outcome, last_client };
     });
     return {
       sessions,
-      project: { name: this.workdir.split("/").pop() ?? this.workdir, workdir: this.workdir },
+      member_sessions: memberSessions.byRun,
+      project: { name: projectBaseName(this.workdir), workdir: this.workdir },
     };
+  }
+
+  /**
+   * 找出群聊成员的内部会话：ids 是要从会话列表隐藏的全部 id；byRun 把属于
+   * 总指挥任务的那些按任务归组（总指挥 run id → 成员会话摘要）。
+   */
+  private groupMemberSessions(items: { id: string; count: number; mtime: string }[]): {
+    ids: Set<string>;
+    byRun: Record<string, { id: string; member: string; count: number; mtime: string }[]>;
+  } {
+    const ids = new Set<string>();
+    const byRun: Record<string, { id: string; member: string; count: number; mtime: string }[]> = {};
+    const owner = new Map<string, { run: string; member: string }>();
+    try {
+      for (const run of listChiefRuns(this.home)) {
+        for (const m of run.members ?? []) owner.set(`group-${run.room_id}-${m.id}`, { run: run.id, member: m.id });
+      }
+    } catch { /* 总指挥记录读不了时只隐藏，不归组 */ }
+    for (const item of items) {
+      if (!isGroupMemberSessionId(item.id)) continue;
+      ids.add(item.id);
+      const o = owner.get(item.id);
+      if (!o) continue;
+      (byRun[o.run] ??= []).push({ id: item.id, member: o.member, count: item.count, mtime: item.mtime });
+    }
+    return { ids, byRun };
   }
 
   private lastTurnOutcome(sessionId: string): TurnSummary | null {
@@ -1019,6 +1085,18 @@ export class Gateway {
   }
 
   // -- running ------------------------------------------------------------
+  /**
+   * H1：记一回合的客户端——审计行（gateway-audit.jsonl）+ 最近客户端账本
+   * + 内存里的会话归属（sessionsView 的 last_client 用）。审计写失败不
+   * 抛错、不破坏回合本身（recordGatewayRound 内部已吞掉）。
+   */
+  private noteRoundClient(sessionId: string, who: "owner" | "account" | Record<string, unknown> | null, channel: "session" | "group"): void {
+    const ref = describeGatewayClient(who);
+    if (!ref) return;
+    recordGatewayRound(this.home, { sessionId, client: ref.client, kind: ref.kind, channel });
+    this.lastClientBySession.set(sessionId, ref.client);
+  }
+
   send(sessionId: string, text: string, team?: { soulAgent: string; teamId: string; teamEpoch: number | null; display: string }): SessionRun {
     const run = this.getRun(sessionId);
     if (run.status === "running") throw new Error("这个会话正在执行任务，请等它完成");
@@ -1053,7 +1131,7 @@ export class Gateway {
         const provider = this.provider();
         run.agent = new Agent(provider, {
           workdir: this.workdir, mode: this.mode, maxTurns: this.maxTurns ?? 20,
-          sessionId, interactive: true,
+          sessionId, interactive: true, initiator: "gateway",
           messages: loadSession(sessionId, this.home),
           // 总指挥团队分派（POST /api/teams/:id/dispatch）：Soul = 参谋长、团队模式 chief 角色（工具只剩
           // delegate / delegate_parallel，见 team.ts ORCHESTRATOR_TOOLS）；成员的对外动作照常走下面的审批桥。
@@ -1328,7 +1406,7 @@ export class Gateway {
         const results = await runDueTasks(data, async (task) => {
           const agent = new Agent(this.primaryProvider(), {
             workdir: this.workdir, mode: this.mode, maxTurns: this.maxTurns ?? 20,
-            sessionId: `schedule-${task.name}`, interactive: false, home: this.home,
+            sessionId: `schedule-${task.name}`, interactive: false, home: this.home, initiator: "cron",
             // 缺口 30：定时任务是无人值守入口，更要受成本硬顶约束。
             ...this.costOptions(),
             mcpManager: null,
@@ -1418,7 +1496,9 @@ export class Gateway {
     const preset = getProviderPresets(this.config)[provider];
     if (!preset) throw new Error(`未知的 provider：${provider}`);
     if (!preset.envKey || provider === "ollama" || preset.auth === "cli") throw new Error("这个 provider 不使用 API Key");
-    const saved = setKey(preset.envKey, key, this.home);
+    // H5：界面保存 Key 是模型 Key 入口——OAuth 形状的串在这里就拦住（Bot
+    // 电脑凭证不走这里，见 keystore.ts 的 validateProviderKey）。
+    const saved = setKey(preset.envKey, validateProviderKey(key), this.home);
     this.providerInstance = null; // 下次用到时按新 Key 重建
     for (const run of this.runs.values()) {
       if (run.agent && run.status !== "running") { try { run.agent.provider = this.provider(); } catch { /* 还没配好也不拦 */ } }
@@ -1444,7 +1524,8 @@ export class Gateway {
     const resolved: ResolvedProvider = resolveProvider({ home: this.home, config: this.config, providerName: provider, model: model ?? undefined });
     if (resolved.auth === "cli") return { ok: true, provider, masked: "", detail: "cli" };
     let apiKey = resolved.apiKey;
-    if (typeof key === "string" && key.trim()) apiKey = validateKey(key);
+    // H5：网关测 Key 是模型 Key 入口——OAuth 形状的串在这里就拦住，不发出去才发现。
+    if (typeof key === "string" && key.trim()) apiKey = validateProviderKey(key);
     const needsKey = provider !== "ollama" && Boolean(resolved.envKey);
     if (needsKey && !apiKey) return { ok: false, provider, masked: "", status: null, error: "还没有 API Key" };
     const cfg: ResolvedProvider = { ...resolved, apiKey, auth: apiKey ? "env" : "none", hasKey: true, keySource: resolved.keySource };
@@ -1490,6 +1571,7 @@ export class Gateway {
         max_turns: typeof cfg.max_turns === "number" ? cfg.max_turns : 20,
         reasoning_effort: typeof cfg.reasoning_effort === "string" ? cfg.reasoning_effort : null,
         language: typeof cfg.language === "string" ? cfg.language : null,
+        update_check_enabled: cfg.update_check_enabled === true,
       },
       context: {
         auto_compact_enabled: this.autoCompactEnabled,
@@ -1500,7 +1582,7 @@ export class Gateway {
       },
       model: {
         default_provider: typeof cfg.provider === "string" ? cfg.provider : null,
-        default_model: typeof cfg.model === "string" ? cfg.model : null,
+        default_model: effectiveModelFor(cfg, typeof cfg.provider === "string" ? cfg.provider : "deepseek"),
       },
       mcp: { enabled: Boolean(cfg.mcp_enabled), active: Boolean(this.mcpManager), mode_allows: this.mode === "full", servers },
       // P0-3：月度预算（设置页“通用”分区用）：上限、本月已花、是否已明确选定、下次重置日。
@@ -1548,6 +1630,11 @@ export class Gateway {
       if (typeof body.mcp_enabled !== "boolean") throw new Error("mcp_enabled 必须是 true/false");
       patch.mcp_enabled = body.mcp_enabled;
     }
+    if ("update_check_enabled" in body) {
+      // 更新检查 opt-in：默认关闭；只有显式 true 时 `nyra update-check` 才联网。
+      if (typeof body.update_check_enabled !== "boolean") throw new Error("update_check_enabled 必须是 true/false");
+      patch.update_check_enabled = body.update_check_enabled;
+    }
     if ("default_provider" in body) {
       const name = String(body.default_provider);
       const presets = getProviderPresets(this.config);
@@ -1573,7 +1660,7 @@ export class Gateway {
     const unknown = Object.keys(body).filter((k) => ![
       "default_mode", "max_turns", "reasoning_effort", "language", "auto_compact_enabled", "auto_compact_threshold",
       "tool_search_enabled", "mcp_enabled", "default_provider", "default_model",
-      "monthly_cost_limit_usd",
+      "monthly_cost_limit_usd", "update_check_enabled",
     ].includes(k));
     if (unknown.length) throw new Error(`不支持的设置项：${unknown.join(", ")}`);
     if (!Object.keys(patch).length) throw new Error("没有要保存的设置");
@@ -1650,7 +1737,13 @@ export class Gateway {
     return name === "127.0.0.1" || name === "localhost" || name === "[::1]";
   }
 
+  /**
+   * 电脑端自己的 token（启动时随机生成、打印在本机终端/桌面外壳里）只认来自回环地址的连接：
+   * 监听局域网（--pair / --host）时，别的主机就算拿到这个 token 也不算数。
+   * 手机等已配对设备走各自的设备 token（device()），不受这条限制。
+   */
   private tokenOk(req: IncomingMessage): boolean {
+    if (!isLoopbackPeer(req.socket?.remoteAddress)) return false;
     const supplied = req.headers["x-nyra-token"] ?? req.headers["x-angel-token"] ?? "";
     if (!supplied || typeof supplied !== "string") return false;
     const a = Buffer.from(supplied, "utf-8");
@@ -1661,6 +1754,7 @@ export class Gateway {
   /** 页面/manifest/icon 允许 ?token=；API 一律只认请求头。 */
   private pageTokenOk(req: IncomingMessage): boolean {
     if (this.tokenOk(req)) return true;
+    if (!isLoopbackPeer(req.socket?.remoteAddress)) return false;
     try {
       const url = new URL(req.url ?? "/", "http://x");
       const q = url.searchParams.get("token") ?? "";
@@ -1952,6 +2046,27 @@ export class Gateway {
       return;
     }
 
+    // POST /api/pair/encrypted：配对加密版。手机先发临时 ECDH 公钥，网关用它
+    // 把设备 token 加密后发回，token 不再明文过网（见 src/pairingCrypto.ts）。
+    // 明文 /api/pair 保留：已装 APK 与经明文 HTTP 局域网 IP 加载的手机页上
+    // WebCrypto 不可用（crypto.subtle 只在安全上下文里有），仍靠它配对。
+    if (method === "POST" && path === "/api/pair/encrypted") {
+      let body: Record<string, unknown>;
+      try { body = await this.readBody(req); } catch (err) { this.sendError(res, 400, `请求无效：${err instanceof Error ? err.message : String(err)}`); return; }
+      try {
+        // 先验公钥再兑换：公钥非法不能烧掉一次性配对码。
+        assertValidPairingPublicKey(String(body.public_key ?? ""));
+        const device = this.devices.redeem(String(body.code ?? ""), String(body.name ?? ""));
+        const envelope = encryptTokenForPeer(device.token, String(body.public_key ?? ""));
+        this.sendJson(res, 200, { id: device.id, name: device.name, envelope });
+      } catch (err) {
+        if (err instanceof PairingError) this.sendError(res, 401, err.message);
+        else if (err instanceof PairingCryptoError) this.sendError(res, 400, "public_key 不合法");
+        else this.sendError(res, 500, `配对失败：${err instanceof Error ? err.message : String(err)}`);
+      }
+      return;
+    }
+
     // 缺口 41 下一批：magic link 兑换端点（无鉴权：用户点邮件链接时还没有会话 token）。
     // token 从 query 或 body 里拿（邮件链接用 query，CLI 轮询用 body）；redeem 一次性、
     // 15 分钟有效、重放必失败。成功返回账号 + 会话 token（只此一次返回原文）。
@@ -2034,6 +2149,16 @@ export class Gateway {
       this.sendJson(res, 200, { approvals: this.pendingApprovals() });
       return;
     }
+    if (method === "GET" && path === "/api/mode/requests") {
+      if (!isOwner) { this.sendError(res, 403, "只能在电脑上查看完全模式请求"); return; }
+      const requests = this.fullModeRequests.list().map((r) => ({
+        id: r.id, device: r.device,
+        created_at: new Date(r.createdAt * 1000).toISOString(),
+        expires_at: new Date(r.expiresAt * 1000).toISOString(),
+      }));
+      this.sendJson(res, 200, { requests });
+      return;
+    }
     // 缺口 3b：审阅队列（供手机 PWA 的“审阅”标签页消费）。fail-closed：队列只
     // 展示与批复，批复本身不合并代码；合并是单独的 apply 动作（worktree 文件
     // 拷回工作目录），且只接受 approved 的项。
@@ -2051,7 +2176,7 @@ export class Gateway {
       return;
     }
     const reviewGetMatch = /^\/api\/review\/([0-9a-f]{16})$/.exec(path);
-    // 缺口 6：连接器状态（供桌面端连接管理页消费；页面本身在 desktop/，归 Hark）。
+    // 缺口 6：连接器状态（供桌面端连接管理页消费；页面本身在 desktop/）。
     // 只返回状态与账号邮箱，不返回任何 token / client_secret。
     if (method === "GET" && path === "/api/connectors") {
       const gmail = getGmailStatus(this.home, this.config);
@@ -2090,6 +2215,78 @@ export class Gateway {
       } catch (err) { this.sendError(res, 400, `技能草稿读取失败：${err instanceof Error ? err.message : String(err)}`); }
       return;
     }
+    // O5：学习队列只读面（供桌面端/手机 PWA 的学习页消费；只读，不含批准操作——
+    // 批准与发布走 CLI；owner 默认 default，可按 ?owner= 账号 id 看别人的队列，
+    // 网关本身只认机主 token，跨账号查看只在同一台机主电脑上发生）。
+    if (method === "GET" && path === "/api/learning") {
+      try {
+        const owner = query.get("owner") ?? "default";
+        const items = listLearning(this.home, owner, {
+          ...(query.get("status") ? { status: query.get("status") as LearningStatus } : {}),
+          ...(query.get("kind") ? { kind: query.get("kind") as LearningKind } : {}),
+          ...(query.get("shared") === "1" ? { shared: true } : {}),
+        }).map((p) => ({
+          id: p.id,
+          kind: p.kind,
+          owner: p.owner,
+          title: p.title,
+          summary: p.summary,
+          source: p.source,
+          evidence: p.evidence,
+          ref: p.ref,
+          status: p.status,
+          created_at: p.created_at,
+          decided_at: p.decided_at,
+          decision_reason: p.decision_reason,
+          published_ref: p.published_ref,
+          shared_to: p.shared_to,
+          shared_at: p.shared_at,
+        }));
+        this.sendJson(res, 200, { owner, proposals: items });
+      } catch (err) { this.sendError(res, 400, `学习队列读取失败：${err instanceof Error ? err.message : String(err)}`); }
+      return;
+    }
+    // O2：审计导出 API（只读）。与 CLI 的 `nyra governance audit export` 同一份
+    // 导出（JSONL + 哈希链），只是这里返回解析后的 JSON；审计导出本身照常记
+    // audit_exported。只限本机机主（已配对设备也不给）。
+    if (method === "GET" && path === "/api/audit/export") {
+      if (!isOwner) { this.sendError(res, 403, "审计导出只能在电脑上查看"); return; }
+      try {
+        const format = query.get("format") ?? "json";
+        if (format !== "json" && format !== "jsonl") { this.sendError(res, 400, "format 只支持 json 或 jsonl"); return; }
+        const limitRaw = query.get("limit") ?? "5000";
+        const limit = Number(limitRaw);
+        if (!Number.isInteger(limit) || limit < 1 || limit > 50000) { this.sendError(res, 400, "limit 须是 1–50000 的整数"); return; }
+        const sourcesRaw = query.get("sources") ?? "";
+        const result = exportAudit(this.home, {
+          from: query.get("from") ?? undefined,
+          to: query.get("to") ?? undefined,
+          sources: sourcesRaw ? sourcesRaw.split(",").map((s) => s.trim()).filter(Boolean) : undefined,
+          actor: query.get("actor") ?? undefined,
+          type: query.get("type") ?? undefined,
+          scope: query.get("scope") ?? undefined,
+          initiator: query.get("initiator") ?? undefined,
+        });
+        if (result.lines > limit) {
+          this.sendError(res, 400, `记录太多（${result.lines} 条，超过 limit ${limit}）：请加 from/to/source/actor/type/scope/initiator 过滤，或用 nyra governance audit export 导出到文件`);
+          return;
+        }
+        if (format === "jsonl") {
+          res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" });
+          res.end(result.text);
+          return;
+        }
+        const records = result.text.split("\n").filter(Boolean).map((line) => JSON.parse(line) as Record<string, unknown>);
+        this.sendJson(res, 200, {
+          ok: true,
+          lines: result.lines,
+          out_hash: result.outHash,
+          header_hash: result.headerHash,
+          records,
+        });
+      } catch (err) { this.sendError(res, 400, `审计导出失败：${err instanceof Error ? err.message : String(err)}`); }
+      return;
+    }
     if (method === "GET" && reviewGetMatch) {
       try {
         this.sendJson(res, 200, getReviewItem(this.home, reviewGetMatch[1]));
@@ -2110,6 +2307,43 @@ export class Gateway {
         pairing: this.devices.pairingStatus(),
         lan: Boolean(this.pairOrigin),
       });
+      return;
+    }
+    // H1：最近用过哪些客户端（只限机主）：半夜多一个陌生客户端时，
+    // 在这里与 gateway-audit.jsonl 里都能看见。已配对设备也不给——
+    // 客户端清单本身就是审计视角，只有机主能查。
+    if (method === "GET" && path === "/api/clients") {
+      if (!isOwner) { this.sendError(res, 403, "只能在电脑上查看客户端"); return; }
+      this.sendJson(res, 200, { clients: listGatewayClients(this.home) });
+      return;
+    }
+    // H2：网关 presence（只限机主查）：桌面是否活跃、要不要推手机、
+    // 当前活跃的客户端。手机端按 should_notify_mobile 决定推不推通知。
+    if (method === "GET" && path === "/api/presence") {
+      if (!isOwner) { this.sendError(res, 403, "只能在电脑上查看在线状态"); return; }
+      const active = listActivePresence(this.home);
+      this.sendJson(res, 200, {
+        desktop_active: isDesktopActive(this.home),
+        should_notify_mobile: shouldNotifyMobile(this.home),
+        window_ms: PRESENCE_ACTIVE_WINDOW_MS,
+        active: active.map((r) => ({ client: r.client, kind: r.kind, surface: r.surface, last_active: r.last_active })),
+        clients: loadGatewayPresence(this.home).map((r) => ({ client: r.client, kind: r.kind, surface: r.surface, first_seen: r.first_seen, last_active: r.last_active, heartbeats: r.heartbeats })),
+      });
+      return;
+    }
+    // H2：客户端报心跳（任何有效 token 都能报；身份取自 apiAuth，不信任
+    // body 里的 client）。surface 不报时按 kind 推断（owner→desktop，
+    // device→mobile，account→web）。10 秒内重复心跳不写盘，返回 throttled。
+    if (method === "POST" && path === "/api/presence/heartbeat") {
+      const ref = describeGatewayClient(who);
+      if (!ref) { this.sendError(res, 400, "客户端身份无效"); return; }
+      let body: Record<string, unknown> = {};
+      try { body = await this.readBody(req); } catch (err) { this.sendError(res, 400, `请求无效：${err instanceof Error ? err.message : String(err)}`); return; }
+      const surface = body.surface === undefined ? undefined : body.surface;
+      if (surface !== undefined && !isPresenceSurface(surface)) { this.sendError(res, 400, "surface 只允许 desktop|mobile|web"); return; }
+      const out = recordPresenceHeartbeat(this.home, { client: ref.client, kind: ref.kind, surface: surface as PresenceSurface | undefined, source: "heartbeat" });
+      if (!out.ok) { this.sendError(res, 500, "心跳没写上"); return; }
+      this.sendJson(res, 200, { ok: true, throttled: out.throttled, desktop_active: isDesktopActive(this.home), should_notify_mobile: shouldNotifyMobile(this.home) });
       return;
     }
     if (method === "GET" && path === "/api/info") { this.sendJson(res, 200, this.info()); return; }
@@ -2470,10 +2704,38 @@ export class Gateway {
         } catch (err) { this.sendError(res, 400, err instanceof Error ? err.message : String(err)); }
         return;
       }
+      if (method === "POST" && path === "/api/mode/confirm") {
+        if (!isOwner) { this.sendError(res, 403, "只能在电脑上确认完全模式请求"); return; }
+        const requestId = String(body.request_id ?? "");
+        const approve = body.approve === true;
+        const decision = this.fullModeRequests.decide(requestId, approve);
+        if (decision === null) { this.sendError(res, 404, "请求不存在或已过期"); return; }
+        if (!decision) { this.sendJson(res, 200, { rejected: true }); return; }
+        try {
+          const mode = this.setMode("full");
+          this.sendJson(res, 200, { mode });
+        } catch (err) {
+          if (err instanceof Error && err.message.includes("正在执行")) this.sendError(res, 409, err.message);
+          else this.sendError(res, 400, err instanceof Error ? err.message : String(err));
+        }
+        return;
+      }
       if (path === "/api/mode") {
-        // 手机切到全权模式要带二次确认标记（手机设置页两步确认后才发）；电脑端不变。
-        if (!isOwner && String(body.mode ?? "") === "full" && body.confirm !== "full") {
-          this.sendError(res, 400, "手机切换到全权模式需要二次确认");
+        // 手机切到全权模式：手机自己的两次确认不够，须电脑上再确认一次。
+        // 非机主请求 full 只记一笔待确认请求（202），模式不动；机主在电脑上
+        // 用 `nyra gw mode-confirm <id>` 批了才生效。手机发来的 confirm 标记
+        // 不再采信（手机自己断言的不算确认）。已经是 full 时直接回 200。
+        if (!isOwner && String(body.mode ?? "") === "full") {
+          if (this.mode === "full") { this.sendJson(res, 200, { mode: "full" }); return; }
+          const deviceName = typeof who === "object" && who !== null && typeof (who as Record<string, unknown>).name === "string"
+            ? String((who as Record<string, unknown>).name) : "手机";
+          const req = this.fullModeRequests.request(deviceName);
+          this.sendJson(res, 202, {
+            pending: true,
+            request_id: req.id,
+            expires_at: new Date(req.expiresAt * 1000).toISOString(),
+            message: "已发送给电脑确认，请在电脑上确认（10 分钟内有效）",
+          });
           return;
         }
         try {
@@ -2522,10 +2784,14 @@ export class Gateway {
             // 手机群聊页：不等成员回答完，立刻回 202；回答逐条进群事件流（GET /api/groups/:id/events）。
             this.groups.get(groupMsgMatch[1]);
             this.sendGroupAsync(groupMsgMatch[1], String(body.text ?? ""), rounds);
+            // H1：群聊回合也记客户端（202 接受时记，回答是异步跑的）。
+            this.noteRoundClient(`group-${groupMsgMatch[1]}`, who, "group");
             this.sendJson(res, 202, { room: groupMsgMatch[1], accepted: true });
             return;
           }
           const result = await this.groups.send(groupMsgMatch[1], String(body.text ?? ""), rounds);
+          // H1：群聊回合记客户端。
+          this.noteRoundClient(`group-${groupMsgMatch[1]}`, who, "group");
           this.sendJson(res, 200, result);
         } catch (err) { this.sendError(res, 400, err instanceof Error ? err.message : String(err)); }
         return;
@@ -2538,6 +2804,10 @@ export class Gateway {
         if (!text) { this.sendError(res, 400, "消息不能为空"); return; }
         try {
           const run = this.send(sid, text);
+          // H1：每条会话回合记是哪个客户端发的（审计 + 最近客户端账本）。
+          // send 抛错（409 正在跑）时不记；转人工静默也记——消息确实是这个
+          // 客户端发来的，只是 bot 没回。
+          this.noteRoundClient(sid, who, "session");
           this.sendJson(res, 202, { id: sid, status: run.status, error: run.error });
         } catch (err) { this.sendError(res, 409, err instanceof Error ? err.message : String(err)); }
         return;

@@ -16,7 +16,6 @@ import { resolveReviewerModel } from "./reviewer.ts";
 import { markTaskOrigin, readTaskOrigin } from "./taskOrigin.ts";
 import { markTaskOrg } from "./taskOrg.ts";
 import type { TaskOrigin } from "./contentLabels.ts";
-import { pythonJsonDump } from "./pyjson.ts";
 import { t } from "./i18n.ts";
 
 export const TASKS_DIR = "tasks";
@@ -213,7 +212,7 @@ export function appendInbox(runId: string, status: string, summary: string, home
   const fd = openSync(path, "a", 0o600);
   try {
     privateChmod(path, 0o600);
-    writeSync(fd, pythonJsonDump(entry) + "\n", null, "utf-8");
+    writeSync(fd, JSON.stringify(entry) + "\n", null, "utf-8");
     fsyncSync(fd);
   } finally { closeSync(fd); }
 }
@@ -243,7 +242,7 @@ export function markInboxRead(home?: string): number {
   try {
     for (const item of items) {
       if (!item.read) { item.read = true; counted += 1; }
-      writeSync(fd, pythonJsonDump(item) + "\n", null, "utf-8");
+      writeSync(fd, JSON.stringify(item) + "\n", null, "utf-8");
     }
     fsyncSync(fd);
   } finally { closeSync(fd); }

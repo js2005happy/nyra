@@ -41,6 +41,7 @@ import { summarizeModelSavings, formatModelSavings } from "./modelSavings.ts";
 import { toSavingsJson } from "./savingsSummary.ts";
 import { buildVerdict, buildRunVerdict, buildTrendVerdict, formatVerdict, toVerdictJson, guardExitCode, formatGuardLine, type Verdict as VerdictShape } from "./verdict.ts";
 import { subcommandSet } from "./subcommands.ts";
+import { suggestSubcommand, findUnknownFlag, SUBCOMMAND_FLAGS } from "./cliTypos.ts";
 import { checkDocs } from "./docCheck.ts";
 import type { RedlineResult } from "./redlines.ts";
 import { measureToolBudget, filterSchemas, summarizeSavings, formatToolBudget } from "./toolBudget.ts";
@@ -92,6 +93,9 @@ import { handleRoster } from "./roster.ts";
 import { handleSideEffects } from "./sideEffects.ts";
 import { handleHeartbeat } from "./heartbeat.ts";
 import { handleGovernance } from "./governance.ts";
+import { handlePolicy } from "./policy.ts";
+import { handleLearn } from "./learningCli.ts";
+import { handleComponents } from "./componentsCli.ts";
 import { handleTrust } from "./trustLadder.ts";
 import { makeTieredCapCheck, type TieredCtxHolder } from "./costCaps.ts";
 import { handleOptimize } from "./optimizer.ts";
@@ -127,6 +131,7 @@ import { listHookEntries, runHooks, HOOK_EVENTS } from "./hooks.ts";
 import { runStatusChecks, formatStatusReport } from "./status.ts";
 import { Gateway } from "./gateway.ts";
 import { GatewayClient } from "./gatewayClient.ts";
+import { checkForUpdates, isUpdateCheckEnabled } from "./updateCheck.ts";
 import { ConversationStore } from "./conversations.ts";
 import { rewindTo, rewindEdit, rewindFork, storeHistoryToAgentMessages } from "./rewind.ts";
 import { ShadowSnapshotStore, buildRestoreNote, type RestoreMode, type RestoreResult, type SnapshotRecord } from "./shadowSnapshots.ts";
@@ -138,6 +143,7 @@ import { handleOrg } from "./orgCli.ts";
 import { handleSession } from "./session.ts";
 import { callLedgerMain } from "./callLedger.ts";
 import { budgetMain } from "./budgetCli.ts";
+import { usageMain } from "./usageCli.ts";
 import { aguiMain } from "./agui.ts";
 import { handleScreen } from "./botScreen.ts";
 import { handleScreenTakeover } from "./botTakeover.ts";
@@ -154,7 +160,7 @@ import { buildNotifierFromConfig, handleBot, type BotNotifier } from "./bot/inde
 import { handleChannels } from "./channels/cli.ts";
 import { resolveAgentWorkdir } from "./bot/binding.ts";
 import {
-  PluginError, installPlugin, uninstallPlugin, listPlugins, verifyPlugin,
+  PluginError, installPlugin, uninstallPlugin, listPlugins, listPluginTombstones, verifyPlugin,
   setPluginStatus, setPluginPinned, pluginSkillDirs, auditPlugins, searchRegistry,
   STALE_AFTER_DAYS,
 } from "./plugins.ts";
@@ -178,10 +184,11 @@ nyra --list-models [--provider 名字]   列出该来源的已知模型
 nyra --list-profiles           列出已配置的 provider 档案
 nyra --list-skills             列出已加载的技能
 nyra --list-sessions           列出历史会话
-nyra --list-mcp                列出已配置的 MCP 服务器与预置（第 3 阶段原生）
+nyra --list-mcp                列出已配置的 MCP 服务器与预置
 nyra ui [--host 127.0.0.1] [--port 8765] [--pair] [--open]   启动 gateway 网页界面
 nyra ui --print-url-json --exit-on-stdin-close   桌面外壳模式：stdout 首行一行 JSON，stdin 关闭即退出
-nyra gw <sessions|send|view|approve|rewind|info|schedule>   连正在跑的 gateway 当客户端
+nyra gw <sessions|send|view|approve|rewind|info|clients|presence|presence-heartbeat|schedule|mode-requests|mode-confirm>   连正在跑的 gateway 当客户端（clients：最近用过哪些客户端；presence：桌面是否活跃、手机通知推不推；presence-heartbeat：报一次心跳）
+nyra update-check   手动检查一次新版本（默认关闭：须先在设置里开启更新检查，否则不联网）
 nyra --compact <会话 ID>       压缩指定会话后退出
 REPL：/context 查看上下文占用；/compact focus <关键词> 按重点压缩会话（详见 docs/context.md）
 nyra --resume <会话 ID>        继续指定会话
@@ -190,8 +197,8 @@ nyra evidence verify <运行 ID>   独立复核运行的证据链（工具调用
 nyra timeline <运行 ID> [--verbose] [--json] [--out <路径>]   执行时间线：按时间重建一次多 agent 任务（只读回放，不重新执行，详见 docs/timeline.md）
 nyra replay <运行 ID> [--verbose]   会话回放：按轮次逐步重现一次运行的关键步骤（只读，不重新执行）
 nyra regression <list|precipitate --run <运行 ID>|remove <用例 id>|status <用例 id> <open|verified|retired>>   回归测例库：把一次运行的失败步骤沉淀为回归用例（只记元数据，不调模型、不自动重跑，详见 docs/regression.md）
-nyra contract <create|list|show|activate|attach|verify|mark-item|remove|stats>   交付契约（缺口 29）：接单时先定验收标准（交付物 + 检查清单），跑完逐项打分，全部通过才算被接受（详见 docs/delivery-contract.md）
-nyra golden <add|list|show|remove|run|rescore>   Golden 测试集（G-2）：固定输入 + 期望输出 + 期望工具轨迹，跑分看结果分与轨迹分（详见 docs/delivery-contract.md）
+nyra contract <create|list|show|activate|attach|verify|mark-item|remove|stats>   交付契约：接单时先定验收标准（交付物 + 检查清单），跑完逐项打分，全部通过才算被接受（详见 docs/delivery-contract.md）
+nyra golden <add|list|show|remove|run|rescore>   Golden 测试集：固定输入 + 期望输出 + 期望工具轨迹，跑分看结果分与轨迹分（详见 docs/delivery-contract.md）
 nyra "任务" --contract <契约 id>   本次运行挂上已激活的交付契约，收尾逐项打分进运行报告
 nyra kanban <create|list|show|start|fail|review|decide|verify|done|reset|remove|tick|sweep>   持久任务板：任务是账本里的一行，崩溃不丢、熔断进 blocked、完成须附验证证据（详见 docs/kanban.md）
 nyra goal <create|list|show|add-item|start-item|verify-item|complete|pause|resume|cancel|instruct|link|split>   长目标对象：目标陈述 + 动态进度清单 + 逐项验证，全部通过才标完成；中途加指令不丢目标，可暂停/恢复/取消（详见 docs/goal-object.md）
@@ -200,28 +207,34 @@ nyra roster <list|show>   实时花名册：每个子 agent 一行——状态 +
 nyra side-effects <list|show|record|mark|recover>   先存后做的副作用队列：执行前先落库，重启按年龄恢复、带 recovery note（详见 docs/kanban.md）
 nyra heartbeat <add|list|remove|enable|disable|run|wake|check-script|seen-clear|commitments>   静默巡查：无事安静、有发现先记证据再写收件箱；重复异常指纹去重只通知一次；本地脚本预检（零 Token）与唤醒主控默认关；推断承诺须用户确认一次、过期自动失效（详见 docs/heartbeat.md）
 nyra fanout <list|show|recover>   后台扇出：顶层委派立即回 handle，跑完单条回填收件箱；跑一半的进程退出后须 recover 回收（详见 docs/merge-fanout.md）
-nyra team <create|list|show|add|remove|dissolve|dispatch|handover|lead|writer>   团队模式（新缺口 52）：参谋长独占入口，只拆解、分派、汇总；成员须有完整 Charter 才能接单；交接走 inbox/outbox/变更日志；对外动作一律回参谋长/人批；lead 租约 + 纪元防旧参谋长晚到指令（详见 docs/team.md）
+nyra team <create|list|show|add|remove|dissolve|dispatch|handover|lead|writer>   团队模式：参谋长独占入口，只拆解、分派、汇总；成员须有完整 Charter 才能接单；交接走 inbox/outbox/变更日志；对外动作一律回参谋长/人批；lead 租约 + 纪元防旧参谋长晚到指令（详见 docs/team.md）
 nyra governance <policy|mandate|mode|dry-runs>   企业治理：版本化策略 + 不可变授权 + observe/auto 接单模式 + 干跑记录（详见 docs/governance.md）
 nyra governance caps <set|list|show|check|assign-team|pause|resume|discard|pauses>   分层成本上限：按 Bot/角色/团队/人设设月度上限，触顶进可恢复暂停态
 nyra governance audit <export|verify>   审计导出：治理审计日志导出给 SIEM（JSONL + 哈希链，可验证）
+nyra governance audit export [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--source <来源>] [--actor <主体>] [--type <事件类型>] [--scope <deployment|org>] [--initiator <触发方>]   审计导出：按时间/主体/事件类型/范围/触发方过滤导出给 SIEM（详见 docs/governance.md）
+nyra governance audit deployment [--all] [--json]   部署级审计：部署/升级/回滚记录（详见 docs/governance.md）
+nyra governance deploy <说明> [--kind deploy|upgrade|rollback]   部署：记一笔部署级审计（部署/升级/回滚，详见 docs/governance.md）
+nyra policy <list|add|remove|enable|disable|test|dry-run|status>   策略网关：CEL 风格规则表达式，执行前按规则放行/拒绝/要求审批，拒绝进证据链（详见 docs/policy.md）
+nyra learn <list|scan|show|propose|approve|reject|publish|share|remove>   学习队列：候选记忆/技能草稿/agent 声明的人工审核与发布，学习永远要人批（详见 docs/learning.md）
+nyra components <list|block|unblock>   生成式 UI：白名单组件（table/card/list/code/chart-bar）与每 Bot 屏蔽表（详见 docs/components.md）
 nyra optimize <propose|list|show|edit|approve|reject|apply|verify|revert|loop|arms>   带人批的自优化环：只起草改指令建议，须人批才生效，三数据集 + holdout 定放行；loop 读评测报告自动起草并按 UCB 排队（详见 docs/governance.md）
 nyra eval <scenarios|scorecard|benchmarks|import|benchmark|remove|probes|probe|manifest>   评测当一等公民：场景成绩单 + 外部基准集导入 + 仓内探针 + 可复现清单（只读为主，跑评测走 bun run scripts/eval.ts；详见 docs/eval.md）
-nyra trust <register|list|show|evidence|promote|demote|review|check>   信任阶梯（GROK-6，缺口 43 治理深化）：新 agent / 新技能默认只读，攒够 N 次连续成功且零违规才升一级；每次记成功有概率被随机抽查，抽中须复核才计入；降级随时可做（详见 docs/trust-ladder.md）
-nyra workflow <import|list|show|run|dry-run|resume|trial|activate|remove|verify|triggers>   声明式可复用工作流（缺口 25）：YAML/JSON 定义 + 三种执行形态（固定图/协调者/动态）+ 审批节点 + dry-run，激活前须真实数据试跑 + 人工确认；触发器执行默认关，须显式开启（详见 docs/workflow.md）
-nyra checkpoint <list|show|history|update|replay|store>   步级检查点 + 时间旅行（G-P1-40）：每步存状态快照，回到某一步改值重放后续步骤；只有 fixed 形态能重放，花钱/审批的步骤须 --yes（详见 docs/step-checkpoints.md）
-nyra interrupt <list|show|respond|edit|resume>   结构化人机回环（G-P1-41）：工作流在配了 interrupt_before/after 的步骤前后停住，人回 accept/ignore/respond/edit 再原地续跑；只认 fixed 形态顶层步骤（详见 docs/interrupts.md）
-nyra intervention <list|add|remove|enable|disable|on|off|log|test>   运行时消息拦截（G-P2-1）：群聊 / A2A / AG-UI 入口对方 agent 发来的消息先过拦截器，可记日志、改写、丢弃；默认只记日志，drop / rewrite 须机主显式 enable，机主消息永远不拦截（详见 docs/interventions.md）
-nyra admission <log|show|who-approved|policy-history|export>   企业级准入账本（G-P2-2）：好友批准、进圈/离圈、策略变更、token 发放/吊销都记进同一本只追加账本，只记元数据与指纹，不记 token 原文（详见 docs/admission.md）
-nyra middleware <status|enable|disable|set|approval|cache-clear>   类型化中间件链（G-P2-4）：chat / function / agent 三层可组合链，内置校验、重试、缓存、token 计数；默认只开校验与 token 计数，重试与缓存默认关；审批模式按工具配（详见 docs/middleware.md）
+nyra trust <register|list|show|evidence|promote|demote|review|check>   信任阶梯（治理）：新 agent / 新技能默认只读，攒够 N 次连续成功且零违规才升一级；每次记成功有概率被随机抽查，抽中须复核才计入；降级随时可做（详见 docs/trust-ladder.md）
+nyra workflow <import|list|show|run|dry-run|resume|trial|activate|remove|verify|triggers>   声明式可复用工作流：YAML/JSON 定义 + 三种执行形态（固定图/协调者/动态）+ 审批节点 + dry-run，激活前须真实数据试跑 + 人工确认；触发器执行默认关，须显式开启（详见 docs/workflow.md）
+nyra checkpoint <list|show|history|update|replay|store>   步级检查点 + 时间旅行：每步存状态快照，回到某一步改值重放后续步骤；只有 fixed 形态能重放，花钱/审批的步骤须 --yes（详见 docs/step-checkpoints.md）
+nyra interrupt <list|show|respond|edit|resume>   结构化人机回环：工作流在配了 interrupt_before/after 的步骤前后停住，人回 accept/ignore/respond/edit 再原地续跑；只认 fixed 形态顶层步骤（详见 docs/interrupts.md）
+nyra intervention <list|add|remove|enable|disable|on|off|log|test>   运行时消息拦截：群聊 / A2A / AG-UI 入口对方 agent 发来的消息先过拦截器，可记日志、改写、丢弃；默认只记日志，drop / rewrite 须机主显式 enable，机主消息永远不拦截（详见 docs/interventions.md）
+nyra admission <log|show|who-approved|policy-history|export>   企业级准入账本：好友批准、进圈/离圈、策略变更、token 发放/吊销都记进同一本只追加账本，只记元数据与指纹，不记 token 原文（详见 docs/admission.md）
+nyra middleware <status|enable|disable|set|approval|cache-clear>   类型化中间件链：chat / function / agent 三层可组合链，内置校验、重试、缓存、token 计数；默认只开校验与 token 计数，重试与缓存默认关；审批模式按工具配（详见 docs/middleware.md）
 nyra delegate "<任务>" [--preset <预设名>] [--max-turns <1-12>] [--model <模型>] [--agent <成员>] [--json]   一次性委派：派一个子 agent 跑任务并打印摘要；--preset 指定具名预设（review 是只读预设），不给时按项目默认 → 用户默认 → general-purpose 解析（详见 docs/subagent-presets.md）
-nyra agent <load|show|list|remove|run>   声明式 agent（G-P2-5）：一个 YAML 文件声明一个 agent（instructions + tools + workflow），load 校验并注册，run 用声明跑一轮；tools 是白名单上限、与预设交集只能收窄（详见 docs/agent-decl.md）
-nyra template <list|show|builtin|import|trial|activate|run|dry-run|remove|publish|install>   业务流程模板库（缺口 46）：流程 DSL + 连接器 + 验收标准 + 试跑数据，激活前须真实数据试跑 + 人工确认，随机器人市场分发（详见 docs/templates.md）
+nyra agent <load|show|list|remove|run>   声明式 agent：一个 YAML 文件声明一个 agent（instructions + tools + workflow），load 校验并注册，run 用声明跑一轮；tools 是白名单上限、与预设交集只能收窄（详见 docs/agent-decl.md）
+nyra template <list|show|builtin|import|trial|activate|run|dry-run|remove|publish|install>   业务流程模板库：流程 DSL + 连接器 + 验收标准 + 试跑数据，激活前须真实数据试跑 + 人工确认，随机器人市场分发（详见 docs/templates.md）
 nyra script check <文件> [--language python|javascript|lua|php]   判定一个脚本纯不纯（白名单静态分析）：纯返回 0，不纯返回 1
 nyra script preauth <list|grant|revoke> --workflow <名字>   脚本摘要预授权：激活时自动钉纯脚本摘要，内容一改授权失效；只在例行里有效（详见 docs/script-purity.md）
 nyra handover contract <create|list|show|check|resolve|close>   交接契约的程序化验收（Pi Bot 借鉴第 2 条）：交付物 + 验收项 + 修正轮次上限；验收是程序核对，不调模型，不过打回、轮次用完停下等人（详见 docs/handover-contract.md）
 nyra handover checkers   列出能用的 checker（验收项只能挂这些）
 nyra reconciler <scan|status|enable|disable|config|settle>   卡住步骤看门狗（Pi Bot 借鉴第 3 条）：working 任务超时无进展先标出来、再按轮次上限自动重排、超限进 blocked 只等人；自动巡查默认关（详见 docs/reconciler.md）
-nyra watch <add|list|show|remove|check|enable|disable|config|run-action>   变化监测例程（缺口 32）：盯页面或文件，变了才汇报（变了什么 → 详情 → 来源）；带动作的另声明条件与动作，下载类敏感动作须人批；自动巡查默认关（详见 docs/watch.md）
+nyra watch <add|list|show|remove|check|enable|disable|config|run-action>   变化监测例程：盯页面或文件，变了才汇报（变了什么 → 详情 → 来源）；带动作的另声明条件与动作，下载类敏感动作须人批；自动巡查默认关（详见 docs/watch.md）
 nyra restore [检查点] [--mode both|files|session]   从影子快照恢复文件与会话（不带参数列出检查点，详见 docs/shadow-snapshots.md）
 nyra redlines [--json]         上线红线自检：证据/权限/沙箱/成本/钩子（--json 给 CI 按 code 判定）
 nyra verdict [任务] [--json]     一条结论：这次跑得值不值（红线+省钱+回忆+历史）
@@ -237,21 +250,22 @@ nyra gmail <status|auth|search|read|send|drafts|send-draft|labels|label|mark-rea
 nyra shopify <auth|status|products|product|orders|order|fulfill|inventory>   Shopify 原生连接器（只读）：查商品 / 订单 / 订单履约核查 / 库存（详见 docs/connectors.md）
 nyra slack <auth|status|channels|history|send|card|callback>   Slack 原生连接器：读频道 / 消息、发消息（须显式批准）、发审批卡、按钮回调回写审批桥（详见 docs/connectors.md）
 nyra connector <status|list|approve|revoke|auth|install|uninstall|usage|flows|flow|bundle>   连接器目录：安装 / 一键授权 / 撤销 / 用量 / 业务流程 / 导出连接器包（详见 docs/connectors.md）
-nyra mcp server <status|enable|disable|allow-writes-on|allow-writes-off>   对外 MCP 服务开关：别的 agent 经网关 POST /mcp 调记忆与任务（默认关闭，详见 docs/mcp.md）
+nyra mcp <server <status|enable|disable|allow-writes-on|allow-writes-off>|contract>   对外 MCP 服务开关与最小稳定契约：别的 agent 经网关 POST /mcp 调记忆与任务（默认关闭，详见 docs/mcp.md）；contract 打印 10 条命令的 nyra-contract-v1（详见 docs/agent-contract.md）
 nyra peer <status|enable|disable|list|auth|ask|handoff|card|code|add|request|accept|friends|block|circle|share|grant|proposal|branch|discover|token>   对端协作：问别的 Nyra 实例、交接运行上下文、名片加好友、带 scope 可吊销的 grant、对方写操作提议、外来分支合入、公开发现与 per-peer token、名片 JWS 签名（默认关闭，详见 docs/peer.md 与 docs/peer-discovery.md）
 nyra circle <create|list|show|invite|revoke|delete|bind|unbind|owner|check|bindings>   信任圈：谁能给 agent 发任务（默认全封闭，圈外消息网关直接丢弃，详见 docs/circles.md）
-nyra org <create|list|show|add|remove|role|delete|check|share|shared|grant-write|learnings|workspace|file-read|cross-access|catalog|tasks|task-add|violations|isolation|memory>   组织与团队 workspace：组织/成员/角色 admin/member/viewer，机主是超级管理员；第二批：共享 Bot 默认只读、租户隔离、组织内私有目录（详见 docs/orgs.md）
+nyra org <create|list|show|add|remove|role|delete|check|sso|share|shared|grant-write|learnings|workspace|file-read|cross-access|catalog|tasks|task-add|violations|isolation|memory>   组织与团队 workspace：组织/成员/角色 admin/member/viewer，机主是超级管理员；共享 Bot 默认只读、租户隔离、组织内私有目录（详见 docs/orgs.md）
 nyra session <create|list|show|join|join-request|join-approve|join-decline|join-list|leave|delegate|accept|complete|share|frame|record|end>   跨 agent 联合会话：多人多 agent 视频会（本地扇出模型），会内委派 + 共享任务产物（allowlist），画面默认不留存、录制须全体同意；好友进会要批、默认只读（详见 docs/sessions.md）
 nyra sfu <create|rooms|status|join|leave|turn|record|close|reclaim|video>   群组语音 SFU（本地实现，选型 mediasoup）：语音房 + 成员 + TURN 凭据 + 录制全体同意门；video 是群组视频（Producer/Consumer、按需看帧、带宽自适应、10 分钟模拟；真媒体面等 mediasoup 接线，详见 docs/sfu.md 与 docs/group-video.md）
 nyra meeting <create|list|join|reconnect|transcript|minutes|record|dispatch>   进外部会议：Meet/Zoom 受控浏览器进会、听字幕出纪要；进会、录制、发言都要机主批（详见 docs/meeting.md）
 nyra rendezvous <register|nodes|route|status|remove|epoch>   Rendezvous 多节点路由：HRW 一致性哈希把任务 key 路由到节点（本机/局域网节点，详见 docs/mesh.md）
 nyra queue <enqueue|list|show|claim|complete|fail>   队列驱动底座：幂等键入队、节点认领 + 租约、纪元防旧指令重执行（详见 docs/mesh.md）
-nyra group <room|chat|plan>   群聊：房间与机器人、swarm 顺序发言（可组合终止条件）、群组计划引擎（步骤 worktree 隔离 + 独立验收，详见 docs/group-chat.md 与 docs/group-plan.md）
+nyra group <room|chat|plan|route>   群聊：房间与机器人、swarm 顺序发言（可组合终止条件）、群组计划引擎（步骤 worktree 隔离 + 独立验收）、Jev 路由干跑（详见 docs/group-chat.md 与 docs/group-plan.md）
 nyra call <ledger|show <通话 id>|summary>   通话成本与隐私仪表：每通电话三本账（传输 / 媒体 / token），录制默认关、须全体同意，纪要进证据链（详见 docs/call-ledger.md）
 nyra budget <list|show|reserve|settle|release|strict>   并发预算预留：模型调用前先预留额度、超上限不发请求；金额未知默认暂停等人工处理（详见 docs/budget.md）
+nyra usage [--agent <id>] [--json]   每 Bot 用量仪表：当日/当月已花多少、每 Bot 上限是多少、到 80% 了没有（详见 docs/budget.md）
 nyra agui <register|list|show|link|connect|disconnect|send|exec|accept-write|revoke-write|a2a|serve>   协议中立接入：接任意 AG-UI endpoint 当 Bot（只读先行，写操作须机主显式接受），A2A 复用名片 + 交接；serve 把 Nyra 对外暴露成 AG-UI endpoint（详见 docs/agui.md）
-nyra screen <watch|activity|status|takeover|handover> <电脑 id>   缺口 50：只读看屏（实时画面 + 活动列表，帧指纹不记帧内容）与接管（take the wheel，须确认；接管期间 Bot 暂停、交还后从挂起点继续，全程记审计）；画面里密码/验证码/卡号自动打码（详见 docs/bot-screen.md）
-nyra computer <status|grant|grants|blocklist|activity|display|require>   G-P1-35：真机电脑操作守卫——禁碰窗口名单、可撤销授权、虚拟桌面 Xvfb、每一次动作留痕（详见 docs/computer-guard.md）
+nyra screen <watch|activity|status|takeover|handover> <电脑 id>   只读看屏（实时画面 + 活动列表，帧指纹不记帧内容）与接管（take the wheel，须确认；接管期间 Bot 暂停、交还后从挂起点继续，全程记审计）；画面里密码/验证码/卡号自动打码（详见 docs/bot-screen.md）
+nyra computer <status|grant|grants|blocklist|activity|display|require>   真机电脑操作守卫——禁碰窗口名单、可撤销授权、虚拟桌面 Xvfb、每一次动作留痕（详见 docs/computer-guard.md）
 nyra voice <status|speak <文字>|enable-tts|disable-tts>   语音指挥：看配置与可用性、读一段文字、开关自动回读（详见 docs/voice.md）
 nyra voice call <start|answer|decline|end|status|list|segment|confirm|note|notes|hooks>   实时语音通话：建通话、喂音频段落转写、可选回读（本地 whisper 优先，云端默认关；详见 docs/voice.md）
 nyra video <call|signal|ice>   视频通话 + 按需视觉采样：信令 + TURN + ICE 直连传输，帧按需看（本地优先，云端默认关；详见 docs/video-call.md）
@@ -273,27 +287,27 @@ nyra hitl <start|takeover|handback|cancel|status|list>   对话转人工坐席�
 nyra events <list|add|remove|enable|disable|test|poll>   事件触发任务：webhook 与新邮件触发进任务队列（详见 docs/event-triggers.md）
 nyra thread <create|list|search|show|copy|prune|state|history|runs|cron-add|cron-remove|crons|archive|unarchive|remove>   远端线程操作 API：建线程、搜线程、复制接着跑、剪历史、读写状态、给线程绑 cron（详见 docs/threads.md）
 nyra automation <list|show|install|remove|suggested>   自动化 bundle：一次装好整条自动化，自带建议触发器（详见 docs/automations.md）
-nyra cron <incidents|policy|hold>   cron 成熟语义：漏跑补跑策略（once/skip）+ 配额 hold + 事故账（详见 docs/cron-maturity.md）
+nyra cron <incidents|policy|hold>   cron 成熟语义：漏跑补跑策略（once/skip）+ 配额 hold + 事故账 + 例行护栏（15 分钟下限、最多 20 个启用、连败 10 次自动关闭，详见 docs/cron-maturity.md）
 nyra backend <list|use|status|docker|ssh|e2b>   命令后端可换：本机 / Docker / SSH / E2B 控制面 / 云端（未接线），默认本机（详见 docs/command-backends.md）
 nyra mail-inbox <status|enable|disable|allowlist|set|poll>   邮件即任务入口：白名单发件人的邮件直接进任务队列，跑完回信（详见 docs/mail-inbox.md）
 nyra responsibility <list|add|set|remove|enable|disable|check|pause|resume|complete|cancel|brief|show>   持续责任语义：责任对象（归属人 + 验收标准 + 升级条件 + 过期时间）与晨间简报，无事安静（详见 docs/responsibilities.md）
-nyra bot telegram <start|stop|status>   Bot 方向 Phase 1：Telegram 渠道（长轮询收消息、会话串行、去重配额、确定性指令；外部用户强制只读，详见 docs/bot.md）
+nyra bot telegram <start|stop|status>   Telegram 渠道（长轮询收消息、会话串行、去重配额、确定性指令；外部用户强制只读，详见 docs/bot.md）
 nyra bot discord <start|stop|status>   Bot 渠道：Discord（Gateway 收消息 + REST 发消息，详见 docs/bot.md）
 nyra bot slack <start|stop|status>   Bot 渠道：Slack（Socket Mode 收事件 + Web API 发消息，需 app token + bot token，详见 docs/bot.md）
 nyra bot whatsapp <start|stop|status>   Bot 渠道：WhatsApp（Cloud API 发消息 + webhook 收消息，需 access token + 号码 id + 公网入口，详见 docs/bot.md）
-nyra bot computer <create|list|status|sleep|wake|remove|credential|shell|sleep-due>   Bot 缺口 42：每 Bot 一台持久电脑（持久 workspace + 浏览器 profile + 凭证 Vault + 隔离分级，详见 docs/bot-computer.md）
+nyra bot computer <create|list|status|sleep|wake|remove|credential|shell|sleep-due>   Bot：每 Bot 一台持久电脑（持久 workspace + 浏览器 profile + 凭证 Vault + 隔离分级，详见 docs/bot-computer.md）
 nyra bot status   Bot 总览：Telegram/Discord/Slack/WhatsApp 运行态 + 电脑数量与资源
-nyra channels <start|stop|status|health|bindings|explain>   缺口 27：常驻多渠道网关（四渠道一个进程、bindings 确定性路由、渠道会话默认进沙箱、每条入站路由进证据链，详见 docs/channels.md）
-nyra bot redlines <status|list|show|tighten|loosen|set>   Bot 缺口 51：业务动作硬红线表——发消息/付款/删除永远须人批，转钱/交易证券永远禁做（详见 docs/business-redlines.md）
+nyra channels <start|stop|status|health|bindings|explain>   常驻多渠道网关（四渠道一个进程、bindings 确定性路由、渠道会话默认进沙箱、每条入站路由进证据链，详见 docs/channels.md）
+nyra bot redlines <status|list|show|tighten|loosen|set>   Bot：业务动作硬红线表——发消息/付款/删除永远须人批，转钱/交易证券永远禁做（详见 docs/business-redlines.md）
 nyra reviewer <status|enable|disable|set-model|add-rule|remove-rule|list-rules|check>   独立审查层：敏感工具调用先过独立审查 agent（便宜模型、独立上下文），审查失败即拦截（详见 docs/reviewer.md）
 nyra judge <status|enable|disable|set-model|set-thresholds|check|verdicts>   意向验证 judge：敏感工具调用先打风险分（0-100 + 引用证据），高分拒绝、中段转人工；verdicts 查两层验证结论账本（启发式 + judge，详见 docs/tool-judge.md）
 nyra verifier <status|enable|disable|set-model|rework-on|rework-off|add-rule|remove-rule|list-rules|check>   验收者：并行产出合入前先过验收门（确定性检查 + 便宜模型复核），未通过打回重做（详见 docs/verifier.md）
 nyra skills <status|enable|disable|draft|drafts|show|approve|reject|archive|sweep>   技能自沉淀：成功任务自动起草技能草稿，人工批准后才安装，低质自动归档（详见 docs/skill-sedimentation.md）
 nyra bughunt <install|status|scope|template|check>   授权漏洞挖掘技能包：范围卡 + 证伪验证 + 提交前七问 + 证据卫生，提交前核对（详见 docs/bughunt.md）
-nyra market <list|show|source|install|uninstall|installed|publish|template>   内置机器人市场：浏览、安装、发布技能包、机器人配置与业务流程模板（第一阶段：静态策展仓库 + 本地客户端，详见 docs/marketplace.md）
+nyra market <list|show|source|install|install-team|update|uninstall|installed|publish|template>   内置机器人市场：浏览、安装、更新、发布技能包、机器人配置与业务流程模板、一个 Markdown 装一整队（静态策展仓库 + 本地客户端，详见 docs/marketplace.md）
 nyra account <status|login|logout|list|revoke|link|suspend|reactivate>   用户账号登录：Google / GitHub / 邮箱 / SSO，账号身份 + 会话（详见 docs/accounts.md）
 nyra cloud <status|connect|disconnect|sync|push|pull|pref|devices|set-url>   手机云端连接：账号登录后直连云端服务、跨端同步，不走局域网（详见 docs/mobile-cloud.md）
-nyra sso <provider|login|status|scim>   企业 SSO：OIDC 身份提供方注册与登录、SCIM 账号开通（详见 docs/sso.md）
+nyra sso <provider|login|route|status|scim>   企业 SSO：OIDC 身份提供方注册与登录、邮箱域名路由、组织强制 SSO、SCIM 账号开通（详见 docs/sso.md）
 nyra kb <create|list|add|search|ask|remove|test>  本地知识库：外部文档（文本/Markdown/PDF/网页）收录、分块、BM25 检索 + 检索测试台（详见 docs/knowledge.md）
 nyra search <关键词> [--scope project|all] [--session <会话 id>] [--after <日期>] [--before <日期>] [--limit <n>] [--export <路径>] [--json]  会话全文搜索：搜自己过去的对话，按会话分组回命中消息与上文下文；不给关键词列出最近会话，--export 把会话全文导出为 Markdown（详见 docs/session-search.md）
 nyra editor <serve|status|snapshot|ask|preview|apply|hosts>  编辑器插件：编辑器桥服务（VS Code / JetBrains / Zed 共用同一协议），快照带光标选区与诊断进模型上下文，diff 预览不动磁盘、应用须显式确认（详见 docs/editor-plugins.md）
@@ -305,7 +319,9 @@ nyra creator "<一句话需求>" [--yes]   创造模式：一句话搓出插件�
 nyra memory <export|export-prompt|import|local|import-zip|search|forget|remember|entries|entry|update|rejections|recall|extract|review>  记忆交换与检索/删除；remember/entries/entry/update/rejections 走记忆证据门（写记忆须附用户原话依据，详见 docs/memory.md）；remember/entries 支持 --org 组织记忆；recall 是主动记忆开关与试跑（默认关，详见 docs/memory.md）；extract/review 是对话里自动提炼候选记忆、进库前人工确认（详见 docs/memory.md）
 nyra soul <show|status|list|init|add|remove|enable|disable|edit|export|import>  Soul 身份层：每 agent 的身份与 Tenets（不变量进规则层、代码拦截；Charter 角色契约见 nyra soul charter <set|show|clear>，详见 docs/soul.md 与 docs/team.md）
 nyra style <learn|show|list|delete|export|import>  分应用文风学习（详见 docs/style.md）
-nyra doctor [--provider 名字]  中文自检：运行时、配置文件、配置目录、Key、网络、磁盘、写权限、密码箱权限
+nyra doctor [--provider 名字] [--deep]  中文自检：运行时、配置文件、配置目录、Key、网络、磁盘、写权限、密码箱权限；--deep 追加免疫体检（大脑自检，不合格的进隔离区，详见 docs/immune.md）
+nyra dream <status|enable|disable|set|run>  夜间做梦代谢：每夜提炼记忆候选、剪掉重复与过期、写小结进晨间简报（默认关，详见 docs/dream.md）
+nyra router <status|test>  本地小路由：零 token 意图分类（不调模型），status 看开关与权重，test 干跑一条消息（默认关，详见 docs/local-router.md）
 nyra models [list|show <模型名>|refresh|fallback|handoff|preset|health]   查模型上下文窗口、刷新模型数据、看备用链与本月切换统计、查限流接力摘要、设降级预设与看故障账本（见 docs/model-catalog.md）
 nyra setup                     首次启动向导
 nyra init [--name 名字] [--role researcher|assistant|shopkeeper|custom] [--work 干什么活] [--persona 风格] [--redline 红线] [--agent default] [--yes] [--force]   对话式入职：三个问题（叫什么、干什么活、什么风格/红线）→ 生成 Soul + 按角色预装技能包 + 配置清单确认后生效，确认后发就绪简报（详见 docs/onboarding.md）
@@ -314,7 +330,7 @@ nyra wake                      唤醒：重发一次就绪简报（我是谁、�
 nyra --example [文件]          本地示例任务（不调模型、不花钱）
 nyra ui                        网页界面（本地网页，含模式切换与创造模式）
 nyra permissions ...           Poppy 站点授权意向（本地账本，只记录不授权）
-nyra eigenflux ...             EigenFlux 接入检测与本地网络限制（第 4 阶段已原生化）
+nyra eigenflux ...             EigenFlux 接入检测与本地网络限制
 
 模型兜底默认关闭（只用户开启、只切允许列表内服务商）。
 界面语言：--lang zh|en（或 NYRA_LANG、config.json 的 language、系统语言；REPL 里 /lang 切换）。`;
@@ -342,7 +358,8 @@ nyra --list-sessions           list past sessions
 nyra --list-mcp                list configured MCP servers and presets
 nyra ui [--host 127.0.0.1] [--port 8765] [--pair] [--open]   start the gateway web UI
 nyra ui --print-url-json --exit-on-stdin-close   desktop shell mode: one JSON line on stdout, exits when stdin closes
-nyra gw <sessions|send|view|approve|rewind|info|schedule>   talk to a running gateway as a client
+nyra gw <sessions|send|view|approve|rewind|info|clients|presence|presence-heartbeat|schedule|mode-requests|mode-confirm>   talk to a running gateway as a client (clients: which clients recently sent rounds; presence: whether desktop is active and mobile push is on; presence-heartbeat: send one heartbeat)
+nyra update-check   check for a new version once (off by default: enable update checks in settings first, otherwise no network)
 nyra --compact <session id>    compact a session and exit
 REPL: /context shows context usage; /compact focus <keyword> compacts around a topic (see docs/context.md)
 nyra --resume <session id>     continue a session
@@ -351,8 +368,8 @@ nyra evidence verify <run id>  independently re-check a run's evidence chain (se
 nyra timeline <run id> [--verbose] [--json] [--out <path>]   rebuild one multi-agent run as a timeline (read-only replay, no re-execution, see docs/timeline.md)
 nyra replay <run id> [--verbose]   replay one run step by step, grouped by turn (read-only, no re-execution)
 nyra regression <list|precipitate --run <run id>|remove <case id>|status <case id> <open|verified|retired>>   regression case library: precipitate failed steps of a run into cases (metadata only, no model calls, no auto re-run, see docs/regression.md)
-nyra contract <create|list|show|activate|attach|verify|mark-item|remove|stats>   delivery contract (gap 29): set acceptance criteria at intake (deliverables + checklist), score item by item after the run; accepted only when all pass (see docs/delivery-contract.md)
-nyra golden <add|list|show|remove|run|rescore>   Golden test set (G-2): fixed inputs + expected outputs + expected tool trajectories, scored on result and trajectory (see docs/delivery-contract.md)
+nyra contract <create|list|show|activate|attach|verify|mark-item|remove|stats>   delivery contract: set acceptance criteria at intake (deliverables + checklist), score item by item after the run; accepted only when all pass (see docs/delivery-contract.md)
+nyra golden <add|list|show|remove|run|rescore>   Golden test set: fixed inputs + expected outputs + expected tool trajectories, scored on result and trajectory (see docs/delivery-contract.md)
 nyra "<task>" --contract <contract id>   attach an activated delivery contract to this run; item scores go into the run report
 nyra kanban <create|list|show|start|fail|review|decide|verify|done|reset|remove|tick|sweep>   durable task board: tasks are ledger rows, crash-safe, circuit-breaker to blocked, completion needs verification evidence (see docs/kanban.md)
 nyra goal <create|list|show|add-item|start-item|verify-item|complete|pause|resume|cancel|instruct|link|split>   long goal object: goal statement + live checklist + per-item verification, all must pass before completion; mid-course instructions don't lose the goal, pause/resume/cancel supported (see docs/goal-object.md)
@@ -361,28 +378,34 @@ nyra roster <list|show>   live roster: one line per sub-agent — status + elaps
 nyra side-effects <list|show|record|mark|recover>   store-before-do side-effect queue: recorded before execution, recovered oldest-first with a recovery note (see docs/kanban.md)
 nyra heartbeat <add|list|remove|enable|disable|run|wake|check-script|seen-clear|commitments>   silent patrol: quiet when nothing is wrong, findings go to evidence first then inbox; repeat anomalies are fingerprinted and notified once; local script pre-checks (zero-token) and supervisor wake are off by default; inferred commitments need one user confirmation and auto-expire (see docs/heartbeat.md)
 nyra fanout <list|show|recover>   background fan-out: top-level delegation returns a handle immediately, results backfill the inbox as one message; half-run fan-outs need recover after the process exits (see docs/merge-fanout.md)
-nyra team <create|list|show|add|remove|dissolve|dispatch|handover|lead|writer>   team mode (new gap 52): the chief is the single entry point — splits, dispatches and summarizes only; members need a complete Charter to take work; handovers go through inbox/outbox/change log; outbound actions always go back to the chief / a human for approval; lead lease + epoch guards against stale chief instructions (see docs/team.md)
+nyra team <create|list|show|add|remove|dissolve|dispatch|handover|lead|writer>   team mode: the chief is the single entry point — splits, dispatches and summarizes only; members need a complete Charter to take work; handovers go through inbox/outbox/change log; outbound actions always go back to the chief / a human for approval; lead lease + epoch guards against stale chief instructions (see docs/team.md)
 nyra governance <policy|mandate|mode|dry-runs>   enterprise governance: versioned policy + immutable mandates + observe/auto intake modes + dry-run ledger (see docs/governance.md)
 nyra governance caps <set|list|show|check|assign-team|pause|resume|discard|pauses>   tiered cost caps: monthly USD/token limits per Bot/role/team/persona, over-cap tasks pause recoverably
 nyra governance audit <export|verify>   audit export: governance audit logs to SIEM (JSONL + hash chain, verifiable)
+nyra governance audit export [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--source <source>] [--actor <actor>] [--type <event type>] [--scope <deployment|org>] [--initiator <initiator>]   audit export: filter by time / actor / event type / scope / initiator and export to SIEM (see docs/governance.md)
+nyra governance audit deployment [--all] [--json]   deployment audit: deploy / upgrade / rollback records (see docs/governance.md)
+nyra governance deploy <note> [--kind deploy|upgrade|rollback]   deploy: record one deployment audit entry (deploy / upgrade / rollback, see docs/governance.md)
+nyra policy <list|add|remove|enable|disable|test|dry-run|status>   policy gateway: CEL-style rule expressions, allow / deny / require approval before a tool runs, denials go to the evidence chain (see docs/policy.md)
+nyra learn <list|scan|show|propose|approve|reject|publish|share|remove>   learning queue: human review and publishing of candidate memories / skill drafts / agent declarations, learning always needs a human to approve (see docs/learning.md)
+nyra components <list|block|unblock>   generative UI: allowlisted components (table/card/list/code/chart-bar) and the per-Bot blocklist (see docs/components.md)
 nyra optimize <propose|list|show|edit|approve|reject|apply|verify|revert|loop|arms>   human-approved self-optimization loop: drafts instruction changes only, needs approval to apply, three datasets + holdout decide release; loop reads an eval report, auto-drafts and ranks by UCB (see docs/governance.md)
 nyra eval <scenarios|scorecard|benchmarks|import|benchmark|remove|probes|probe|manifest>   eval as a first-class citizen: scenario scorecards + external benchmark import + in-repo probes + reproducibility manifest (mostly read-only; run evals with bun run scripts/eval.ts; see docs/eval.md)
-nyra trust <register|list|show|evidence|promote|demote|review|check>   trust ladder (GROK-6, gap 43 governance): new agents / skills start read-only, earn one level per N consecutive successes with zero violations; each recorded success may be randomly spot-checked and only counts after review; demotion any time (see docs/trust-ladder.md)
-nyra workflow <import|list|show|run|dry-run|resume|trial|activate|remove|verify|triggers>   declarative reusable workflows (gap 25): YAML/JSON definitions + three execution modes (fixed graph / coordinator / dynamic) + approval nodes + dry-run; activation needs a real-data trial run + human confirmation; trigger execution is off by default and needs an explicit opt-in (see docs/workflow.md)
-nyra checkpoint <list|show|history|update|replay|store>   step checkpoints + time travel (G-P1-40): per-step state snapshots, edit a step and replay the steps after it; only fixed mode supports replay, model/approval steps need --yes (see docs/step-checkpoints.md)
-nyra interrupt <list|show|respond|edit|resume>   structured human-in-the-loop (G-P1-41): a workflow pauses before/after steps that carry interrupt_before/after; a human answers accept/ignore/respond/edit and resumes in place; only fixed-mode top-level steps (see docs/interrupts.md)
-nyra intervention <list|add|remove|enable|disable|on|off|log|test>   runtime message interception (G-P2-1): messages from other agents entering via group chat / A2A / AG-UI pass an interceptor first; log, rewrite or drop; log-only by default, drop / rewrite need the owner to enable them explicitly, owner messages are never intercepted (see docs/interventions.md)
-nyra admission <log|show|who-approved|policy-history|export>   enterprise admission ledger (G-P2-2): friend approvals, circle join/leave, policy changes and token issue/revoke all go into one append-only ledger; metadata and fingerprints only, no token plaintext (see docs/admission.md)
-nyra middleware <status|enable|disable|set|approval|cache-clear>   typed middleware chain (G-P2-4): composable chat / function / agent layers with validation, retry, caching and token counting; only validation and token counting are on by default, retry and caching are off; per-tool approval modes (see docs/middleware.md)
+nyra trust <register|list|show|evidence|promote|demote|review|check>   trust ladder (governance): new agents / skills start read-only, earn one level per N consecutive successes with zero violations; each recorded success may be randomly spot-checked and only counts after review; demotion any time (see docs/trust-ladder.md)
+nyra workflow <import|list|show|run|dry-run|resume|trial|activate|remove|verify|triggers>   declarative reusable workflows: YAML/JSON definitions + three execution modes (fixed graph / coordinator / dynamic) + approval nodes + dry-run; activation needs a real-data trial run + human confirmation; trigger execution is off by default and needs an explicit opt-in (see docs/workflow.md)
+nyra checkpoint <list|show|history|update|replay|store>   step checkpoints + time travel: per-step state snapshots, edit a step and replay the steps after it; only fixed mode supports replay, model/approval steps need --yes (see docs/step-checkpoints.md)
+nyra interrupt <list|show|respond|edit|resume>   structured human-in-the-loop: a workflow pauses before/after steps that carry interrupt_before/after; a human answers accept/ignore/respond/edit and resumes in place; only fixed-mode top-level steps (see docs/interrupts.md)
+nyra intervention <list|add|remove|enable|disable|on|off|log|test>   runtime message interception: messages from other agents entering via group chat / A2A / AG-UI pass an interceptor first; log, rewrite or drop; log-only by default, drop / rewrite need the owner to enable them explicitly, owner messages are never intercepted (see docs/interventions.md)
+nyra admission <log|show|who-approved|policy-history|export>   enterprise admission ledger: friend approvals, circle join/leave, policy changes and token issue/revoke all go into one append-only ledger; metadata and fingerprints only, no token plaintext (see docs/admission.md)
+nyra middleware <status|enable|disable|set|approval|cache-clear>   typed middleware chain: composable chat / function / agent layers with validation, retry, caching and token counting; only validation and token counting are on by default, retry and caching are off; per-tool approval modes (see docs/middleware.md)
 nyra delegate "<task>" [--preset <preset>] [--max-turns <1-12>] [--model <model>] [--agent <member>] [--json]   one-off delegation: run a sub-agent on a task and print the summary; --preset picks a named preset (review is read-only), otherwise resolved as project default, then user default, then general-purpose (see docs/subagent-presets.md)
-nyra agent <load|show|list|remove|run>   declarative agents (G-P2-5): one YAML file declares one agent (instructions + tools + workflow); load validates and registers it, run runs one round with it; tools are an allowlist cap, intersecting with a preset can only narrow it (see docs/agent-decl.md)
-nyra template <list|show|builtin|import|trial|activate|run|dry-run|remove|publish|install>   business process template library (gap 46): workflow DSL + connectors + acceptance criteria + trial data, distributed through the robot market; activation needs a real-data trial run + human confirmation (see docs/templates.md)
+nyra agent <load|show|list|remove|run>   declarative agents: one YAML file declares one agent (instructions + tools + workflow); load validates and registers it, run runs one round with it; tools are an allowlist cap, intersecting with a preset can only narrow it (see docs/agent-decl.md)
+nyra template <list|show|builtin|import|trial|activate|run|dry-run|remove|publish|install>   business process template library: workflow DSL + connectors + acceptance criteria + trial data, distributed through the robot market; activation needs a real-data trial run + human confirmation (see docs/templates.md)
 nyra script check <file> [--language python|javascript|lua|php]   judge whether a script is pure (allowlist static analysis): exit 0 if pure, 1 if not
 nyra script preauth <list|grant|revoke> --workflow <name>   script digest pre-authorization: pure script digests are pinned at activation, a changed script voids the grant; routine-only (see docs/script-purity.md)
 nyra handover contract <create|list|show|check|resolve|close>   programmatic acceptance of handover contracts (Pi Bot idea 2): deliverables + checks + a fix-round cap; acceptance is a deterministic program check, not a model call — a failed check sends the work back, out of rounds stops for a human (see docs/handover-contract.md)
 nyra handover checkers   list the checkers an acceptance item may use
 nyra reconciler <scan|status|enable|disable|config|settle>   stuck-step watchdog (Pi Bot idea 3): a working task idle past the threshold is flagged, then auto-requeued up to a cap, then blocked for a human; automatic patrol is off by default (see docs/reconciler.md)
-nyra watch <add|list|show|remove|check|enable|disable|config|run-action>   change-watch routine (gap 32): watch a page or a file, report only when it changes (what changed, details, source); actions need a separate condition and action, downloads need a human yes; automatic patrol is off by default (see docs/watch.md)
+nyra watch <add|list|show|remove|check|enable|disable|config|run-action>   change-watch routine: watch a page or a file, report only when it changes (what changed, details, source); actions need a separate condition and action, downloads need a human yes; automatic patrol is off by default (see docs/watch.md)
 nyra restore [checkpoint] [--mode both|files|session]   restore files and session from a shadow snapshot (no argument lists checkpoints, see docs/shadow-snapshots.md)
 nyra redlines [--json]         production redlines: evidence/permissions/sandbox/cost/hooks (--json for CI)
 nyra verdict [task] [--json]   one conclusion: is this run worth it
@@ -398,21 +421,22 @@ nyra gmail <status|auth|search|read|send|drafts|send-draft|labels|label|mark-rea
 nyra shopify <auth|status|products|product|orders|order|fulfill|inventory>   native Shopify connector (read-only): products / orders / order fulfillment check / inventory (see docs/connectors.md)
 nyra slack <auth|status|channels|history|send|card|callback>   native Slack connector: read channels / messages, send messages (explicit approval required), post approval cards, button callbacks resolve approvals (see docs/connectors.md)
 nyra connector <status|list|approve|revoke|auth|install|uninstall|usage|flows|flow|bundle>   connector directory: install / one-click auth / revoke / usage / business flows / export connector bundle (see docs/connectors.md)
-nyra mcp server <status|enable|disable|allow-writes-on|allow-writes-off>   external MCP server switch: other agents call Nyra memory and tasks via gateway POST /mcp (off by default, see docs/mcp.md)
+nyra mcp <server <status|enable|disable|allow-writes-on|allow-writes-off>|contract>   external MCP server switch and minimal stable contract: other agents call Nyra memory and tasks via gateway POST /mcp (off by default, see docs/mcp.md); contract prints the 10 commands of nyra-contract-v1 (see docs/agent-contract.md)
 nyra peer <status|enable|disable|list|auth|ask|handoff|card|code|add|request|accept|friends|block|circle|share|grant|proposal|branch|discover|token>   peer collaboration: ask another Nyra instance, hand off run context, agent card and friends, scoped revocable grants, peer write proposals, foreign branch merges, public discovery with per-peer tokens, agent card JWS signatures (off by default, see docs/peer.md and docs/peer-discovery.md)
 nyra circle <create|list|show|invite|revoke|delete|bind|unbind|owner|check|bindings>   trust circles: who may send tasks to the agent (closed by default, out-of-circle messages are dropped at the gateway, see docs/circles.md)
-nyra org <create|list|show|add|remove|role|delete|check|share|shared|grant-write|learnings|workspace|file-read|cross-access|catalog|tasks|task-add|violations|isolation|memory>   orgs and team workspaces: orgs / members / roles admin/member/viewer, the owner is super-admin; batch 2: shared Bots read-only by default, tenant isolation, org-private catalog (see docs/orgs.md)
+nyra org <create|list|show|add|remove|role|delete|check|sso|share|shared|grant-write|learnings|workspace|file-read|cross-access|catalog|tasks|task-add|violations|isolation|memory>   orgs and team workspaces: orgs / members / roles admin/member/viewer, the owner is super-admin; shared Bots read-only by default, tenant isolation, org-private catalog (see docs/orgs.md)
 nyra session <create|list|show|join|join-request|join-approve|join-decline|join-list|leave|delegate|accept|complete|share|frame|record|end>   cross-agent joint sessions: multi-person multi-agent video meetings (local fanout model), in-session delegation + shared task products (allowlist), frames not retained by default, recording needs everyone's consent; friends join only after approval, read-only by default (see docs/sessions.md)
 nyra sfu <create|rooms|status|join|leave|turn|record|close|reclaim|video>   group voice SFU (local implementation, mediasoup selected): voice rooms + members + TURN credentials + all-consent recording gate; video is group video (Producer/Consumer, watch-on-demand, adaptive bandwidth, 10-minute simulation; real media plane waits for mediasoup wiring, see docs/sfu.md and docs/group-video.md)
 nyra meeting <create|list|join|reconnect|transcript|minutes|record|dispatch>   join external meetings: controlled-browser join for Meet/Zoom, listen to captions and build minutes; joining, recording and speaking all need the owner's approval (see docs/meeting.md)
 nyra rendezvous <register|nodes|route|status|remove|epoch>   Rendezvous multi-node routing: HRW consistent hashing routes a task key to a node (local/LAN nodes only, see docs/mesh.md)
 nyra queue <enqueue|list|show|claim|complete|fail>   queue-driven base: idempotent enqueue, node claim + lease, epoch guard against stale re-execution (see docs/mesh.md)
-nyra group <room|chat|plan>   group chat: rooms and bots, swarm turn-taking (composable stop conditions), group plan engine (per-step worktree isolation + independent acceptance, see docs/group-chat.md and docs/group-plan.md)
+nyra group <room|chat|plan|route>   group chat: rooms and bots, swarm turn-taking (composable stop conditions), group plan engine (per-step worktree isolation + independent acceptance), Jev route dry-run (see docs/group-chat.md and docs/group-plan.md)
 nyra call <ledger|show <call id>|summary>   call cost and privacy dashboard: three books per call (transport / media / tokens), recording off by default and needs everyone's consent, minutes go into the evidence chain (see docs/call-ledger.md)
 nyra budget <list|show|reserve|settle|release|strict>   concurrent budget reservation: reserve budget before a model call, over-limit calls are not sent; unknown amounts pause by default until a human handles them (see docs/budget.md)
+nyra usage [--agent <id>] [--json]   per-Bot usage dashboard: how much each Bot spent today / this month, its caps, and whether it hit the 80% warning (see docs/budget.md)
 nyra agui <register|list|show|link|connect|disconnect|send|exec|accept-write|revoke-write|a2a|serve>   protocol-neutral access: attach any AG-UI endpoint as a Bot (read-only first, writes need the owner's explicit acceptance), A2A reuses peer cards + handoff; serve exposes Nyra as an AG-UI endpoint (see docs/agui.md)
-nyra screen <watch|activity|status|takeover|handover> <computer id>   gap 50: read-only screen watch (live frame + activity list, frame fingerprint without frame content) and takeover (take the wheel, needs confirmation; the Bot pauses during takeover and resumes from where it stopped, fully audited); passwords / verification codes / card numbers are masked automatically (see docs/bot-screen.md)
-nyra computer <status|grant|grants|blocklist|activity|display|require>   G-P1-35: guard for real-computer operation — blocked-window list, revocable grants, Xvfb virtual display, every action audited (see docs/computer-guard.md)
+nyra screen <watch|activity|status|takeover|handover> <computer id>   read-only screen watch (live frame + activity list, frame fingerprint without frame content) and takeover (take the wheel, needs confirmation; the Bot pauses during takeover and resumes from where it stopped, fully audited); passwords / verification codes / card numbers are masked automatically (see docs/bot-screen.md)
+nyra computer <status|grant|grants|blocklist|activity|display|require>   guard for real-computer operation — blocked-window list, revocable grants, Xvfb virtual display, every action audited (see docs/computer-guard.md)
 nyra voice <status|speak <text>|enable-tts|disable-tts>   voice commands: show config and availability, speak a text, toggle auto readback (see docs/voice.md)
 nyra voice call <start|answer|decline|end|status|list|segment|confirm|note|notes|hooks>   live voice call: start a call, feed audio segments to transcribe, optional readback (local whisper.cpp first, cloud off by default; see docs/voice.md)
 nyra video <call|signal|ice>   video call + on-demand frame sampling: signaling + TURN + ICE direct transport, frames seen on demand (local first, cloud off by default; see docs/video-call.md)
@@ -437,27 +461,27 @@ nyra hitl <start|takeover|handback|cancel|status|list>   human handoff: hand a c
 nyra events <list|add|remove|enable|disable|test|poll>   event-triggered tasks: webhooks and new mail enqueue tasks (see docs/event-triggers.md)
 nyra thread <create|list|search|show|copy|prune|state|history|runs|cron-add|cron-remove|crons|archive|unarchive|remove>   remote thread operations API: create/search/copy/prune threads, read/write state, bind crons to a thread (see docs/threads.md)
 nyra automation <list|show|install|remove|suggested>   automation bundles: install a whole automation at once, with suggested triggers included (see docs/automations.md)
-nyra cron <incidents|policy|hold>   cron maturity: missed-run catch-up policy (once/skip) + quota hold + incident ledger (see docs/cron-maturity.md)
+nyra cron <incidents|policy|hold>   cron maturity: missed-run catch-up policy (once/skip) + quota hold + incident ledger + routine guardrails (15-minute floor, max 20 enabled, auto-disable after 10 consecutive failures, see docs/cron-maturity.md)
 nyra backend <list|use|status|docker|ssh|e2b>   swappable command backends: local / Docker / SSH / E2B control plane / cloud (not wired), local by default (see docs/command-backends.md)
 nyra mail-inbox <status|enable|disable|allowlist|set|poll>   mail as task entry: allowlisted senders' mail enqueues tasks, results mailed back (see docs/mail-inbox.md)
 nyra responsibility <list|add|set|remove|enable|disable|check|pause|resume|complete|cancel|brief|show>   standing responsibilities: responsibility objects (owner + acceptance criteria + escalation conditions + expiry) and the morning briefing, quiet when nothing is wrong (see docs/responsibilities.md)
-nyra bot telegram <start|stop|status>   bot direction phase 1: Telegram channel (long polling, per-session serial queue, dedup + quotas, deterministic commands; external users forced read-only, see docs/bot.md)
+nyra bot telegram <start|stop|status>   Telegram channel (long polling, per-session serial queue, dedup + quotas, deterministic commands; external users forced read-only, see docs/bot.md)
 nyra bot discord <start|stop|status>   bot channel: Discord (Gateway receive + REST send, see docs/bot.md)
 nyra bot slack <start|stop|status>   bot channel: Slack (Socket Mode receive + Web API send, needs app token + bot token, see docs/bot.md)
 nyra bot whatsapp <start|stop|status>   bot channel: WhatsApp (Cloud API send + webhook receive, needs access token + phone number id + public entry, see docs/bot.md)
-nyra bot computer <create|list|status|sleep|wake|remove|credential|shell|sleep-due>   bot gap 42: one persistent computer per Bot (persistent workspace + browser profile + credential vault + isolation tiers, see docs/bot-computer.md)
+nyra bot computer <create|list|status|sleep|wake|remove|credential|shell|sleep-due>   bot: one persistent computer per Bot (persistent workspace + browser profile + credential vault + isolation tiers, see docs/bot-computer.md)
 nyra bot status   bot overview: Telegram/Discord/Slack/WhatsApp state + computer count and resources
-nyra channels <start|stop|status|health|bindings|explain>   gap 27: persistent multi-channel gateway (four channels in one process, bindings-based deterministic routing, channel sessions sandboxed by default, every inbound route in the evidence chain, see docs/channels.md)
-nyra bot redlines <status|list|show|tighten|loosen|set>   bot gap 51: business-action hard redlines — sending messages / payments / deletions always need approval, moving money / trading securities are always forbidden (see docs/business-redlines.md)
+nyra channels <start|stop|status|health|bindings|explain>   persistent multi-channel gateway (four channels in one process, bindings-based deterministic routing, channel sessions sandboxed by default, every inbound route in the evidence chain, see docs/channels.md)
+nyra bot redlines <status|list|show|tighten|loosen|set>   bot: business-action hard redlines — sending messages / payments / deletions always need approval, moving money / trading securities are always forbidden (see docs/business-redlines.md)
 nyra reviewer <status|enable|disable|set-model|add-rule|remove-rule|list-rules|check>   independent review layer: sensitive tool calls go through an independent reviewer agent first (cheap model, independent context); review failure blocks (see docs/reviewer.md)
 nyra judge <status|enable|disable|set-model|set-thresholds|check|verdicts>   intent-validation judge: sensitive tool calls get a risk score first (0-100 plus cited evidence); high scores are refused, middle scores go to a human; verdicts lists the two-layer verdict ledger (heuristic + judge, see docs/tool-judge.md)
 nyra verifier <status|enable|disable|set-model|rework-on|rework-off|add-rule|remove-rule|list-rules|check>   verifier: parallel output passes an acceptance gate before merging (deterministic checks + cheap-model review); failures are sent back for rework (see docs/verifier.md)
 nyra skills <status|enable|disable|draft|drafts|show|approve|reject|archive|sweep>   skill sedimentation: successful runs auto-draft skill drafts, installed only after your approval, low-quality ones auto-archived (see docs/skill-sedimentation.md)
 nyra bughunt <install|status|scope|template|check>   authorized bug-hunting skill pack: scope card + falsification + pre-submit seven questions + evidence hygiene, pre-submit gate (see docs/bughunt.md)
-nyra market <list|show|source|install|uninstall|installed|publish|template>   built-in bot marketplace: browse, install and publish skill packs, bot configs and business process templates (phase 1: static curated repo + local client, see docs/marketplace.md)
+nyra market <list|show|source|install|install-team|update|uninstall|installed|publish|template>   built-in bot marketplace: browse, install, update and publish skill packs, bot configs and business process templates, install a whole team from one Markdown file (static curated repo + local client, see docs/marketplace.md)
 nyra account <status|login|logout|list|revoke|link|suspend|reactivate>   user account login: Google / GitHub / email / SSO, account identity + sessions (see docs/accounts.md)
 nyra cloud <status|connect|disconnect|sync|push|pull|pref|devices|set-url>   mobile cloud link: after account login, connect straight to the cloud service and sync across devices, no local network needed (see docs/mobile-cloud.md)
-nyra sso <provider|login|status|scim>   enterprise SSO: OIDC identity provider registration and login, SCIM provisioning (see docs/sso.md)
+nyra sso <provider|login|route|status|scim>   enterprise SSO: OIDC identity provider registration and login, email domain routing, org-enforced SSO, SCIM provisioning (see docs/sso.md)
 nyra kb <create|list|add|search|ask|remove|test>  local knowledge base: ingest external docs (text/Markdown/PDF/web pages), chunk, BM25 search + retrieval test bench (see docs/knowledge.md)
 nyra search <keywords> [--scope project|all] [--session <session id>] [--after <date>] [--before <date>] [--limit <n>] [--export <path>] [--json]  session full-text search: search your past conversations, grouped by session with matching messages and context; without keywords lists recent sessions, --export dumps a session to Markdown (see docs/session-search.md)
 nyra editor <serve|status|snapshot|ask|preview|apply|hosts>  editor plugins: editor bridge service (VS Code / JetBrains / Zed share one protocol), snapshots carry cursor, selection and diagnostics into model context, diff previews never touch disk, applying needs explicit confirmation (see docs/editor-plugins.md)
@@ -469,7 +493,9 @@ nyra creator "<one-line idea>" [--yes]   creator mode: build a plugin from one s
 nyra memory <export|export-prompt|import|local|import-zip|search|forget|remember|entries|entry|update|rejections|recall|extract|review>  memory exchange, search and forget; remember/entries/entry/update/rejections go through the memory evidence gate (writes need verbatim user quotes, see docs/memory.md); remember/entries support --org org memory; recall is the active-memory switch and dry run (off by default, see docs/memory.md); extract/review auto-extracts candidate memories from a conversation and confirms them before they enter the store (see docs/memory.md)
 nyra soul <show|status|list|init|add|remove|enable|disable|edit|export|import>  Soul identity layer: per-agent identity and Tenets (invariants compile into the rule layer and are enforced by code; role Charter via nyra soul charter <set|show|clear>, see docs/soul.md and docs/team.md)
 nyra style <learn|show|list|delete|export|import>  per-channel writing style profiles (see docs/style.md)
-nyra doctor [--provider name]  self-check: runtime, config, home dir, key, network, disk, write access, vault permissions
+nyra doctor [--provider name] [--deep]  self-check: runtime, config, home dir, key, network, disk, write access, vault permissions; --deep adds the immune check (self-check of the brain, failures go to quarantine, see docs/immune.md)
+nyra dream <status|enable|disable|set|run>  nightly dream metabolism: extract memory candidates, prune duplicates and stale ones, write a summary into the morning briefing (off by default, see docs/dream.md)
+nyra router <status|test>  local tiny router: zero-token intent classification (no model calls); status shows switch and weights, test dry-runs one message (off by default, see docs/local-router.md)
 nyra models [list|show <model>|refresh|fallback|handoff|preset|health]   look up model context windows, refresh model data, show fallback chain and this month's switches, view rate-limit handoff summaries, set the degradation preset and view the health ledger (see docs/model-catalog.md)
 nyra setup                     first-run wizard
 nyra init [--name name] [--role researcher|assistant|shopkeeper|custom] [--work job] [--persona style] [--redline redline] [--agent default] [--yes] [--force]   guided onboarding: three questions (name, job, style/redlines) -> Soul + role skill pack + a reviewable checklist, applied only after you confirm; then a ready briefing (see docs/onboarding.md)
@@ -1220,18 +1246,84 @@ async function handleGw(argv: string[]): Promise<number> {
       process.stdout.write(`Nyra ${info.version} · 模式 ${info.mode} · ${info.provider} / ${info.model}\n`);
       return 0;
     }
+    if (action === "clients") {
+      // H1：最近用过哪些客户端（只限机主；陌生客户端出现时这里第一眼能看见）。
+      const data = await client.clients();
+      if (!data.clients.length) process.stdout.write("还没有客户端发过回合\n");
+      else for (const c of data.clients) process.stdout.write(`- ${c.client}（${c.kind}，${c.rounds} 回合，最近 ${c.last_seen}）\n`);
+      return 0;
+    }
+    if (action === "presence") {
+      // H2：桌面是否活跃、要不要推手机、当前活跃的客户端（只限机主）。
+      const data = await client.presence();
+      process.stdout.write(`桌面${data.desktop_active ? "活跃" : "不活跃"}（5 分钟窗口），手机通知${data.should_notify_mobile ? "会推" : "静默"}\n`);
+      if (!data.active.length) process.stdout.write("当前没有活跃的客户端\n");
+      else for (const c of data.active) process.stdout.write(`- ${c.client}（${c.kind}，${c.surface}，最近活跃 ${c.last_active}）\n`);
+      return 0;
+    }
+    if (action === "presence-heartbeat") {
+      // H2：报一次心跳（--surface desktop|mobile|web，不传时网关按 token 类型推断）。
+      const surface = flags("--surface");
+      if (surface !== undefined && surface !== "desktop" && surface !== "mobile" && surface !== "web") {
+        process.stderr.write("用法：nyra gw presence-heartbeat [--surface desktop|mobile|web]\n");
+        return 2;
+      }
+      const out = await client.presenceHeartbeat(surface);
+      process.stdout.write(out.throttled ? "心跳已报过（10 秒内重复，不重复写）\n" : "心跳已记录\n");
+      process.stdout.write(`桌面${out.desktop_active ? "活跃" : "不活跃"}，手机通知${out.should_notify_mobile ? "会推" : "静默"}\n`);
+      return 0;
+    }
     if (action === "schedule") {
       const data = await client.schedule() as { tasks: { name: string; enabled?: boolean }[] };
       if (!data.tasks.length) process.stdout.write("暂无定时任务\n");
       else for (const t of data.tasks) process.stdout.write(`- ${t.name}${t.enabled === false ? "（已停用）" : ""}\n`);
       return 0;
     }
-    process.stderr.write("用法：nyra gw <sessions|send|view|approve|rewind|info|schedule>\n");
+    if (action === "mode-requests") {
+      const data = await client.modeRequests();
+      if (!data.requests.length) process.stdout.write("暂无待确认的完全模式请求\n");
+      else for (const r of data.requests) process.stdout.write(`- ${r.id}（${r.device}，${r.expires_at} 前有效）\n`);
+      return 0;
+    }
+    if (action === "mode-confirm") {
+      const id = rest[1];
+      if (!id) { process.stderr.write("用法：nyra gw mode-confirm <请求 id> [--deny]\n"); return 2; }
+      const deny = argv.includes("--deny");
+      const out = await client.modeConfirm(id, !deny) as { mode?: string; rejected?: boolean };
+      if (out.rejected) process.stdout.write(`已拒绝 ${id}\n`);
+      else process.stdout.write(`已批准 ${id}，模式：${out.mode ?? "full"}\n`);
+      return 0;
+    }
+    process.stderr.write("用法：nyra gw <sessions|send|view|approve|rewind|info|clients|presence|presence-heartbeat|schedule|mode-requests|mode-confirm>\n");
     return 2;
   } catch (err) {
     process.stderr.write(`gateway 调用失败：${err instanceof Error ? err.message : String(err)}\n`);
     return 1;
   }
+}
+
+// ---- 子命令：update-check ----
+async function handleUpdateCheck(home: string): Promise<number> {
+  const cfg = loadConfig(home);
+  if (!isUpdateCheckEnabled(cfg)) {
+    process.stdout.write("更新检查未开启（默认关闭）。在设置里打开更新检查开关，或在 config.json 里把 update_check_enabled 设为 true，再跑 nyra update-check。\n");
+    return 0;
+  }
+  const result = await checkForUpdates({ enabled: true, currentVersion: VERSION });
+  if (!result.checked) {
+    process.stdout.write("更新检查未执行。\n");
+    return 0;
+  }
+  if (result.latestVersion === null) {
+    process.stdout.write(`检查失败：${result.reason ?? "未知错误"}\n`);
+    return 1;
+  }
+  if (result.updateAvailable) {
+    process.stdout.write(`有新版本：${result.latestVersion}（当前 ${result.currentVersion}）。${result.url ?? ""}\n`);
+  } else {
+    process.stdout.write(`已是最新：${result.currentVersion}\n`);
+  }
+  return 0;
 }
 
 // ---- 子命令：schedule ----
@@ -1408,6 +1500,16 @@ async function handleSchedule(argv: string[], workdir: string): Promise<number> 
           if (report.skipped) return;
           const acted = report.flagged.length + report.retried.length + report.blocked.length + report.failed.length;
           if (acted) process.stdout.write(`[看门狗] 扫了 ${report.scanned} 个在跑任务：标卡住 ${report.flagged.length} 个、重排 ${report.retried.length} 个、停下 ${report.blocked.length} 个、运行已失败走 fail 路径 ${report.failed.length} 个。\n`);
+        });
+      // H3：夜间做梦代谢（默认关）。每轮调 isDreamDue 判断：开关关着或
+      // 没到点就静默跳过；到了就跑一次确定性提炼 + 剪枝，小结进晨间简报。
+      // 模型润色小结默认不开（须配置里显式开），失败只记 stderr，不破坏定时任务。
+      pollers.push(async () => {
+          const { dreamConfig, isDreamDue, readDreamState, runDreamMetabolism } = await import("./dream.ts");
+          const cfg = dreamConfig(loadConfig(home));
+          if (!isDreamDue(cfg, readDreamState(home))) return;
+          const result = await runDreamMetabolism(home);
+          process.stdout.write(`[做梦] 扫了 ${result.counts.sessions_scanned} 个会话，提炼 ${result.counts.proposals_added} 条候选，剪掉重复 ${result.counts.duplicates_pruned} 条、过期 ${result.counts.stale_rejected} 条，小结已进晨间简报。\n`);
         });
       // 缺口 32：变化监测例程 Watch / Watch-with-action（只读巡查：抓页面、
       // 读文件，变了才汇报；带动作的按声明触发，下载须人批）。全局开关未
@@ -2569,7 +2671,7 @@ async function handleQueue(argv: string[], home: string): Promise<number> {
 async function handleGroupChat(argv: string[], home: string, args: CliArgs): Promise<number> {
   const action = argv[0];
   if (!action) {
-    process.stdout.write("用法：nyra group <room|chat|plan> ...（nyra group room --help / nyra group chat --help / nyra group plan --help 看细分用法）\n");
+    process.stdout.write("用法：nyra group <room|chat|plan|route> ...（nyra group room --help / nyra group chat --help / nyra group plan --help 看细分用法；nyra group route --room <房间 id> --message <消息> 干跑 Jev 路由）\n");
     return 2;
   }
   const get = (flag: string): string | undefined => {
@@ -2684,6 +2786,47 @@ async function handleGroupChat(argv: string[], home: string, args: CliArgs): Pro
       }
       process.stderr.write("错误：用法：nyra group chat <run|send> ...\n");
       return 2;
+    }
+    if (action === "route") {
+      // M2：Jev 路由干跑——只判该谁接，不发消息、不跑 Bot。路由开关没开
+      // 也能干跑（用户显式要看分流结果）；decider 失败就报回落，不发消息。
+      const roomId = get("--room");
+      const message = get("--message");
+      if (!roomId || !message) {
+        process.stderr.write("错误：用法：nyra group route --room <房间 id> --message <消息> [--json]\n");
+        return 2;
+      }
+      const room = store.get(roomId);
+      const { chainDeciders, createJevDecider, jevRouterConfig, routeMessage } = await import("./jevRouter.ts");
+      const cfg = jevRouterConfig(home);
+      const members = room.bots.map((b) => ({ id: b.id, name: b.name, role: b.role, instructions: b.instructions }));
+      // 本地小路由开了就先走它（与群聊里同一条链）；干跑不记运行事件。
+      let decider = createJevDecider(home, { model: cfg.model });
+      let localOn = false;
+      const { localRouterConfig } = await import("./localRouter.ts");
+      const localCfg = localRouterConfig(home);
+      if (localCfg.enabled) {
+        const { createLocalRouterDecider } = await import("./localRouter.ts");
+        decider = chainDeciders(
+          createLocalRouterDecider(home, { threshold: Math.min(localCfg.threshold, cfg.threshold) }),
+          decider,
+        );
+        localOn = true;
+      }
+      const decision = await routeMessage(message, members, decider, { threshold: cfg.threshold });
+      const localDecided = localOn && decision.member && (decider as { lastSource?: string }).lastSource === "first";
+      if (argv.includes("--json")) {
+        process.stdout.write(JSON.stringify({ room: roomId, decider: localDecided ? "local" : "model", ...decision }, null, 2) + "\n");
+        return 0;
+      }
+      if (decision.member) {
+        process.stdout.write(localDecided
+          ? `路由：${decision.member} 接（本地小路由，零 token，置信度 ${decision.confidence}，阈值 ${cfg.threshold}）\n`
+          : `路由：${decision.member} 接（置信度 ${decision.confidence}，阈值 ${cfg.threshold}，模型 ${cfg.model}）\n`);
+      } else {
+        process.stdout.write(`路由回落全员回答：${decision.reason}\n`);
+      }
+      return 0;
     }
     if (action === "plan") {
       const sub = argv[1];
@@ -3471,7 +3614,7 @@ async function handleAccount(argv: string[], home: string): Promise<number> {
 async function handleMarket(argv: string[], home: string): Promise<number> {
   const action = argv[0];
   if (!action) {
-    process.stdout.write("用法：nyra market <list|show|source|install|uninstall|installed|publish|template> [选项]\n");
+    process.stdout.write("用法：nyra market <list|show|source|install|install-team|update|uninstall|installed|publish|template> [选项]\n");
     return 2;
   }
   try {
@@ -3528,7 +3671,14 @@ async function handleMarket(argv: string[], home: string): Promise<number> {
       process.stdout.write(`声明的工具：${verification.tools.join("、") || "未声明"}\n`);
       process.stdout.write(`声明的权限：${verification.permissions.join("、") || "未声明"}\n`);
       process.stdout.write(`模式：${e.mode ?? verification.manifest?.mode ?? "readonly"}（新装机器人默认只读起步）\n`);
-      if (verification.routines.length) process.stdout.write(`routine：${verification.routines.length} 个（只随机器人安装，不自动执行，须手动启用）\n`);
+      if (verification.manifest?.model) process.stdout.write(`模型钉选：${verification.manifest.model}（机器人永远用这个模型跑，key 仍在密码箱）\n`);
+      if (verification.manifest?.env_requires?.length) {
+        process.stdout.write(`环境变量：${verification.manifest.env_requires.map((r) => `${r.name}${r.required ? "（必填）" : "（选填）"}：${r.description}`).join("、")}（只声明、不带值；安装时逐项核对并生成 .env.EXAMPLE）\n`);
+      }
+      if (verification.manifest?.hands_off_to?.length) {
+        process.stdout.write(`交接目标：${verification.manifest.hands_off_to.map((h) => `${h.target}${h.when ? `（${h.when}）` : ""}`).join("、")}（目标未装时只警告不拦安装）\n`);
+      }
+      if (verification.routines.length) process.stdout.write(`${mod.formatRoutinesForDisplay(verification.routines).join("\n")}\n`);
       if (verification.highPrivilegeTools.length) process.stdout.write(`⚠ 高权限工具：${verification.highPrivilegeTools.join("、")}\n`);
       for (const w of verification.warnings) process.stdout.write(`提醒：${w}\n`);
       if (!verification.ok) {
@@ -3572,28 +3722,97 @@ async function handleMarket(argv: string[], home: string): Promise<number> {
       process.stdout.write("用法：nyra market source <list|add <本地目录|git 地址>|remove <源名>>\n");
       return 2;
     }
+    if (action === "install-team") {
+      // M3：一个 Markdown 装一整队（本地文件或 https 的 .md 原始文件）。
+      // 每台 Bot 都过市场三道门；中途失败整队回滚，不留半队。
+      const input = argv[1];
+      if (!input) { process.stderr.write("错误：用法：nyra market install-team <队伍包文件|https 的 .md 链接> [--force]\n"); return 2; }
+      const force = argv.includes("--force");
+      const tp = await import("./teamPack.ts");
+      const { text, source } = await tp.fetchTeamPackText(input);
+      const pack = tp.parseTeamPack(text);
+      tp.validateTeamPack(home, pack, text);
+      process.stdout.write(`队伍包 ${pack.team} v${pack.version}（队长 ${pack.chief}）：\n`);
+      for (const b of pack.bots) {
+        process.stdout.write(`  - ${b.name}：${b.role}${b.model ? `（模型 ${b.model}）` : ""}${b.routines?.length ? `，routine ${b.routines.length} 个（到达即暂停，须手动启用）` : ""}\n`);
+      }
+      for (const c of pack.channels ?? []) {
+        process.stdout.write(`  频道 ${c.name}：${c.bots.join("、")}（装完建成群聊房）\n`);
+      }
+      if (argv.includes("--yes")) {
+        process.stdout.write("提示：队伍包安装确认不能用 --yes 跳过（市场内容是不受信任的第三方配置），仍需你确认。\n");
+      }
+      if (!await askConfirm("确认安装整队？(y/N) ")) {
+        process.stdout.write("已取消，未安装任何文件。\n");
+        return 0;
+      }
+      const { store, runId } = newRun(`team-pack install ${pack.team}`);
+      const result = await tp.installTeamPack(home, pack, { config, force, store, runId, sourceLabel: source });
+      process.stdout.write(`已安装队伍 ${result.team} v${result.version}：${result.installed.map((b) => b.name).join("、")}\n`);
+      for (const c of result.channels) {
+        process.stdout.write(c.created ? `频道 ${c.name} 已建成群聊房。\n` : `频道 ${c.name} 没建成（见提醒）。\n`);
+      }
+      process.stdout.write("机器人默认只读起步：写操作须在机器人自己的权限里显式放开；routine 不自动执行，须手动启用。\n");
+      if (result.warnings.length) for (const w of result.warnings) process.stdout.write(`提醒：${w}\n`);
+      process.stdout.write(`卸载整队：逐个 nyra market uninstall ${result.installed.map((b) => b.name).join(" / ")}\n`);
+      return 0;
+    }
     if (action === "install") {
       const id = argv[1];
-      if (!id) { process.stderr.write("错误：用法：nyra market install <条目 id> [--force]\n"); return 2; }
+      if (!id) { process.stderr.write("错误：用法：nyra market install <条目 id|git URL> [--force]\n"); return 2; }
       const force = argv.includes("--force");
-      const prepared = await mod.prepareMarketplaceInstall(home, id, { config });
+      // B5：git URL 直接装单个 Bot（只接 git 地址，裸 .zip 不支持）；
+      // 其余按条目 id 从已登记的市场源里找。
+      const prepared = mod.isMarketGitUrl(id)
+        ? await mod.prepareMarketplaceInstallFromUrl(home, id, { config })
+        : await mod.prepareMarketplaceInstall(home, id, { config });
       process.stdout.write(`${prepared.plannedChanges.join("\n")}\n`);
       if (argv.includes("--yes")) {
         process.stdout.write("提示：市场安装确认不能用 --yes 跳过（市场内容是不受信任的第三方配置），仍需你确认。\n");
       }
       if (!await askConfirm("确认安装？(y/N) ")) {
         process.stdout.write("已取消，未安装任何文件。\n");
+        prepared.cleanup?.();
         return 0;
       }
-      const { store, runId } = newRun(`marketplace install ${id}`);
-      const result = mod.executeMarketplaceInstall(home, prepared, { force, store, runId });
+      const { store, runId } = newRun(`marketplace install ${prepared.entry.name}`);
+      let result;
+      try {
+        result = mod.executeMarketplaceInstall(home, prepared, { force, store, runId });
+      } finally {
+        // B5：URL 安装的临时克隆目录，装完（或失败）就清掉。
+        prepared.cleanup?.();
+      }
       process.stdout.write(`已安装 ${result.installed.item_name} v${result.installed.version}：${result.installed.installed_path}\n`);
       if (result.overwritten) process.stdout.write("（覆盖了旧版）\n");
       if (result.keptModified.length) process.stdout.write(`升级时保留了你改过的文件：${result.keptModified.join("、")}\n`);
       if (result.installed.kind === "bot") {
         process.stdout.write("机器人默认只读起步：写操作须在机器人自己的权限里显式放开；routine 不自动执行，须手动启用。\n");
       }
+      if (result.installed.agent_decl) process.stdout.write(`已登记进花名册（nyra agent list 可见，常驻会话已建）：${result.installed.item_name}\n`);
+      if (result.warnings?.length) for (const w of result.warnings) process.stdout.write(`提醒：${w}\n`);
       process.stdout.write(`卸载：nyra market uninstall ${result.installed.item_name}\n`);
+      return 0;
+    }
+    if (action === "update") {
+      const name = argv[1];
+      if (!name) { process.stderr.write("错误：用法：nyra market update <机器人名>\n"); return 2; }
+      const plan = await mod.prepareMarketplaceUpdate(home, name, { config });
+      process.stdout.write(`${plan.planLines.join("\n")}\n`);
+      if (!plan.needsUpdate) return 0;
+      if (argv.includes("--yes")) {
+        process.stdout.write("提示：市场更新确认不能用 --yes 跳过（市场内容是不受信任的第三方配置），仍需你确认。\n");
+      }
+      if (!await askConfirm("确认更新？(y/N) ")) {
+        process.stdout.write("已取消，未更新任何文件。\n");
+        return 0;
+      }
+      const { store, runId } = newRun(`marketplace update ${name}`);
+      const result = mod.executeMarketplaceUpdate(home, plan, { store, runId });
+      if (!result.updated) { process.stdout.write(`${name} 已是最新版。\n`); return 0; }
+      process.stdout.write(`已更新 ${result.name}：v${result.previousVersion} → v${result.version}（模式 ${result.mode}，routines ${result.routinesMerged} 个）\n`);
+      if (result.keptModified.length) process.stdout.write(`更新时保留了你改过的文件：${result.keptModified.join("、")}\n`);
+      for (const w of result.warnings) process.stdout.write(`提醒：${w}\n`);
       return 0;
     }
     if (action === "uninstall") {
@@ -3607,6 +3826,7 @@ async function handleMarket(argv: string[], home: string): Promise<number> {
       const result = mod.uninstallMarketplaceEntry(home, name, { store, runId });
       process.stdout.write(`已卸载 ${name}：删了 ${result.removed.join("、") || "无"}\n`);
       if (result.kept.length) process.stdout.write(`保留未删：${result.kept.join("、")}\n`);
+      if (result.warnings?.length) for (const w of result.warnings) process.stdout.write(`提醒：${w}\n`);
       process.stdout.write("卸载记录留在安装账本里（nyra market installed 可查历史）。\n");
       return 0;
     }
@@ -3655,7 +3875,7 @@ async function handleMarket(argv: string[], home: string): Promise<number> {
       process.stdout.write("用法：nyra market template <bot|index>\n");
       return 2;
     }
-    process.stdout.write("用法：nyra market <list|show|source|install|uninstall|installed|publish|template> [选项]\n");
+    process.stdout.write("用法：nyra market <list|show|source|install|install-team|update|uninstall|installed|publish|template> [选项]\n");
     return 2;
   } catch (err: unknown) {
     if (err instanceof Error && (err as { gate?: string }).gate) {
@@ -3672,7 +3892,7 @@ async function handleMarket(argv: string[], home: string): Promise<number> {
 const PLUGIN_USAGE = `用法：
   nyra plugin list                    列出已安装插件
 nyra plugin search [关键词]         在登记表里找插件
-nyra plugin install <本地目录|git URL>  安装插件（只装显式指定的来源）
+nyra plugin install <本地目录|git URL> [--force]  安装插件（只装显式指定的来源；撞见卸载墓碑时须 --force 显式重装）
 nyra plugin uninstall <名字>        卸载插件（用户改过的文件保留并报告）
 nyra plugin enable <名字>           启用插件
 nyra plugin disable <名字>          停用插件
@@ -3686,9 +3906,14 @@ const [cmd, arg] = argv;
 try {
   if (cmd === "list" || cmd === undefined) {
     const plugins = listPlugins(home);
-    if (!plugins.length) { process.stdout.write("未安装插件\n"); return 0; }
-    for (const p of plugins) {
+    if (!plugins.length) { process.stdout.write("未安装插件\n"); }
+    else for (const p of plugins) {
       process.stdout.write(`- ${p.name} ${p.version}（${p.status}${p.pinned ? "，pinned" : ""}，来源：${p.source}）\n`);
+    }
+    // H6：已卸载的墓碑也列出来——删过的东西有迹可查，重装须显式 --force。
+    const tombs = listPluginTombstones(home);
+    for (const t of tombs) {
+      process.stdout.write(`- ${t.name}（已卸载，${t.uninstalled_at}，重装请加 --force）\n`);
     }
     return 0;
   }
@@ -3702,7 +3927,8 @@ try {
   }
   if (cmd === "install") {
     if (!arg) { process.stderr.write("缺少来源：nyra plugin install <本地目录|git URL>\n"); return 2; }
-    const res = installPlugin(home, arg);
+    // H6：撞见卸载墓碑时 installPlugin 会拒绝；--force 是显式重装（清掉墓碑）。
+    const res = installPlugin(home, arg, { force: argv.includes("--force") });
     process.stdout.write(`已安装 ${res.name} ${res.version}${res.upgraded ? "（升级）" : ""}\n`);
     if (res.keptModified.length) {
       process.stdout.write(`以下文件你改过，已保留未覆盖：${res.keptModified.join("、")}\n`);
@@ -6663,6 +6889,16 @@ async function runRepl(args: CliArgs): Promise<number> {
       });
     process.stdout.write(lines.join("\n") + "\n");
   };
+  // 非 TTY（管道）下审批借用会话自己的 readline 提问，不再另开一个——另开的那个
+  // 关闭时会暂停 stdin，会话随后以 exit 0 退出。
+  let rlClosed = false;
+  rl.once("close", () => { rlClosed = true; });
+  approvalHooks.ask = (question: string): Promise<string | null> => new Promise((resolveAsk) => {
+      if (rlClosed) { resolveAsk(null); return; }
+      const onClose = (): void => resolveAsk(null);
+      rl.once("close", onClose);
+      rl.question(question, (answer) => { rl.off("close", onClose); resolveAsk(answer); });
+    });
   approvalHooks.after = () => {
     approvalOpen = false;
     pet.setMood("thinking");
@@ -7028,6 +7264,7 @@ async function runRepl(args: CliArgs): Promise<number> {
     pet.stop();
     approvalHooks.before = undefined;
     approvalHooks.after = undefined;
+    approvalHooks.ask = undefined;
     rl.close();
     await endSessionHooks();
     process.removeListener("SIGINT", onReplSigint);
@@ -7252,6 +7489,24 @@ export async function main(argv: string[]): Promise<number> {
   }
   if (args.help) { process.stdout.write(usageText() + "\n"); return 0; }
   if (args.version) { process.stdout.write(`nyra ${VERSION} (node runtime)\n`); return 0; }
+  // 打错字拦截：子命令后的未知选项直接报错；单个词像打错的子命令时提示并退出，
+  // 不把它当任务发给模型（不花钱）。见 src/cliTypos.ts。
+  if (args.subcommand && SUBCOMMAND_FLAGS[args.subcommand]) {
+    const spec = SUBCOMMAND_FLAGS[args.subcommand];
+    const bad = findUnknownFlag(args.subArgs ?? [], spec.value, spec.bool);
+    if (bad) {
+      const hint = bad.suggestion ? t("err.didYouMeanOption", { suggest: bad.suggestion }) : "";
+      process.stderr.write(t("err.unknownSubOption", { sub: args.subcommand, opt: bad.flag, hint }) + "\n");
+      return 2;
+    }
+  }
+  if (args.task !== undefined && !args.example) {
+    const suggest = suggestSubcommand(args.task, subcommandSet());
+    if (suggest) {
+      process.stderr.write(t("err.didYouMean", { cmd: args.task, suggest }) + "\n");
+      return 2;
+    }
+  }
 
   const home = resolveHome();
 
@@ -7288,6 +7543,14 @@ export async function main(argv: string[]): Promise<number> {
   if (args.subcommand === "judge") return handleJudge(args.subArgs ?? [], resolve(args.workdir));
   if (args.subcommand === "verifier") return handleVerifier(args.subArgs ?? [], home);
   if (args.subcommand === "mcp") return handleMcpServer(args.subArgs ?? [], home);
+  if (args.subcommand === "dream") {
+    const { handleDream } = await import("./dreamCli.ts");
+    return handleDream(args.subArgs ?? [], home);
+  }
+  if (args.subcommand === "router") {
+    const { handleRouter } = await import("./localRouterCli.ts");
+    return handleRouter(args.subArgs ?? [], home);
+  }
   if (args.subcommand === "peer") {
     const sub = args.subArgs ?? [];
     if (sub[0] && (PEER_FRIEND_COMMANDS as readonly string[]).includes(sub[0])) {
@@ -7307,6 +7570,7 @@ export async function main(argv: string[]): Promise<number> {
   if (args.subcommand === "editor") return handleEditor(args.subArgs ?? [], home);
   if (args.subcommand === "call") return callLedgerMain(args.subArgs ?? [], home);
   if (args.subcommand === "budget") return budgetMain(args.subArgs ?? [], home);
+  if (args.subcommand === "usage") return usageMain(args.subArgs ?? [], home);
   if (args.subcommand === "agui") return aguiMain(args.subArgs ?? [], home);
   if (args.subcommand === "screen") {
     const sub = args.subArgs ?? [];
@@ -7427,6 +7691,9 @@ export async function main(argv: string[]): Promise<number> {
   if (args.subcommand === "side-effects") return handleSideEffects(args.subArgs ?? [], home);
   if (args.subcommand === "heartbeat") return handleHeartbeat(args.subArgs ?? [], home);
   if (args.subcommand === "governance") return handleGovernance(args.subArgs ?? [], home);
+  if (args.subcommand === "policy") return handlePolicy(args.subArgs ?? [], home);
+  if (args.subcommand === "learn") return handleLearn(args.subArgs ?? [], home);
+  if (args.subcommand === "components") return handleComponents(args.subArgs ?? [], home);
   if (args.subcommand === "optimize") {
     const subArgs = args.subArgs ?? [];
     if (subArgs[0] === "loop" || subArgs[0] === "arms") {
@@ -7782,10 +8049,14 @@ export async function main(argv: string[]): Promise<number> {
   if (args.subcommand === "gw") {
     return handleGw(args.subArgs ?? []);
   }
+  if (args.subcommand === "update-check") {
+    return handleUpdateCheck(home);
+  }
   if (args.subcommand === "permissions") return handlePermissions(args.subArgs ?? [], home);
   if (args.subcommand === "eigenflux") return handleEigenflux(args.subArgs ?? [], home);
   if (args.subcommand === "doctor") {
-    const { checks, allOk } = await runDoctor({ home, providerName: args.provider });
+    const deep = (args.subArgs ?? []).includes("--deep");
+    const { checks, allOk } = await runDoctor({ home, providerName: args.provider, deep });
     printDoctorResult({ checks, allOk });
     return allOk ? 0 : 1;
   }

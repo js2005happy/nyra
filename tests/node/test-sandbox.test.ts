@@ -118,7 +118,7 @@ test("config 默认值：sandbox=auto、sandbox_mode=workspace-write、默认断
   expect(DEFAULT_CONFIG.sandbox).toBe("auto");
   expect(DEFAULT_CONFIG.sandbox_mode).toBe("workspace-write");
   expect(DEFAULT_CONFIG.sandbox_allow_net).toBe(false);
-  expect([...VALID_SANDBOXES]).toEqual(["auto", "local", "bwrap", "e2b"]);
+  expect([...VALID_SANDBOXES]).toEqual(["auto", "local", "bwrap", "seatbelt", "jobobject", "e2b"]);
   const settings = resolveSandbox({});
   expect(settings.backend).toBe("auto");
   expect(settings.mode).toBe("workspace-write");

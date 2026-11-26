@@ -1,0 +1,32 @@
+# Nyra Helm 单机版默认值（O4）。先做单副本 + 本地卷，不做多副本与托管更新；
+# 要扩容成多用户集群时，先看 docs/deploy.md 的“从单机到集群”一节。
+replicaCount: 1
+
+image:
+  repository: nyra
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+# 容器内网关监听端口（与 Dockerfile 的 EXPOSE 一致）。
+port: 8765
+
+# 对外暴露方式：ClusterIP（只集群内访问）/ NodePort / LoadBalancer。
+# 默认 ClusterIP：先在集群内用，要从公网访问时改成 NodePort 或配 Ingress。
+service:
+  type: ClusterIP
+  port: 8765
+
+# 数据卷：默认 1Gi 空目录卷（emptyDir，随 Pod 删而丢——只适合试跑）。
+# 真用时把 persistence.enabled 打开，改成你集群的 StorageClass。
+persistence:
+  enabled: false
+  size: 1Gi
+  storageClass: ""
+
+resources:
+  limits:
+    cpu: "1"
+    memory: 1Gi
+  requests:
+    cpu: 100m
+    memory: 256Mi

@@ -156,7 +156,7 @@ test("定时触发：真跑 tool 工作流（不调模型），运行记录与�
   try {
     const file = join(home, "hello.txt");
     writeFileSync(file, "hello trigger");
-    const def = toolDef("真跑", [{ type: "schedule", cron: "* * * * *" }]);
+    const def = toolDef("真跑", [{ type: "schedule", cron: "30 10 * * *" }]); // O6：每分钟 cron 到点会被护栏停用（绕过激活的手改注册表也一样），改成每天 10:30（MON_1030 到点）。
     def.inputs = { file };
     await importAndActivate(home, def);
     setWorkflowTriggersEnabled(home, true);

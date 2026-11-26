@@ -127,4 +127,4 @@ nyra vault add webhook-secret-slack
 - 速率限制是进程内计数：网关重启后清零；`nyra events poll` 手动轮询不受
   5 分钟间隔限制，但仍受每分钟 20 次派发上限约束；
 - `GET /api/event-triggers` 只返回触发器元数据（id/名/来源/事件/模式/是否启用），
-  不含任务提示词（提示词只在终端看）；桌面端连接管理页在 `desktop/`，归 Hark。
+  不含任务提示词（提示词只在终端看）；桌面端连接管理页在 `desktop/`。

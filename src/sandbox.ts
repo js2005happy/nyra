@@ -5,9 +5,11 @@
 // 审批仍在 src/tools.ts 的 checkApproval 里，钩子（PreToolUse/PostToolUse）
 // 仍在宿主机跑（src/hooks.ts），不在沙箱内——职责分工见 docs/sandbox.md。
 import { spawn } from "node:child_process";
-import { existsSync, statSync } from "node:fs";
+import { closeSync, existsSync, mkdtempSync, openSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { seatbeltAvailable } from "./seatbelt.ts";
 import { windowsSandboxAvailable } from "./windowsSandbox.ts";
+import { seccompProgram, seccompSupported } from "./seccomp.ts";
 import { delimiter, join } from "node:path";
 /**
  * 统一取消信号（可靠性打磨第 1 项第一批）。cancel.ts 是叶子模块，
@@ -46,6 +48,8 @@ export interface SandboxStatus {
   jobObjectAvailable: boolean;
   level: SandboxLevel;
   detail: string;
+  /** M4：seccomp 拒单是否可用（只 Linux x86-64）。 */
+  seccompAvailable?: boolean;
 }
 
 export interface ResolvedSandbox {
@@ -61,6 +65,13 @@ export interface ResolvedSandbox {
   seatbeltAvailable?: boolean;
   /** Windows 上 PowerShell 是否可用（其他平台恒 false）。 */
   jobObjectAvailable?: boolean;
+}
+
+// 仅测试用：全局探测覆盖。端到端测试（CLI main / 网关）没法把 probe 一路传进去，
+// 用它模拟 macOS/Windows；生产代码从不调用，未设置时走真实探测。
+let probeOverride: SandboxProbe | undefined;
+export function setSandboxProbeForTests(probe?: SandboxProbe): void {
+  probeOverride = probe;
 }
 
 /** bwrap 不可用时抛出的错误：调用方据此降级或 fail-closed，绝不静默裸奔。 */
@@ -147,6 +158,7 @@ export function resolveSandboxBackend(
   flag?: string | null,
   probe?: SandboxProbe,
 ): ResolvedSandbox {
+  probe = probe ?? probeOverride;
   const cfg = config ?? {};
   const raw = flag ?? sandboxEnv("SANDBOX") ?? (cfg.sandbox as string | undefined) ?? "auto";
   if (!(SANDBOX_BACKENDS as readonly string[]).includes(raw)) {
@@ -272,6 +284,7 @@ export function getSandboxStatus(
   flag?: string | null,
   probe?: SandboxProbe,
 ): SandboxStatus {
+  probe = probe ?? probeOverride;
   const bwrapAvailable = probe?.bwrapAvailable ?? detectBwrap();
   const seatbeltAvailableFlag = probe?.seatbeltAvailable ?? seatbeltAvailable();
   const jobObjectAvailableFlag = probe?.jobObjectAvailable ?? windowsSandboxAvailable();
@@ -282,13 +295,14 @@ export function getSandboxStatus(
     // 各后端一句话状态见 describeSandboxLevel（纯函数，可单测）。
     // 注意：之前这里只有 bwrap 一个分支，seatbelt 会误落进工具级提示——已一并修掉。
     const detail = describeSandboxLevel(resolved);
-    return { backend: resolved.backend, mode: resolved.mode, bwrapAvailable, seatbeltAvailable: seatbeltAvailableFlag, jobObjectAvailable: jobObjectAvailableFlag, level: resolved.level, detail };
+    return { backend: resolved.backend, mode: resolved.mode, bwrapAvailable, seatbeltAvailable: seatbeltAvailableFlag, jobObjectAvailable: jobObjectAvailableFlag, level: resolved.level, detail, seccompAvailable: seccompSupported() };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return {
       backend: (flag ?? (config?.sandbox as string | undefined) ?? "auto"),
       mode, bwrapAvailable, seatbeltAvailable: seatbeltAvailableFlag, jobObjectAvailable: jobObjectAvailableFlag, level: "none",
       detail: `沙箱配置未生效：${message}`,
+      seccompAvailable: seccompSupported(),
     };
   }
 }
@@ -304,7 +318,7 @@ export function getSandboxStatus(
  * 系统目录只读挂载、/proc /dev /tmp、工作目录按模式绑定。
  * extraRoBinds：工作区外的目录（只读追加，调用方保证是已存在的目录）。
  */
-function bwrapBaseArgs(opts: { workdir: string; allowNet: boolean; mode: SandboxMode; extraRoBinds?: string[]; env?: Record<string, string> }): string[] {
+function bwrapBaseArgs(opts: { workdir: string; allowNet: boolean; mode: SandboxMode; extraRoBinds?: string[]; env?: Record<string, string>; seccompFd?: number }): string[] {
   if (opts.mode === "danger-full-access") {
     throw new Error("danger-full-access 与沙箱互斥：该模式要求无限制执行，不能进 bwrap；如需无限制请用 --sandbox local 并自行承担风险");
   }
@@ -317,6 +331,8 @@ function bwrapBaseArgs(opts: { workdir: string; allowNet: boolean; mode: Sandbox
     args.push("--unshare-net");
   }
   args.push("--die-with-parent");
+  // M4：seccomp 拒单（fd 由调用方在 spawn 时传进子进程，见 runSandboxed）。
+  if (opts.seccompFd !== undefined) args.push("--seccomp", String(opts.seccompFd));
   // 环境白名单（第四份审计 P0）：传了 env 就先清空再逐个放行，不再透传
   // 整份 process.env；没传 env 的调用方（eval 的 buildBwrapArgv）保持原样。
   if (opts.env) {
@@ -339,7 +355,7 @@ function bwrapBaseArgs(opts: { workdir: string; allowNet: boolean; mode: Sandbox
 
 export function buildBwrapArgs(
   command: string,
-  opts: { workdir: string; allowNet: boolean; mode: SandboxMode; env?: Record<string, string> },
+  opts: { workdir: string; allowNet: boolean; mode: SandboxMode; env?: Record<string, string>; seccompFd?: number },
 ): string[] {
   return [...bwrapBaseArgs(opts), "--", "/bin/sh", "-c", command];
 }
@@ -353,7 +369,7 @@ export function buildBwrapArgs(
 export function buildBwrapArgv(
   command: string,
   args: string[],
-  opts: { workdir: string; allowNet: boolean; mode: SandboxMode; extraRoBinds?: string[]; env?: Record<string, string> },
+  opts: { workdir: string; allowNet: boolean; mode: SandboxMode; extraRoBinds?: string[]; env?: Record<string, string>; seccompFd?: number },
 ): string[] {
   return [...bwrapBaseArgs(opts), "--", command, ...args];
 }
@@ -377,6 +393,17 @@ export interface RunSandboxedOptions {
    * 以 CancelError 拒绝（不是超时结果）。不传时行为与原来一致。
    */
   signal?: AbortSignal;
+  /**
+   * M4：seccomp 拒单（默认关）。开了就在 bwrap 里加载拒单程序；
+   * 本机不支持（非 Linux x86-64）时直接抛错、不进沙箱也不裸奔。
+   */
+  seccomp?: boolean;
+  /**
+   * M4：出口代理地址（如 http://127.0.0.1:端口，EgressGate.listen 返回的）。
+   * 只设 http_proxy/https_proxy 环境变量（代理本身由调用方起停、管生命周期）；
+   * 不传时沙箱里的网络行为与原来一致。
+   */
+  egressProxy?: string;
 }
 
 export interface RunSandboxedResult {
@@ -395,21 +422,64 @@ export async function runSandboxed(
   if (!detectBwrap()) {
     throw new SandboxUnavailableError(`bwrap 不可用，无法进入 OS 沙箱。${BWRAP_INSTALL_HINT}`);
   }
+  // M4：seccomp 拒单——本机不支持时 fail-closed（不进沙箱也不裸奔）。
+  // 程序写进临时文件、fd 传给 bwrap（--seccomp 3）；spawn 成功后父进程
+  // 就可以关掉自己的 fd（子进程已继承），临时目录随即清掉。
+  let seccompFd: number | null = null;
+  if (opts.seccomp === true) {
+    if (!seccompSupported()) {
+      throw new Error("seccomp 拒单只支持 Linux x86-64：本机不支持，沙箱不启动（fail-closed，不裸奔）");
+    }
+    const dir = mkdtempSync(join(tmpdir(), "nyra-seccomp-"));
+    try {
+      const progPath = join(dir, "prog.bpf");
+      writeFileSync(progPath, seccompProgram());
+      seccompFd = openSync(progPath, "r");
+    } catch (err: unknown) {
+      try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+      throw err;
+    }
+    try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+  }
   // 子进程环境走白名单（第四份审计 P0）：PATH/HOME/语言/代理 + 调用方
   // 显式声明的变量；密钥类一律不传。bwrap 侧同样用这份 env 做
   // --clearenv + --setenv，spawn 侧也用它（两边一致）。
-  const childEnv = buildChildEnv(opts.env);
-  const args = buildBwrapArgs(command, { ...opts, env: childEnv });
+  // M4：egressProxy 只设四个代理变量（代理本身由调用方起停）。
+  const childEnv = buildChildEnv({
+    ...opts.env,
+    ...(opts.egressProxy
+      ? { http_proxy: opts.egressProxy, https_proxy: opts.egressProxy, HTTP_PROXY: opts.egressProxy, HTTPS_PROXY: opts.egressProxy }
+      : {}),
+  });
+  const args = buildBwrapArgs(command, {
+    ...opts, env: childEnv,
+    // --seccomp 后跟的是子进程里的 fd 号：stdio[3] 传过去，子进程里就是 3，
+    // 与父进程 openSync 拿到的号无关（Node 会把 stdio[i] 映射成子进程 fd i）。
+    seccompFd: seccompFd !== null ? 3 : undefined,
+  });
   const timeoutMs = (opts.timeout ?? 60) * 1000;
   // 可靠性打磨第 1 项第一批：信号已 abort 时不启动，直接以 CancelError
   // 拒绝（调用方认得出“这是取消”，不记成沙箱失败）。
-  if (opts.signal?.aborted) throw cancelErrorFromSignal(opts.signal, "stop");
+  if (opts.signal?.aborted) {
+    if (seccompFd !== null) { try { closeSync(seccompFd); } catch { /* ignore */ } }
+    throw cancelErrorFromSignal(opts.signal, "stop");
+  }
   return new Promise((resolvePromise, rejectPromise) => {
-    const child = spawn("bwrap", args.slice(1), {
-      cwd: opts.workdir,
-      detached: process.platform !== "win32",
-      env: childEnv,
-    });
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn("bwrap", args.slice(1), {
+        cwd: opts.workdir,
+        detached: process.platform !== "win32",
+        env: childEnv,
+        ...(seccompFd !== null ? { stdio: ["pipe", "pipe", "pipe", seccompFd] } : {}),
+      });
+    } catch (err: unknown) {
+      if (seccompFd !== null) { try { closeSync(seccompFd); } catch { /* ignore */ } }
+      rejectPromise(err);
+      return;
+    }
+    // spawn 已返回：子进程继承了 fd，父进程的这份可以关了。
+    if (seccompFd !== null) { try { closeSync(seccompFd); } catch { /* ignore */ } seccompFd = null; }
     let stdout = "";
     let stderr = "";
     let timedOut = false;

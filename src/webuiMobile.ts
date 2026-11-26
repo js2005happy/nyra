@@ -16,6 +16,8 @@ import { MASCOT_COMPOSE_JS, mascotClientData, mascotSvg } from "./mascots.ts";
 import APP_CSS from "./assets/mobile-app.css.txt" with { type: "text" };
 import APP_JS from "./assets/mobile-app.js.txt" with { type: "text" };
 import SPLASH_JS from "./assets/mobile-splash.js.txt" with { type: "text" };
+// 安全 Markdown 渲染（桌面 / 手机共用，只建 DOM 不写 innerHTML）。
+import MD_JS from "./assets/markdown.js.txt" with { type: "text" };
 import INTER_400 from "./assets/mobile-fonts/inter-400.woff.b64.txt" with { type: "text" };
 import INTER_600 from "./assets/mobile-fonts/inter-600.woff.b64.txt" with { type: "text" };
 import JBM_400 from "./assets/mobile-fonts/jbm-400.woff.b64.txt" with { type: "text" };
@@ -210,6 +212,7 @@ export const MOBILE_V2_HTML = `<!doctype html><html lang="en"><head><meta charse
 <button id="pair-btn" class="btn pri full" style="height:52px;margin-bottom:8px" data-i="m.pair.btn"></button>
 <button id="pair-cloud" class="btn ghost full" style="height:48px">${IC.cloud}<span data-i="m.pair.useAccount"></span><span class="tag soon" data-i="m.soon"></span></button>
 <p data-i="m.pair.foot" class="note" style="padding:10px 2px 0"></p>
+<p id="pair-plain-note" class="note hidden" style="padding:6px 2px 0"></p>
 </div></section>
 <section id="threads-view" class="view tabview hidden">
 ${head("m.tab.threads", `<button id="search-btn" class="ib" data-ia="m.search">${IC.search}</button>`, "conn-threads")}
@@ -284,5 +287,6 @@ ${Object.entries(IC).map(([k, v]) => `<template id="ic-${k}">${v}</template>`).j
 <script>window.NYRA_I18N=${I18N_JSON};window.NYRA_MASCOTS=${MASCOT_JSON};</script>
 <script>${MASCOT_COMPOSE_JS}</script>
 <script>${SPLASH_JS}</script>
+<script>${MD_JS}</script>
 <script>${APP_JS}</script>
 </body></html>`;

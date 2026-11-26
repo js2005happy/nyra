@@ -59,7 +59,10 @@ nyra org remove <组织> <邮箱或账号id> --yes
 nyra org role <组织> <邮箱或账号id> <admin|member|viewer> --yes
 nyra org delete <组织> --yes
 nyra org check <组织> <邮箱或账号id> [read|write|manage]
+nyra org sso <组织> <on|off> [--provider <id>] [--domains a.com,b.com]
 ```
+
+`org sso` 开/关组织强制 SSO（须机主或该组织 admin；开后成员只能走 SSO 登录，见 `docs/sso.md`「组织强制 SSO 与邮箱域名路由」；`--provider` 绑身份提供方 id，`--domains` 绑邮箱域名，多个用逗号分隔）。
 
 操作者默认是当前登录账号（`nyra account status` 的那位），没登录时按机主。
 `remove` / `role` / `delete` 须 `--yes`；`add` 不须（可逆、有审计）。
@@ -166,7 +169,7 @@ write），须 Bot 主人或组织 admin（Manager）批了才生效（`learning
 - 审计 `~/.nyra/org-audit.jsonl`（只追加）：动作、组织 id、账号 id、角色、
   操作者。不记邮箱。
 - 运行事件（已注册进 `src/runs.ts` 的 `EVENT_FIELDS`）：第一批 `org_created` /
-  `org_deleted` / `org_member_added` / `org_member_removed` / `org_role_changed`；
+  `org_deleted` / `org_member_added` / `org_member_removed` / `org_role_changed` / `org_sso_changed`（O3）；
   第二批 `org_bot_shared` / `org_bot_unshared` / `org_bot_write_granted` /
   `org_bot_write_revoked` / `org_learning_submitted` / `org_learning_approved` /
   `org_learning_rejected` / `org_isolation_violation` / `org_workspace_set` /

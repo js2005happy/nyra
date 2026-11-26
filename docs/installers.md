@@ -1,3 +1,5 @@
+**中文** · [English](installers.en.md)
+
 # 安装包与发版：每次发版安装包同步更新
 
 **站规（2026-11-20）：PC 端与移动端安装包都要做好，每次更新安装包也要
@@ -10,7 +12,8 @@
 | --- | --- | --- | --- |
 | 5 个 Node 二进制 | `node-binaries.yml` | tag / main 推送 / PR / 手动 | `release` 作业：建 Release（写正文、生成 notes）并挂 `dist/*` |
 | macOS 通用 `.dmg`、Windows `.msi` / NSIS `-setup.exe` | `desktop.yml` | tag / 手动 | `release` 作业：只挂文件，不写正文（正文归 node-binaries 管） |
-| 安卓 debug APK（`nyra-android-debug.apk`） | `mobile.yml` | tag / 手动 | `release` 作业：只挂文件，不写正文 |
+| 安卓 APK（稳定名 `nyra-android.apk`；debug 签名时另有旧名 `nyra-android-debug.apk`） | `mobile.yml` | tag / 手动 | `release` 作业：只挂文件，不写正文 |
+| 桌面安装包的稳定名副本（`Nyra-windows-x64-setup.exe`、`Nyra-windows-x64.msi`、`Nyra-macos-universal.dmg`、`Nyra-linux-x86_64.AppImage`、`Nyra-linux-amd64.deb`） | `desktop.yml` | tag | `release` 作业：内容与带版本号的同一文件相同，供 `releases/latest/download/<稳定名>` 下载链接用 |
 | `SHA256SUMS` + `.sig` + `.pem` + `.bundle`、SLSA 证明 | `release-sign.yml` | Node binaries 跑完自动（`workflow_run`）/ Release 手动建后 / 手动填 tag | 等齐全部 9 项产物再下载、算哈希、签名、回挂；等不到就失败，不签不全的清单 |
 
 时序注意：三个构建工作流是并行的，Release 由最先跑完的那个创建；
@@ -35,17 +38,20 @@ v0.5.2–v0.5.11 的 Release 都没有（根因另有 `gh --jq -r` 写法错误�
 
 三份安装脚本（`scripts/install-node.sh`、`scripts/install-node-macos.sh`、
 `scripts/install-node.ps1`）默认不再是无校验的 `latest`，而是钉住
-`DEFAULT_VERSION`（当前 `v0.5.12`，写在每份脚本头部显眼处）。发版时
-三处一起改到新版本号（与下面“版本号六处”同步）。下载后先对同一
+`DEFAULT_VERSION`（当前 `v0.5.15`，写在每份脚本头部显眼处）。下载后先对同一
 Release 的 `SHA256SUMS` 校验再安装：哈希对不上、清单里没有这个文件、
 下载不到 `SHA256SUMS`，一律拒绝安装（fail-closed）。`--version latest`
 仍可显式传，但同样要校验；`--from-file` 从本地文件装，不联网、不校验。
+指定的版本还没发布（Release 里找不到对应文件，GitHub 回 404）时，脚本直接说
+“版本 vX.Y.Z 还没发布”，不再提示“检查网络”。
 
-注意：`v0.5.12` 尚未正式发版（本批只改源码与工作流，不打 tag、不发
-Release），在它发版之前默认安装会因下载不到而拒绝——这是有意的
-fail-closed，不是 bug；v0.5.2–v0.5.11 的 Release 都没有 `SHA256SUMS`，
-所以发版前任何版本的 Release 安装都会被拒绝，本地 `--from-file`
-安装不受影响。
+**默认版本只能指向已经发布、附件齐全的 Release。** 发版顺序：先推 tag，等
+Release 上的二进制、桌面安装包、APK 与 `SHA256SUMS`（签名工作流产出）都挂齐，
+再把三份脚本的默认版本改成新版本号，单独提交。Node CI 的 `installer-release-check`
+会用 1 字节 GET 逐个核对默认版本 Release 上的附件（含 `SHA256SUMS`），缺一个就红。
+
+v0.5.11 的 `SHA256SUMS` 与签名是 2026-11-24 手动跑签名工作流补上的：它证明的是
+“签名时 Release 上的这些文件”，不是构建时的来源证明。
 
 ## 版本号：六处（升版时一处都不能漏）
 
@@ -64,11 +70,7 @@ fail-closed，不是 bug；v0.5.2–v0.5.11 的 Release 都没有 `SHA256SUMS`�
 `android/app/build.gradle`（`versionName` = tag 去掉 `v`，`versionCode` =
 工作流运行号）。
 
-开发期间的过渡态：根 `package.json` 与 `src/config.ts` 先行 `0.5.12-dev`
-（开发版后缀，明确不是正式版，与 CHANGELOG 顶部“未发布（0.5.12）”
-对应），桌面/手机四处仍为 `0.5.11`；正式发版时六处一起升到 `0.5.12`。
-此期间手动跑 desktop 工作流会因版本检查失败，属预期（打 tag 发版前会
-统一）；Node CI 与 Node binaries 不跑这项检查，不受影响。
+开发期间根 `package.json` 与 `src/config.ts` 可以先行带 `-dev` 后缀（与 CHANGELOG 顶部“未发布”对应）；正式发版时六处一起升到同一个版本号。
 
 ## 手动操作（发版之外）
 
@@ -89,5 +91,8 @@ fail-closed，不是 bug；v0.5.2–v0.5.11 的 Release 都没有 `SHA256SUMS`�
   “没有 SHA256SUMS”并退出码 1，不指向不存在的文件。
 - 安装包本身的**代码签名**是另一回事，见 `docs/SIGNING.md`：证书没买，
   Windows `.msi` / `.exe` 与 macOS `.dmg` 目前未签名、未公证；安卓 APK
-  是 Gradle 自动生成的 debug 签名（正式 keystore 待用户决定后再接）；
+  从 0.5.14 起正式签名（签名者 CN=Nyra，证书 SHA-256 以 `D3:CD:8C:92` 开头），
+  发版 tag 构建缺 `ANDROID_KEYSTORE_*` secrets 时直接失败、不退回 debug 签名，
+  验签不通过也失败（见 `docs/SIGNING.md` 第 4 层）。从 0.5.13 及更早的临时签名版
+  升级需先卸载一次，之后可直接覆盖升级；
   iOS 没有安装包（要 Apple Developer 账号与证书，与桌面签名同一笔待办）。

@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "taskId": "scripted-edit-patch",
+  "scriptHash": "76542695bfb555cf508fcc8f351ab76a8765e5750012d51d6b82718dcdfd067f",
+  "steps": [
+    {
+      "tool": "edit_file",
+      "argsHash": "a6e0c6732c67b17cfac68b4feaae9590907dc16015fac89bf51054ac0170befe",
+      "resultHash": "ae2df3740269260f6c64b72ba9d24b2410ffaa47e3b44d845db8f0a7ce59e466",
+      "ok": true
+    },
+    {
+      "tool": "read_file",
+      "argsHash": "a99e6e0b80a088da39ddea0d9f099a8759ba09491970098dfffb6e20dbfc9546",
+      "resultHash": "7e8c59dec8000aaef4843f66d2c2ac52d47076cedc4cd76ffcbe4d34940f3cf5",
+      "ok": true
+    }
+  ],
+  "finalTreeHash": "e7a60e52022c70e90fed0e48e5861fd708fdc145afb2d2e3a079f32c500c9adc",
+  "recordedAt": "2026-11-24T17:31:53.766Z"
+}

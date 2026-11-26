@@ -1,5 +1,7 @@
 // Fixed tasks, fixtures and acceptance rules are versioned together. No model-written grader.
 export type EvalCategory = 'code' | 'browser' | 'research' | 'connector';
+import type { ScriptedStep } from './scripted.ts';
+
 export interface EvalTask {
   id: string;
   category: EvalCategory;
@@ -11,6 +13,8 @@ export interface EvalTask {
   solution?: string;
   browserAction?: string;
   browserExpected?: unknown;
+  /** M5 脚本化评测：固定工具调用序列（只有脚本化任务填，真模型任务不填）。 */
+  script?: ScriptedStep[];
 }
 export interface EvalConditions {
   provider: string;

@@ -53,6 +53,31 @@ nyra group chat run room-1 --task "分工写周报" --mode handoff \
 `docs/interventions.md`：bot 回复是总线上的 `publish` 消息，先过拦截器
 再进群记录）。
 
+## Jev 式快速决策路由（M2：学 OpenMausBot 的 Jev）
+
+群消息没 @ 谁时，默认所有机器人都回答——人一多就吵。开了 Jev 路由后，
+先用便宜模型快速判一句“这事该谁接”，只交给那一个 Bot；判不出来就
+回落全员回答，不静默丢消息。
+
+```sh
+# 干跑：只看分流结果，不发消息、不跑 Bot
+nyra group route --room room-1 --message "帮我查一下这周的报错"
+# 开关（config.json，默认全关）：开了才在 chat send 里分流
+# jev_router_enabled: true
+# jev_model: "deepseek-flash"（路由用的便宜模型）
+# jev_confidence_threshold: 0.6（低于它回落全员回答）
+```
+
+- 路由只决定“谁回答”，不决定“能不能做”——选中的 Bot 照样走审批、
+  预算、证据链；路由不碰审批与预算。
+- 回落条件（任一满足就全员回答）：decider 失败/没判出来、选了不存在
+  的成员、置信度越界（不在 0–1）、置信度低于阈值、房间里只有一个机器人
+  时不用分流。
+- 路由结论进证据链（`jev_routed` 事件：房间、选中的成员、置信度、
+  是否回落、回落原因；不记消息全文）。
+- 路由不走 fallback 链、不自动换模型；队列与定时任务里不自动路由，
+  只在交互 `chat send` 里用。
+
 ## 诚实边界
 
 - 只在假 bot runner（本机确定性回复）上验过发言顺序、handoff 优先

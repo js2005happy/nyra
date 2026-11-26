@@ -61,7 +61,7 @@
 | `diff-stat` | 有改动文件时 diffStat 非空 | 有改动文件但 diffStat 为空 |
 | `evidence-complete` | 摘要非空、花费已结算（或未知） | 摘要为空、花费为负 |
 | `draft-labeled` | 非草稿，或已标草稿且未声称已完成 | 标题/摘要含草稿标记（草稿/草案/初稿/待完善/WIP/draft）却声称已完成（已完成/已搞定/已交付/ready/验收通过/测试通过） |
-| `ui-before-shot` | 无界面改动，或摘要已提 before/对比/截图 | 改了界面文件（`.tsx`/`.jsx`/`.vue`/`.svelte`/`.css`、`desktop/ui/`、`docs/design/` 下）但摘要里没提 before/对比/截图 |
+| `ui-before-shot` | 无界面改动，或摘要已提 before/对比/截图 | 改了界面文件（`.tsx`/`.jsx`/`.vue`/`.svelte`/`.css`、`desktop/ui/` 下）但摘要里没提 before/对比/截图 |
 
 后两项是 DSH-5 的诚实交付口径：草稿不能按已完成验收，UI 改动没图不算
 ready。它们是**启发式文本判定**——只核对标题/摘要里的说法，不验截图像素

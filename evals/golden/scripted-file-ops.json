@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "taskId": "scripted-file-ops",
+  "scriptHash": "4f1772490a7308caa84c09deed1fdf66b45742ae12efaeeab88e195df2d5a4f5",
+  "steps": [
+    {
+      "tool": "read_file",
+      "argsHash": "327e09780c8ca587a9edeb9d363553cc8b785fea45069b53e00cbf802c0ee078",
+      "resultHash": "473e981f12d6968963e737e4143e0d0634faeb1cff4796602e8b2087db6de77e",
+      "ok": true
+    },
+    {
+      "tool": "write_file",
+      "argsHash": "4f9a91de1d428948a5d51c7873867e17e50082c0735738cbf859c4ba74d8dafe",
+      "resultHash": "a390bfd75db9efa0d1ff0d98fca71323566add7e01e18a3ffaf83660b195e5da",
+      "ok": true
+    },
+    {
+      "tool": "list_dir",
+      "argsHash": "4ae486c3a48f8dc732af672b138b438a1d96960304cc334d46bbc2687d169cbb",
+      "resultHash": "12d316815b971fda042cf031d643ff926a55a8f1cb9d5c47c59f2d78ab50aec6",
+      "ok": true
+    },
+    {
+      "tool": "read_file",
+      "argsHash": "ae188f1fc658a8ecaf5242f00e8e8070819fad46a55c136ad1f96f13f691ff94",
+      "resultHash": "f49865ac2cf7e31a4c95fced1e72d951e0d43662d28c0d52783bf3ed1bf86808",
+      "ok": true
+    }
+  ],
+  "finalTreeHash": "1e231b4817c216ff12121c9c6f7a7866ae2e4ed7f887233a1752b29dfdf86b44",
+  "recordedAt": "2026-11-24T17:31:53.746Z"
+}

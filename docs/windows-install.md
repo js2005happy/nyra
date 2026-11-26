@@ -1,3 +1,5 @@
+**中文** · [English](windows-install.en.md)
+
 # 在 Windows 上安装 Nyra
 
 两种装法：**Node 二进制 exe 单文件**（不用装 Python，推荐）或
@@ -36,7 +38,7 @@ Release 里的 `.msi` / `-setup.exe`，见 [docs/desktop.md](desktop.md)。
    $env:DEEPSEEK_API_KEY="sk-..."
    ```
 
-4. 验证：`nyra.exe --version` 应打印 `nyra 0.5.12-dev (node runtime)`，
+4. 验证：`nyra.exe --version` 应打印 `nyra 0.5.15 (node runtime)`，
    再跑 `nyra.exe setup` 走首次启动向导。
 
 Node exe 是 Bun `--compile` 打的单文件控制台程序，自带运行时，不用

@@ -69,21 +69,41 @@ export function menuSelect(
 
 /** 行输入回退：空行 = 是；EOF/Ctrl-C = 否（fail-closed）。 */
 export async function lineFallback(prompt: string, allowAlways: boolean): Promise<ApprovalChoice> {
+  const question = `${prompt} ${t("approval.lineChoices")} `;
+  // 交互会话已经有自己的 readline 时借用它提问：同一个 stdin 上再开一个 readline，
+  // 关掉时会把 stdin 暂停，会话随后就以 exit 0 退出（管道输入下复现过）。
+  if (approvalHooks.ask) {
+    try {
+      return parseLineAnswer(await approvalHooks.ask(question), allowAlways);
+    } catch {
+      return NO;
+    }
+  }
+  const stdinAny = process.stdin as unknown as { isPaused?: () => boolean; resume?: () => unknown };
+  const wasPaused = typeof stdinAny.isPaused === "function" ? stdinAny.isPaused() : true;
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {
     const answer = await new Promise<string | null>((resolvePromise) => {
-      rl.question(`${prompt} ${t("approval.lineChoices")} `, (a) => resolvePromise(a));
+      rl.question(question, (a) => resolvePromise(a));
       rl.on("close", () => resolvePromise(null));
     });
+    return parseLineAnswer(answer, allowAlways);
+  } catch {
+    return NO;
+  } finally {
+    rl.close();
+    if (!wasPaused) { try { stdinAny.resume?.(); } catch { /* ignore */ } }
+  }
+}
+
+/** 行输入的答案：空行/y/yes/1 = 是；a/always/3 = 始终允许（若可用）；EOF 与其余 = 否。 */
+export function parseLineAnswer(answer: string | null, allowAlways: boolean): ApprovalChoice {
+  {
     if (answer === null) return NO; // EOF
     const a = answer.trim().toLowerCase();
     if (a === "" || a === "y" || a === "yes" || a === "1") return YES;
     if (allowAlways && (a === "a" || a === "always" || a === "3")) return ALWAYS;
     return NO;
-  } catch {
-    return NO;
-  } finally {
-    rl.close();
   }
 }
 
@@ -91,7 +111,12 @@ export async function lineFallback(prompt: string, allowAlways: boolean): Promis
  * 审批前后的钩子：交互终端用它在提问前收起 spinner、让小伙伴举手，
  * 回答后再恢复。钩子出错一律忽略，绝不影响审批本身（fail-closed 语义不变）。
  */
-export const approvalHooks: { before?: (prompt: string) => void; after?: (choice: ApprovalChoice) => void } = {};
+export const approvalHooks: {
+  before?: (prompt: string) => void;
+  after?: (choice: ApprovalChoice) => void;
+  /** 交互会话自己的行输入（借用会话的 readline 提问）；null = EOF。 */
+  ask?: (question: string) => Promise<string | null>;
+} = {};
 
 /** TTY 时方向键菜单，否则行输入回退；菜单搭建失败也回退到行输入。 */
 export async function askApproval(prompt: string, allowAlways = false, alwaysLabel?: string): Promise<ApprovalChoice> {
@@ -120,14 +145,34 @@ async function askApprovalInner(prompt: string, allowAlways: boolean, alwaysLabe
   return lineFallback(prompt, allowAlways);
 }
 
-function ttyMenu(options: [string, ApprovalChoice][]): Promise<ApprovalChoice> {
+/** ttyMenu 要用到的 stdin 能力（测试可注入假的 stdin）。 */
+export interface MenuStdin {
+  isRaw?: boolean;
+  isPaused?: () => boolean;
+  setRawMode?: (mode: boolean) => unknown;
+  resume: () => unknown;
+  pause: () => unknown;
+  on: (event: "data", cb: (chunk: Buffer) => void) => unknown;
+  off: (event: "data", cb: (chunk: Buffer) => void) => unknown;
+}
+
+/**
+ * 方向键菜单。结束时把 stdin 恢复成进来时的样子（raw 模式、暂停与否）：
+ * 交互会话的 readline 还挂在同一个 stdin 上，审批后若把它暂停或关掉 raw，
+ * 事件循环里就没有活着的句柄，进程会以 exit 0 悄悄退出（实机复现过）。
+ */
+export function ttyMenu(
+  options: [string, ApprovalChoice][],
+  stdin: MenuStdin = process.stdin as unknown as MenuStdin,
+  write: (text: string) => void = (t) => { process.stdout.write(t); },
+): Promise<ApprovalChoice> {
   return new Promise((resolvePromise) => {
-    const stdin = process.stdin;
+    const wasRaw = Boolean(stdin.isRaw);
+    const wasPaused = typeof stdin.isPaused === "function" ? stdin.isPaused() : true;
     stdin.setRawMode?.(true);
     stdin.resume();
     let selected = 0;
     const count = options.length;
-    const write = (t: string) => process.stdout.write(t);
     write(renderApprovalMenu(options, selected));
     const onData = (chunk: Buffer) => {
       const b = chunk[0];
@@ -162,8 +207,8 @@ function ttyMenu(options: [string, ApprovalChoice][]): Promise<ApprovalChoice> {
     };
     const done = (choice: ApprovalChoice) => {
       stdin.off("data", onData);
-      try { stdin.setRawMode?.(false); } catch { /* ignore */ }
-      stdin.pause();
+      try { stdin.setRawMode?.(wasRaw); } catch { /* ignore */ }
+      if (wasPaused) stdin.pause();
       resolvePromise(choice);
     };
     stdin.on("data", onData);

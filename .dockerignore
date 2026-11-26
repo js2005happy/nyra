@@ -1,0 +1,12 @@
+# 构建上下文里不要的东西：本地开发产物、密钥、数据、历史。
+.git
+.github
+node_modules
+dist
+.nyra
+.eval-runs
+desktop
+mobile
+branding
+*.log
+.DS_Store

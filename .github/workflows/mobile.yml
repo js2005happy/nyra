@@ -3,22 +3,31 @@
 # Runs only by hand (Actions → "Build mobile app" → Run workflow) or when a
 # version tag (v*) is pushed, so it never slows down normal pushes / PRs.
 #
-# Output: an Android debug APK (nyra-android-debug.apk). The APK is uploaded
+# Output: an Android APK (nyra-android.apk). The APK is uploaded
 # as a workflow artifact, and on tag pushes attached to the GitHub Release
 # (see docs/installers.md for the whole release picture).
 #
 # Why Capacitor, why Android-only for now: the phone UI is the PWA served by
 # `nyra ui` (/m); the phone still talks to the computer. A TWA would need a
 # public HTTPS origin (there is none), and Tauri Mobile would put a second
-# mobile target inside desktop/ (Hark's area) for a shell that still shells
+# mobile target inside desktop/ for a shell that still shells
 # out to a `nyra` binary that doesn't exist on phones. Capacitor wraps the
 # launcher page (mobile/www/) into a real APK with an icon and a standalone
 # window; iOS needs an Apple Developer account + certificates, same as the
 # desktop signing situation (docs/SIGNING.md), so it waits for that.
 #
-# The APK is debug-signed (Gradle's auto-generated debug keystore). A release
-# keystore is a follow-up: it needs a user-owned keystore in CI secrets,
-# same treatment as the OV certificate.
+# Signing (0.5.13 起): when the repository has the release keystore secrets
+# (ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS,
+# optional ANDROID_KEY_PASSWORD) the job builds `assembleRelease` signed with
+# that fixed key, so later versions install over earlier ones, and checks with
+# apksigner that the signer is CN=Nyra with the expected certificate SHA-256.
+# A tag (release) build without the secrets FAILS: releases must be signed with
+# the release key. Only a manual run without secrets falls back to a debug
+# build (Gradle's auto-generated debug key) for testing, with a warning.
+# A half-configured secret set fails loudly instead of silently shipping debug.
+# Outputs: nyra-android.apk (stable name, used by README/site "latest" links)
+# and, for a debug build only, nyra-android-debug.apk (old name, kept for
+# existing links). The keystore never enters the repo; see docs/SIGNING.md.
 
 name: Build mobile app
 
@@ -36,7 +45,7 @@ concurrency:
 
 jobs:
   build:
-    name: Android debug APK
+    name: Android APK
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -102,21 +111,87 @@ jobs:
           sed -i "s/versionCode [0-9]*/versionCode ${{ github.run_number }}/" android/app/build.gradle
           grep -E "versionName|versionCode" android/app/build.gradle
 
+      - name: Decide signing
+        id: sign
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KS_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          SET=0; [ -n "$KS_B64" ] && SET=$((SET+1)); [ -n "$KS_PASS" ] && SET=$((SET+1)); [ -n "$KS_ALIAS" ] && SET=$((SET+1))
+          if [ "$SET" = 3 ]; then echo "mode=release" >> "$GITHUB_OUTPUT"; echo "正式签名：用仓库里的 release keystore"
+          elif [ "$SET" = 0 ] && [ "${{ github.ref_type }}" = "tag" ]; then
+            # 正式发版必须正式签名：tag 构建缺 secrets 直接失败，不退回 debug 签名。
+            echo "::error::发版 tag 构建缺少 ANDROID_KEYSTORE_* secrets，拒绝发布 debug 签名的 APK"; exit 1
+          elif [ "$SET" = 0 ]; then echo "mode=debug" >> "$GITHUB_OUTPUT"; echo "::warning::没有配置 ANDROID_KEYSTORE_* secrets，本次手动构建是 debug 签名（仅供测试，升级需先卸载旧版）"
+          else echo "::error::ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS 只配了一部分，拒绝退回 debug 签名"; exit 1; fi
+
+      - name: Build signed release APK
+        if: steps.sign.outputs.mode == 'release'
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          NYRA_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          NYRA_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          NYRA_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          # 正式证书 SHA-256 的前缀（公开信息），验签后必须匹配。
+          EXPECTED_CERT_SHA256_PREFIX: d3cd8c92
+        run: |
+          set -euo pipefail
+          export NYRA_KEYSTORE_PATH="$RUNNER_TEMP/nyra-release.p12"
+          trap 'rm -f "$NYRA_KEYSTORE_PATH"' EXIT
+          printf '%s' "$KS_B64" | base64 -d > "$NYRA_KEYSTORE_PATH"
+          chmod 600 "$NYRA_KEYSTORE_PATH"
+          (cd mobile && bash scripts/patch-android-signing.sh)
+          (cd mobile/android && ./gradlew assembleRelease --no-daemon)
+          rm -f "$NYRA_KEYSTORE_PATH"
+          mkdir -p dist
+          cp mobile/android/app/build/outputs/apk/release/app-release.apk dist/nyra-android.apk
+          # 验签并打印证书指纹（公开信息），确认不是 debug 证书。
+          BT="$(ls -d "${ANDROID_HOME}"/build-tools/* | sort -V | tail -1)"
+          # 先单独跑 verify 拿退出码（不经管道），再打印输出。
+          if ! "$BT/apksigner" verify --verbose --print-certs dist/nyra-android.apk > /tmp/certs.txt 2>&1; then
+            cat /tmp/certs.txt; echo "::error::apksigner verify 失败"; exit 1
+          fi
+          cat /tmp/certs.txt
+          if grep -qi "CN=Android Debug" /tmp/certs.txt; then echo "::error::release APK 仍是 debug 证书"; exit 1; fi
+          # apksigner 的输出格式随版本与 --verbose 不同（"Signer #1 certificate DN: CN=Nyra, ..."
+          # 或 "V2 Signer: certificate DN: C=CN, O=Nyra, CN=Nyra"），所以按行检查：
+          # 每一行证书 DN 都必须含 CN=Nyra，每一行证书 SHA-256 都必须以正式证书前缀开头
+          # （多出一个别的签名者也会被拦下）。
+          DNS="$(grep "certificate DN:" /tmp/certs.txt || true)"
+          SHAS="$(grep "certificate SHA-256 digest:" /tmp/certs.txt | awk '{print $NF}' | tr 'A-F' 'a-f' || true)"
+          [ -n "$DNS" ] || { echo "::error::apksigner 输出里没有证书 DN"; exit 1; }
+          [ -n "$SHAS" ] || { echo "::error::apksigner 输出里没有证书 SHA-256"; exit 1; }
+          while IFS= read -r line; do
+            echo "$line" | grep -Eq '(: |, )CN=Nyra(,|$)' || { echo "::error::签名者不是 CN=Nyra：$line"; exit 1; }
+          done <<< "$DNS"
+          while IFS= read -r sha; do
+            case "$sha" in
+              "$EXPECTED_CERT_SHA256_PREFIX"*) ;;
+              *) echo "::error::证书 SHA-256 为 '$sha'，不以 $EXPECTED_CERT_SHA256_PREFIX 开头，不是正式证书"; exit 1 ;;
+            esac
+          done <<< "$SHAS"
+          echo "证书 SHA-256：$(echo "$SHAS" | head -1)（签名者 CN=Nyra，与正式证书一致）"
+          ls -l dist/
+
       - name: Build debug APK
+        if: steps.sign.outputs.mode == 'debug'
         working-directory: mobile/android
         run: ./gradlew assembleDebug --no-daemon
 
-      - name: Copy APK
+      - name: Copy debug APK
+        if: steps.sign.outputs.mode == 'debug'
         run: |
           mkdir -p dist
           cp mobile/android/app/build/outputs/apk/debug/app-debug.apk dist/nyra-android-debug.apk
+          cp dist/nyra-android-debug.apk dist/nyra-android.apk
           ls -l dist/
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Nyra-android-debug
-          path: dist/nyra-android-debug.apk
+          name: Nyra-android
+          path: dist/*.apk
           if-no-files-found: error
           retention-days: 14
 
@@ -132,7 +207,7 @@ jobs:
       - name: Download APK
         uses: actions/download-artifact@v4
         with:
-          name: Nyra-android-debug
+          name: Nyra-android
           path: dist
 
       - name: Attach to Release

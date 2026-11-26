@@ -95,6 +95,12 @@ export interface Org {
   private_catalog?: boolean;
   /** 第二批：组织绑定的工作区目录（绝对路径；跨租户读文件只认这个目录下的相对路径）。 */
   workspace_dir?: string;
+  /** O3：组织强制 SSO。开后该组织成员（或邮箱域名命中的人）只能走 SSO 登录。 */
+  require_sso?: boolean;
+  /** 强制 SSO 时用的身份提供方 id（sso-providers.json 里的 id）。 */
+  sso_provider?: string;
+  /** 绑定到该组织的邮箱域名（小写，如 example.com）：该域名邮箱按此组织路由。 */
+  sso_domains?: string[];
 }
 
 export interface OrgBook {
@@ -171,6 +177,97 @@ export function saveOrgBook(home: string, book: OrgBook): void {
 /** 按 id 或名字找组织（id 优先；名字精确匹配）。 */
 export function findOrg(book: OrgBook, ref: string): Org | null {
   return book.orgs.find((o) => o.id === ref) ?? book.orgs.find((o) => o.name === ref) ?? null;
+}
+
+// ---- O3：组织强制 SSO 与邮箱域名路由 -------------------------------------
+
+/** 邮箱域名（小写）：不合法返回 null（不猜、不补）。 */
+export function emailDomain(email: string): string | null {
+  const at = email.lastIndexOf("@");
+  if (at <= 0 || at === email.length - 1) return null;
+  const d = email.slice(at + 1).trim().toLowerCase();
+  if (!/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/.test(d) || !d.includes(".")) return null;
+  return d;
+}
+
+/** 归一一个绑定域名：合法返回小写域名，否则 null。 */
+export function normalizeSsoDomain(domain: unknown): string | null {
+  if (typeof domain !== "string") return null;
+  return emailDomain("x@" + domain.trim());
+}
+
+/** 邮箱域名命中的组织（require_sso 开没开都算：路由用；拦截只看 require_sso）。 */
+export function findOrgForEmailDomain(home: string, email: string): Org | null {
+  const domain = emailDomain(email);
+  if (!domain) return null;
+  const book = loadOrgBook(home);
+  return book.orgs.find((o) =>
+    Array.isArray(o.sso_domains) &&
+    o.sso_domains.some((d) => typeof d === "string" && d.toLowerCase() === domain),
+  ) ?? null;
+}
+
+/**
+ * 非 SSO 登录前调：域名命中强制 SSO 的组织，或账号已是强制 SSO 组织的成员时拒绝。
+ * SSO 登录本身不走这里（loginWithSso 不调）；域名没绑、组织没开强制时放行。
+ */
+export function assertNonSsoLoginAllowed(
+  home: string,
+  opts: { email?: string | null; accountId?: string | null },
+): void {
+  const book = loadOrgBook(home);
+  if (opts.email) {
+    const org = findOrgForEmailDomain(home, opts.email);
+    if (org?.require_sso) {
+      const provider = org.sso_provider ? `nyra sso login ${org.sso_provider}` : "nyra sso login <身份提供方>";
+      throw new OrgError(`邮箱域名属于组织「${org.name}」，该组织要求 SSO 登录：请用 ${provider} 登录（GitHub/Google/邮箱登录已被该组织禁用）`);
+    }
+  }
+  if (opts.accountId) {
+    const org = book.orgs.find((o) => o.require_sso && o.members.some((m) => m.account_id === opts.accountId));
+    if (org) {
+      const provider = org.sso_provider ? `nyra sso login ${org.sso_provider}` : "nyra sso login <身份提供方>";
+      throw new OrgError(`账号已是组织「${org.name}」的成员，该组织要求 SSO 登录：请用 ${provider} 登录（GitHub/Google/邮箱登录已被该组织禁用）`);
+    }
+  }
+}
+
+/**
+ * 改一个组织的 SSO 设置（操作者须机主或该组织 admin；改动进组织审计与运行事件）。
+ * require_sso 开着但没绑身份提供方也能存——先开开关、后注册提供方是合法顺序，
+ * 此时非 SSO 登录仍会被拦，登录提示里写 <身份提供方>，CLI 会提醒先绑提供方。
+ */
+export async function setOrgSso(
+  home: string,
+  ref: string,
+  opts: { require_sso?: boolean; sso_provider?: string | null; sso_domains?: string[]; by?: string; stores?: AccountsStores },
+): Promise<Org> {
+  const by = opts?.by ?? ORG_OWNER_IDENTITY;
+  const book = loadOrgBook(home);
+  const org = findOrg(book, ref);
+  if (!org) throw new OrgError(`没有这个组织：${ref}`);
+  if (!(await isOrgManager(home, org, by, opts?.stores))) {
+    throw new OrgError(`${by} 不是 ${org.name} 的管理员：改 SSO 设置须机主或该组织 admin`);
+  }
+  if (opts.require_sso !== undefined) org.require_sso = opts.require_sso;
+  if (opts.sso_provider !== undefined) {
+    if (opts.sso_provider === null || opts.sso_provider.trim() === "") {
+      delete org.sso_provider;
+    } else {
+      const id = opts.sso_provider.trim();
+      if (id.length > 64) throw new OrgError("身份提供方 id 太长（最多 64 字）");
+      org.sso_provider = id;
+    }
+  }
+  if (opts.sso_domains !== undefined) {
+    const cleaned = opts.sso_domains.map(normalizeSsoDomain);
+    if (cleaned.some((d) => d === null)) throw new OrgError("邮箱域名不合法（形如 example.com，多个用逗号分隔）");
+    org.sso_domains = [...new Set(cleaned as string[])];
+  }
+  saveOrgBook(home, book);
+  appendOrgAudit(home, { action: "org_sso_changed", org_id: org.id, require_sso: !!org.require_sso, ...(org.sso_provider ? { sso_provider: org.sso_provider } : {}), by });
+  recordOrgEvent(home, "org_sso_changed", { org_id: org.id, require_sso: !!org.require_sso, ...(org.sso_provider ? { sso_provider: org.sso_provider } : {}), by });
+  return org;
 }
 
 function validateOrgName(name: string): string {

@@ -80,6 +80,12 @@ export interface CircleBook {
   version: 1;
   circles: TrustCircle[];
   bindings: ChannelBinding[];
+  /**
+   * H6：删圈墓碑——删掉的圈只留这一条（名字 + 删除时间 + 谁删的）。
+   * 建同名圈是用户显式决定：清掉墓碑继续建，并记 circle_recreated 审计；
+   * 任何重扫/同步都不许悄悄把删掉的圈建回来。
+   */
+  deleted?: { name: string; deleted_at: string; by: string }[];
 }
 
 function circlesPath(home: string): string {
@@ -137,7 +143,18 @@ export function loadCircleBook(home: string): CircleBook {
   if (!isPlainObject(parsed) || !Array.isArray(parsed.circles) || !Array.isArray(parsed.bindings)) {
     throw new CircleError(`${CIRCLES_FILE} 结构不对（须含 circles 与 bindings 两个列表）`);
   }
-  return { version: 1, circles: parsed.circles as TrustCircle[], bindings: parsed.bindings as ChannelBinding[] };
+  // H6：删圈墓碑跟着账本走——形状不对的墓碑行丢掉，不拖垮整个账本。
+  let deleted: { name: string; deleted_at: string; by: string }[] | undefined;
+  if (Array.isArray(parsed.deleted)) {
+    const kept = (parsed.deleted as unknown[]).filter((d): d is { name: string; deleted_at: string; by: string } => {
+      return !!d && typeof d === "object" &&
+        typeof (d as { name?: unknown }).name === "string" &&
+        typeof (d as { deleted_at?: unknown }).deleted_at === "string" &&
+        typeof (d as { by?: unknown }).by === "string";
+    });
+    if (kept.length) deleted = kept;
+  }
+  return { version: 1, circles: parsed.circles as TrustCircle[], bindings: parsed.bindings as ChannelBinding[], ...(deleted ? { deleted } : {}) };
 }
 
 export function saveCircleBook(home: string, book: CircleBook): void {
@@ -176,6 +193,12 @@ export function createCircle(home: string, name: string, opts?: { description?: 
   const by = opts?.by ?? OWNER_IDENTITY;
   const book = loadCircleBook(home);
   if (findCircle(book, name)) throw new CircleError(`圈 ${name} 已存在`);
+  // H6：同名圈有墓碑时，建圈是用户显式决定：清掉墓碑继续建，并记审计。
+  const tombIdx = (book.deleted ?? []).findIndex((d) => d.name === name);
+  if (tombIdx >= 0) {
+    book.deleted!.splice(tombIdx, 1);
+    if (!book.deleted!.length) delete book.deleted;
+  }
   const circle: TrustCircle = {
     name,
     description: (opts?.description ?? "").slice(0, 200),
@@ -187,6 +210,10 @@ export function createCircle(home: string, name: string, opts?: { description?: 
   saveCircleBook(home, book);
   appendPeerAudit(home, { action: "circle_created", circle: name, by });
   recordCircleEvent(home, "circle_created", { circle: name, by });
+  if (tombIdx >= 0) {
+    appendPeerAudit(home, { action: "circle_recreated", circle: name, by });
+    recordCircleEvent(home, "circle_recreated", { circle: name, by });
+  }
   return circle;
 }
 
@@ -200,6 +227,12 @@ export function deleteCircle(home: string, name: string, by?: string): void {
     throw new CircleError(`圈 ${name} 里还有成员：先把他们撤销（nyra circle revoke ${name} <好友名> --yes）再删`);
   }
   book.circles = book.circles.filter((c) => c.name !== name);
+  // H6：删圈写墓碑——账本里不再有这个圈，但“删过”这个事实留下来。
+  // 同名重建是用户显式决定（createCircle 里清墓碑 + 记 circle_recreated）；
+  // 任何重扫/同步都不许悄悄把删掉的圈建回来。
+  if (!book.deleted) book.deleted = [];
+  book.deleted = book.deleted.filter((d) => d.name !== name);
+  book.deleted.push({ name, deleted_at: nowIso(), by: who });
   saveCircleBook(home, book);
   appendPeerAudit(home, { action: "circle_deleted", circle: name, by: who });
   recordCircleEvent(home, "circle_deleted", { circle: name, by: who });
