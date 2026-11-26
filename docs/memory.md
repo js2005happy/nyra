@@ -123,8 +123,18 @@ Nyra 的三层存储正好对得上，写清分工、不要混用：
   账本（action `proposal_reject`）与证据文件 `evidence/memory/`；决定
   的运行事件 `memory_proposal_decided`（候选 id、决定、进库条目 id）
   已注册进 EVENT_FIELDS。
-- **不在本批**：模型提炼（Pi 的模型一次提 5 条本批没做，确定性规则先行）；
-  向量检索（另算）；组织记忆（scope 只认 user，org 走证据门的老路）。
+- **不在本批**：向量检索（另算）；组织记忆（scope 只认 user，org 走证据门的老路）。模型提炼见下一节“语义事实”（十年清单第 2 项）。
+
+## 语义事实（十年清单第 2 项：Mem0 式事实抽取 + 矛盾处理，2026-11-26）
+
+- Mem0 的思路、自己实现，不引 Mem0 服务端：用小模型（默认 provider，默认就是 flash 级）在后台把会话提炼成原子事实，**进待审队列、由用户或证据门确认后才入库**；绝不静默写 MEMORY.md，绝不绕过待审队列与证据门。
+- **事实账本**：确认进库的记忆同时记一条语义事实（`~/.nyra/semantic-facts.jsonl`，append-only，0600，坏行跳过；id 是 `fact_` + 12 位十六进制）。一条事实 = 主题 + 一句话正文（≤300 字）+ 类别（about_you/work/how_to）+ 来源会话 + 关联的记忆条目 id + 逐字依据 + 状态（active/superseded/expired）+ 修订号 + 生效时间 + 有效期至（只有来源明确说了结束时间才有，否则不过期）+ 取代链（supersedes/supersededBy）。
+- **矛盾处理**：同一主题、不同正文的事实新旧并存，不直接覆盖——新事实确认时，旧事实追加一版（状态 superseded、supersededBy 指新事实、有效期至记取代时间），两边都留着可查；同一正文已有一条生效事实时直接返回它（幂等，不重复建）。`nyra memory facts list` 默认只看生效中的，`--all` 连同被取代与过期的都看，表头报矛盾组数。
+- **过期**：事实带 validUntil（只有来源明确说了结束时间才有），到期自动失效（Graphiti 的时态失效思路，轻量版）：读时惰性过期 + 做梦代谢里定期扫；过期只标 `expired`，不删除，修订历史保留。手动清扫：`nyra memory facts expire`。
+- **抽取**：默认**关**（`config.json` 的 `semantic_facts` 一节：`enabled: false`、`max_per_session: 5`，上限 1–20）。开了才在做梦代谢里每会话跑一次（`nyra dream set --semantic-facts true|false [--semantic-facts-max N]`）；手动提炼：`nyra memory extract <会话 id> --model`（开关关着也能跑，是你亲手点的）。抽取先过月度成本上限，超支就跳过；输入只取用户回合、最近 30 条、总计 ≤6000 字；一次最多 5 条；依据须是某条用户消息的逐字原话，模型编造的引用进不了队列；抽出的草稿同样先进待审队列，确认时过证据门。花了多少记进当月账本（`nyra usage` 能看到）。
+- **主循环注入**：`buildSemanticFactsSection` 按需检索生效中的事实（BM25，上限 5 条/1000 字，附 id 与时间戳），拼在 MEMORY.md 记忆段之后；没有事实时返回空串，零影响。
+- **命令**：`nyra memory facts <list|show|search|expire>`（list 默认只看生效中的，`--all` 含被取代/过期，`--status` 过滤；show 看一条事实 + 取代链与修订历史；search 按关键词 BM25 检索；expire 手动清扫到期事实）。
+- **诚实边界**：只在临时 home / 假 runner 上验过；抽取用默认 provider（默认 flash），用户把默认 provider 换成贵模型时抽取跟随；真模型未跑；Windows/macOS 真机未验证。
 
 ## 缺口 2：删除与控制
 

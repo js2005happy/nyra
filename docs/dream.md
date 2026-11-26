@@ -4,10 +4,11 @@ Nyra 每夜一次的确定性记忆整理：提炼、剪枝、写小结。默认
 
 ## 它做什么
 
-1. **提炼**——扫最近有更新的主会话，用 G-P1-34 的规则抽取（`src/memoryProposals.ts`）找用户显式表态的记忆候选（“记住……”“我是……”“我喜欢……”“以后……”）。提炼过程**不调模型、不花 token**。候选只进待审队列（`memory-proposals.json`），**绝不静默写进记忆**，须你用 `nyra review` 批了才进。
-2. **剪枝**——两件确定性的事：
+1. **提炼**——扫最近有更新的主会话，用 G-P1-34 的规则抽取（`src/memoryProposals.ts`）找用户显式表态的记忆候选（“记住……”“我是……”“我喜欢……”“以后……”）。提炼过程**不调模型、不花 token**。候选只进待审队列（`memory-proposals.json`），**绝不静默写进记忆**，须你用 `nyra review` 批了才进。语义事实抽取开了时（`config.json` 的 `semantic_facts` 一节，默认关），每会话再用小模型提炼一遍事实候选，同样只进待审队列（见 `docs/memory.md`“语义事实”一节）；没凭证、超月度上限、模型失败时跳过，不破坏做梦。
+2. **剪枝**——三件确定性的事：
    - 重复：同一正文的已确认记忆只留最新一条，旧的标 `deleted`（修订历史保留，可审计）。
    - 过期：超过 `prune_stale_days`（默认 90 天）未决的旧候选清掉，记进拒绝账本，原因码 `dream-pruned-stale`（不冒充是你拒绝的）。
+   - 事实过期：`validUntil` 已过的生效中语义事实标 `expired`（只标过期，不删除）。
    - 同主题不同说法（矛盾）**不自动处理**，只进小结请你定。
 3. **小结**——把结果写进晨间简报（“昨夜做梦小结”一节），不发新消息。
 
@@ -22,6 +23,10 @@ Nyra 每夜一次的确定性记忆整理：提炼、剪枝、写小结。默认
     "at": "03:00",
     "summarize_with_model": false,
     "prune_stale_days": 90
+  },
+  "semantic_facts": {
+    "enabled": false,
+    "max_per_session": 5
   }
 }
 ```
@@ -32,6 +37,8 @@ Nyra 每夜一次的确定性记忆整理：提炼、剪枝、写小结。默认
 | `at` | `"03:00"` | 每夜运行时间（HH:MM，本地时间）。 |
 | `summarize_with_model` | `false` | 写小结是否额外调一次模型润色。默认关，须显式开。 |
 | `prune_stale_days` | `90` | 待确认候选多少天未决算过期清掉。 |
+| `semantic_facts.enabled` | `false` | 做梦里是否用小模型抽取语义事实候选。默认关，须显式开。 |
+| `semantic_facts.max_per_session` | `5` | 每会话最多新增几条事实候选（1–20）。 |
 
 ## 命令
 
@@ -39,6 +46,7 @@ Nyra 每夜一次的确定性记忆整理：提炼、剪枝、写小结。默认
 nyra dream status              看开关、时间、上次运行与待确认候选数
 nyra dream enable | disable    开 / 关（默认关）
 nyra dream set --at 03:00 [--summarize-with-model true|false] [--prune-stale-days 90]
+    [--semantic-facts true|false] [--semantic-facts-max N]
 nyra dream run [--with-model]  现在手动跑一次（开关关着也能跑，是你亲手点的）
 ```
 

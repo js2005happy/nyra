@@ -62,7 +62,8 @@
 | `nyra memory <export\|import\|search\|forget…>` | 记忆交换与检索/删除 |
 | `nyra memory <remember\|entries\|entry\|update\|rejections>` | 结构化记忆条目（证据门：写记忆须附用户原话依据，见本页“记忆证据门”一节）；`remember`/`entries` 支持 `--org` 组织记忆 |
 | `nyra memory recall <status\|on\|off\|cross-on\|cross-off\|test>` | 主动记忆（G-P1-31）：回复前召回，不够升级深挖；默认关，按会话可开关，跨会话须显式开 |
-| `nyra memory <extract\|review>` | 对话里自动提炼记忆（G-P1-34）：对话结束自动提炼候选，`extract` 从指定会话手动提炼一次，`review` 逐条确认进库或拒绝，进库前过记忆证据门 |
+| `nyra memory <extract\|review>` | 对话里自动提炼记忆（G-P1-34）：对话结束自动提炼候选，`extract` 从指定会话手动提炼一次（`--model` 再用小模型提炼一遍语义事实候选），`review` 逐条确认进库或拒绝，进库前过记忆证据门 |
+| `nyra memory facts <list\|show\|search\|expire>` | 语义事实（十年清单第 2 项）：确认进库的记忆的原子化视图，带时间戳与有效期；同主题新旧并存（旧事实标被取代），到期自动失效；`list` 默认只看生效中的（`--all` 含被取代/过期），`expire` 手动清扫到期事实（详见 `docs/memory.md`） |
 | `nyra soul <show\|status\|list\|init\|add\|remove\|enable\|disable\|edit\|export\|import>` | Soul 身份层：每 agent 的身份与 Tenets，不变量编译进规则层、代码拦截；Charter 角色契约（`soul charter <set\|show\|clear>`，团队接单须有完整 Charter，详见 `docs/soul.md` 与 `docs/team.md`） |
 | `nyra style <learn\|show\|list\|delete…>` | 分应用文风学习 |
 | `nyra skills <status\|enable\|disable\|draft\|drafts\|show\|approve\|reject\|archive\|sweep>` | 技能自沉淀：成功任务自动起草技能草稿，人工批准后才安装，低质自动归档（详见 `docs/skill-sedimentation.md`） |
@@ -177,7 +178,7 @@
 | 命令 | 作用 |
 |---|---|
 | `nyra doctor [--provider 名字] [--deep]` | 中文自检：运行时、配置、Key、网络、磁盘、写权限、密码箱；`--deep` 追加免疫体检（大脑自检，不合格的进隔离区，详见 `docs/immune.md`） |
-| `nyra dream <status\|enable\|disable\|set\|run>` | 夜间做梦代谢：每夜提炼记忆候选、剪掉重复与过期、写小结进晨间简报（默认关，详见 `docs/dream.md`） |
+| `nyra dream <status\|enable\|disable\|set\|run>` | 夜间做梦代谢：每夜提炼记忆候选、剪掉重复与过期、写小结进晨间简报（默认关，`set --semantic-facts true` 开语义事实抽取，详见 `docs/dream.md`） |
 | `nyra router <status\|test>` | 本地小路由：零 token 意图分类（不调模型），status 看开关与权重，test 干跑一条消息；开了才在群聊里先走本地分类、判不出回落模型路由（默认关，详见 `docs/local-router.md`） |
 | `nyra status` | 诊断清单：坏配置、不可用沙箱、被忽略的权限、永不匹配的 hook matcher |
 | `nyra setup` | 首次启动向导 |
