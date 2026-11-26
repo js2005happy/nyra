@@ -2,16 +2,18 @@
 // 对照 stdio 客户端（test-mcp.test.ts）：同款协商（discover 探现代版，
 // 失败回退旧版 initialize）、同款工具列表分页、同款 tools/call 文本拼法；
 // 区别只在传输：POST JSON-RPC，响应 JSON 或 SSE。
+// 无状态（2026-07-28）：不存、不发 Mcp-Session-Id，每请求带 MCP-Protocol-Version 头。
 import { test, expect } from "bun:test";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { MCPHttpClient, MCPServerConfig, MCPToolManager, MCPError, MCPRequestError } from "../../src/mcp.ts";
 
-type FakeMode = "modern" | "legacy" | "sse" | "slow";
+type FakeMode = "modern" | "legacy" | "sse" | "slow" | "sessionful";
 
 interface FakeHttp {
   url: string;
   close: () => void;
   seenSessionIds: string[];
+  seenProtocolVersions: string[];
 }
 
 function rpcReply(body: Record<string, unknown>, mode: FakeMode): Record<string, unknown> {
@@ -60,12 +62,15 @@ function rpcReply(body: Record<string, unknown>, mode: FakeMode): Record<string,
 
 function startFakeHttpMcp(mode: FakeMode, opts: { status?: number } = {}): Promise<FakeHttp> {
   const seenSessionIds: string[] = [];
+  const seenProtocolVersions: string[] = [];
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     let body = "";
     req.on("data", (c) => { body += c; });
     req.on("end", () => {
       const sid = req.headers["mcp-session-id"];
       if (typeof sid === "string") seenSessionIds.push(sid);
+      const pv = req.headers["mcp-protocol-version"];
+      if (typeof pv === "string") seenProtocolVersions.push(pv);
       if (opts.status) {
         res.writeHead(opts.status, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "not found" }));
@@ -75,9 +80,10 @@ function startFakeHttpMcp(mode: FakeMode, opts: { status?: number } = {}): Promi
         let parsed: Record<string, unknown> = {};
         try { parsed = JSON.parse(body) as Record<string, unknown>; } catch { /* 空体按通知处理 */ }
         const reply = rpcReply(parsed, mode);
-        // 现代版握手回 Mcp-Session-Id：客户端后续请求须带上它。
+        // sessionful 模式：老式有状态服务器每回都给 Mcp-Session-Id，
+        // 2026-07-28 客户端必须忽略它（无状态，不存、不发）。
         const headers: Record<string, string> = {};
-        if (mode === "modern" && parsed.method === "server/discover") headers["Mcp-Session-Id"] = "sess-1";
+        if (mode === "sessionful") headers["Mcp-Session-Id"] = "sess-1";
         if (mode === "sse") {
           res.writeHead(200, { "Content-Type": "text/event-stream", ...headers });
           res.end("data: " + JSON.stringify(reply) + "\n\n");
@@ -93,7 +99,7 @@ function startFakeHttpMcp(mode: FakeMode, opts: { status?: number } = {}): Promi
   return new Promise((resolve) => {
     server.listen(0, "127.0.0.1", () => {
       const addr = server.address() as { port: number };
-      resolve({ url: `http://127.0.0.1:${addr.port}/mcp`, close: () => server.close(), seenSessionIds });
+      resolve({ url: `http://127.0.0.1:${addr.port}/mcp`, close: () => server.close(), seenSessionIds, seenProtocolVersions });
     });
   });
 }
@@ -115,8 +121,24 @@ test("McpHttpTest.test_modern_discover_list_and_call", async () => {
     const out = await client.callTool("echo", { x: 1 });
     expect(out).toContain("called echo");
     expect(out).toContain('"x":1');
-    // 握手后服务端给了 Mcp-Session-Id，后续请求带上了它。
-    expect(fake.seenSessionIds).toContain("sess-1");
+    // 无状态：每个请求都带 MCP-Protocol-Version 头，从不发 Mcp-Session-Id。
+    expect(fake.seenSessionIds).toEqual([]);
+    expect(fake.seenProtocolVersions.length).toBeGreaterThan(0);
+    expect(fake.seenProtocolVersions.every((v) => v === "2026-07-28")).toBe(true);
+  } finally {
+    fake.close();
+  }
+});
+
+test("McpHttpTest.test_stateful_server_session_id_ignored", async () => {
+  const fake = await startFakeHttpMcp("sessionful");
+  try {
+    const client = httpConfig(fake.url);
+    const tools = await client.listTools();
+    expect(tools.map((t) => t.name)).toEqual(["echo", "add"]);
+    await client.callTool("echo", {});
+    // 老式有状态服务器每回都给 Mcp-Session-Id，客户端一律忽略、不回发。
+    expect(fake.seenSessionIds).toEqual([]);
   } finally {
     fake.close();
   }

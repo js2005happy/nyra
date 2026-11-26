@@ -330,6 +330,8 @@ test("McpServerTest.test_http_client_talks_to_own_server", async () => {
     });
     const client = new MCPHttpClient(cfg, 10);
     const tools = await client.listTools();
+    expect(client.era).toBe("modern");
+    expect(client.negotiatedVersion).toBe("2026-07-28");
     expect(tools.map((t) => t.name)).toEqual(["search_memory", "query_evidence", "answer_question", "add_memory", "forget_session", "dispatch_task"]);
     const found = await client.callTool("search_memory", { query: "对外 MCP 服务" });
     expect(found).toContain("测试记忆甲");
@@ -338,4 +340,32 @@ test("McpServerTest.test_http_client_talks_to_own_server", async () => {
   } finally {
     await gw.stop();
   }
+});
+
+test("McpServerTest.test_discover_returns_supported_versions", async () => {
+  const home = makeHome();
+  const server = makeServer(home, serverConfig());
+  const res = await call(server, 1, "server/discover", { _meta: { "io.modelcontextprotocol/protocolVersion": "2026-07-28" } });
+  const result = res.result as Record<string, unknown>;
+  expect(result.supportedVersions).toEqual(["2026-07-28"]);
+  expect((result.capabilities as Record<string, unknown>).tools).toEqual({});
+  const meta = result._meta as Record<string, unknown>;
+  expect((meta["io.modelcontextprotocol/serverInfo"] as Record<string, unknown>).name).toBe("Nyra");
+  // 缓存提示是规范要求字段；工具列表随 allow_writes 开关变，ttlMs 取 0 = 立即过期。
+  expect(result.ttlMs).toBe(0);
+  expect(result.cacheScope).toBe("public");
+});
+
+test("McpServerTest.test_unsupported_protocol_version_rejected", async () => {
+  const home = makeHome();
+  const server = makeServer(home, serverConfig());
+  const bad = await call(server, 1, "tools/list", { _meta: { "io.modelcontextprotocol/protocolVersion": "1999-01-01" } });
+  const err = bad.error as Record<string, unknown>;
+  expect(err.code).toBe(-32022);
+  expect(((err.data as Record<string, unknown>).supported as string[])).toContain("2026-07-28");
+  // 带现代版的请求正常走；不带 _meta 的当旧客户端兼容。
+  const ok = await call(server, 2, "tools/list", { _meta: { "io.modelcontextprotocol/protocolVersion": "2026-07-28" } });
+  expect(((ok.result as Record<string, unknown>).tools as { name: string }[]).length).toBe(6);
+  const legacy = await call(server, 3, "tools/list");
+  expect(((legacy.result as Record<string, unknown>).tools as { name: string }[]).length).toBe(6);
 });
