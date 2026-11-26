@@ -6,6 +6,91 @@ export interface GatewayClientOptions {
   token?: string;
 }
 
+/** 现有 session SSE 的 JSON data envelope；普通事件含 seq，run_finished 不含 seq。 */
+export interface GatewaySessionEvent extends Record<string, unknown> {
+  type: string;
+  seq?: number;
+}
+
+export interface GatewaySessionEventOptions {
+  /** 与 /api/sessions/:id/events?since= 一致：下一条期望的事件序号。 */
+  since?: number;
+  /** 取消订阅；也可通过结束 AsyncIterable 消费来关闭当前连接。 */
+  signal?: AbortSignal;
+  /** 服务端连接意外断开或网络错误后的等待时间，默认 250ms。 */
+  reconnectDelayMs?: number;
+}
+
+class GatewayEventStreamError extends Error {}
+
+function parseSseFrame(frame: string): GatewaySessionEvent | null {
+  const data = frame.split(/\r?\n/)
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).replace(/^ /, ""));
+  if (!data.length) return null;
+  let value: unknown;
+  try { value = JSON.parse(data.join("\n")); }
+  catch { throw new GatewayEventStreamError("Gateway 返回了无效的 SSE JSON 事件"); }
+  if (!value || typeof value !== "object" || Array.isArray(value) || typeof (value as Record<string, unknown>).type !== "string") {
+    throw new GatewayEventStreamError("Gateway SSE 事件格式无效");
+  }
+  return value as GatewaySessionEvent;
+}
+
+async function* readSseEvents(
+  body: ReadableStream<Uint8Array>,
+  signal?: AbortSignal,
+): AsyncGenerator<GatewaySessionEvent> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const cancelReader = () => { void reader.cancel().catch(() => {}); };
+  signal?.addEventListener("abort", cancelReader, { once: true });
+  if (signal?.aborted) cancelReader();
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (value) buffer += decoder.decode(value, { stream: !done });
+      else if (done) buffer += decoder.decode();
+      let boundary: RegExpExecArray | null;
+      while ((boundary = /\r?\n\r?\n/.exec(buffer))) {
+        const frame = buffer.slice(0, boundary.index);
+        buffer = buffer.slice(boundary.index + boundary[0].length);
+        const event = parseSseFrame(frame);
+        if (event) yield event;
+      }
+      if (done) {
+        if (buffer.trim()) {
+          const event = parseSseFrame(buffer);
+          if (event) yield event;
+        }
+        return;
+      }
+    }
+  } finally {
+    signal?.removeEventListener("abort", cancelReader);
+    try { await reader.cancel(); } catch { /* 已关闭或已取消 */ }
+    try { reader.releaseLock(); } catch { /* reader 已释放 */ }
+  }
+}
+
+function waitToReconnect(ms: number, signal?: AbortSignal): Promise<boolean> {
+  if (signal?.aborted) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (keepGoing: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      resolve(keepGoing);
+    };
+    const onAbort = () => finish(false);
+    const timer = setTimeout(() => finish(true), ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 export class GatewayClient {
   baseUrl: string;
   token: string;
@@ -42,6 +127,64 @@ export class GatewayClient {
     return this.call(`/api/sessions/${encodeURIComponent(id)}/messages`, { method: "POST", body: JSON.stringify({ text }) });
   }
   approvals(): Promise<unknown> { return this.call("/api/approvals"); }
+  /**
+   * 消费现有会话 SSE，并在连接意外结束时从最后收到的 seq + 1 续接。
+   * 仅用当前协议里的 event.seq 去重；SSE id 和服务端 API 均不作假设。
+   * run_finished 是现有协议中的终止事件，不含 seq。
+   */
+  async *sessionEvents(id: string, options: GatewaySessionEventOptions = {}): AsyncGenerator<GatewaySessionEvent> {
+    const signal = options.signal;
+    const initialSince = options.since ?? 0;
+    let cursor = Number.isSafeInteger(initialSince) && initialSince >= 0 ? initialSince : 0;
+    const requestedDelay = options.reconnectDelayMs ?? 250;
+    const reconnectDelayMs = Number.isFinite(requestedDelay) ? Math.max(0, Math.min(30_000, requestedDelay)) : 250;
+    const url = () => `${this.baseUrl}/api/sessions/${encodeURIComponent(id)}/events?since=${cursor}`;
+
+    while (!signal?.aborted) {
+      let response: Response;
+      try {
+        response = await fetch(url(), {
+          headers: { "X-Nyra-Token": this.token, "Content-Type": "application/json" },
+          signal,
+        });
+      } catch {
+        if (signal?.aborted || !(await waitToReconnect(reconnectDelayMs, signal))) return;
+        continue;
+      }
+      if (!response.ok) {
+        const text = await response.text();
+        let message = `HTTP ${response.status}`;
+        try {
+          const body = JSON.parse(text) as { error?: unknown };
+          if (typeof body.error === "string") message = body.error;
+        } catch { /* 非 JSON 响应 */ }
+        throw new Error(message);
+      }
+      if (!response.body) {
+        if (!(await waitToReconnect(reconnectDelayMs, signal))) return;
+        continue;
+      }
+
+      try {
+        for await (const event of readSseEvents(response.body, signal)) {
+          if (signal?.aborted) return;
+          const seq = event.seq;
+          if (typeof seq === "number" && Number.isSafeInteger(seq) && seq >= 0) {
+            // since 是“下一条期望事件”的索引；seq 是当前 session event envelope 的真实字段。
+            if (seq < cursor) continue;
+            cursor = seq + 1;
+          }
+          yield event;
+          if (event.type === "run_finished") return;
+        }
+      } catch (err) {
+        if (signal?.aborted) return;
+        if (err instanceof GatewayEventStreamError) throw err;
+        // 传输中断时，cursor 保留在最后接受的 seq + 1，下一次 GET 会补齐后续事件。
+      }
+      if (!(await waitToReconnect(reconnectDelayMs, signal))) return;
+    }
+  }
   decide(id: string, approve: boolean, always = false): Promise<unknown> {
     return this.call(`/api/approvals/${encodeURIComponent(id)}`, { method: "POST", body: JSON.stringify({ approve, always }) });
   }

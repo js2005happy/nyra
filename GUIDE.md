@@ -386,6 +386,8 @@ shell 的起始 `cwd` 现在必须位于 `--workdir` 内；绝对外部路径、
 
 在交互式 `auto` 模式下，每次文件写入或 shell 命令会提示 `[y/N/a]`：`y` 仅批准一次，`a` 表示**本次会话始终批准**此种文件工具（write_file/edit_file/plan 按具体工具分别记录），或者 shell 的**完全相同命令字符串及 cwd 工作目录**。不把一个 shell 前缀视为可任意执行的白名单；MCP、HTTP POST、记忆与技能操作继续逐次审批。`/new`、`/clear`、`/mode` 切换会清除会话批准；后台非交互 `auto` 和 `readonly` 绝不会因为缓存批准而执行写入。网页审批仍按每次工具调用请求授权。
 
+此外，shell 的静态守卫会拒绝重定向、`cp` / `copy`、`mv` / `move`、`install`、`tee`，可识别的内联 Python `-c` / Node `-e` 文件写 API，以及 PowerShell `-Command` 的 `Set-Content`、`Add-Content`、`Out-File`、`Clear-Content` 对受保护路径的写入。它只分类命令文本，不是完整 shell/文件系统隔离；动态拼接路径、包装器、脚本文件、其他解释器或未知写入 API 仍可能绕过。
+
 **边界说明**：工作目录写入检查只覆盖上述内置文件工具，不限制已有的 `shell` 在执行时使用绝对路径、改变目录或启动其他程序；`memory_append`、`save_skill` 和证据/会话存储本来就会写入 Nyra 的专用数据目录，属于已知例外。检查与写入之间也可能存在竞态，因此这不是完整操作系统沙箱。需要运行不可信代码时，使用受保护的隔离环境，并继续审阅命令。更强的 shell 沙箱与精确命令白名单列在后续安全迭代。
 
 ## 审批模式

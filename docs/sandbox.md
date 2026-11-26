@@ -242,7 +242,7 @@ workspaceWritePath 上挂了一层受保护判定：工作目录内的以下路�
 
 ### 三个必须知道的边界
 
-1. **只覆盖文件工具**：`write_file` / `edit_file` / `apply_patch` / `plan` 走 `workspaceWritePath`，被拦；**`shell` 不在覆盖范围内**——`echo x >> AGENTS.md` 照样成功，即使进了 bwrap（AGENTS.md 就在工作目录内）。要封死 shell 的写操作得靠权限规则层（S5）。
+1. **shell 仅有有限的静态保护**：`write_file` / `edit_file` / `apply_patch` / `plan` 走 `workspaceWritePath`。shell 检查拒绝受保护目标上的重定向、`cp` / `copy`、`mv` / `move`、`install`、`tee`，内联 Python `-c`（可识别的 `open` / `write_text` / `shutil` 写法）、Node `-e`（可识别的 `writeFile` / `appendFile` / `createWriteStream` 等 API），以及 PowerShell `-Command` 的 `Set-Content`、`Add-Content`、`Out-File`、`Clear-Content`。这些只是命令文本静态分类；动态拼接路径、包装器、脚本文件、其他解释器和未知写入 API 仍可能绕过。这不是完整 shell/文件系统隔离，shell 也仍能访问工作目录外的其他路径；运行不可信命令仍应使用 OS 级隔离。
 2. **顶层同名目录会被一刀切**：如果你的项目自己就有顶层 `commands/` 或 `skills/`（例如前端的技能组件目录），agent 将无法写入这些目录。这是刻意的取舍，用下面的环境变量放开。
 3. **放开方式**：`NYRA_ALLOW_PROTECTED_WRITES=1`（也接受 `true` / `yes`，大小写不敏感）。它是全进程开关，不区分路径——放开就是全部放开。
 

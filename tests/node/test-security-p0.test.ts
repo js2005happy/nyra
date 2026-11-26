@@ -2,7 +2,7 @@
 // 审批卡盖住真参数、软链绕过、子进程环境白名单、默认拒读、迁移不继承旧批准、
 // untrusted 超长尾部。全部用临时 home / 假 provider / 假 transport，不调真模型、不用真 Key。
 import { test, expect } from "bun:test";
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync, symlinkSync, chmodSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync, symlinkSync, chmodSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildChildEnv } from "../../src/childEnv.ts";
@@ -266,6 +266,55 @@ test("SecurityP0.shell_redirect_to_dot_nyra_denied_but_normal_ok", async () => {
   const out = await executeTool("shell", { command: "echo hi > notes.txt", timeout: 10 }, ctx);
   expect(out).not.toContain("禁止重定向");
   expect(readFileSync(join(workdir, "notes.txt"), "utf-8")).toContain("hi");
+});
+
+test("SecurityP0.shell_alternate_writes_to_protected_paths_denied", async () => {
+  const home = tmpHome("nyra-sec0-home-");
+  const workdir = tmpHome("nyra-sec0-wd-");
+  const protectedFile = join(workdir, "AGENTS.md");
+  const payload = join(workdir, "payload.txt");
+  writeFileSync(protectedFile, "ORIGINAL\n");
+  const ctx = toolCtx(home, workdir, { approveFn: async () => true });
+  const commands = [
+    "cp payload.txt AGENTS.md",
+    "copy payload.txt AGENTS.md",
+    "move payload.txt AGENTS.md",
+    "printf INJECTED | tee AGENTS.md",
+    `python3 -c 'open("AGENTS.md","w").write("INJECTED")'`,
+    `node -e 'require("node:fs").writeFileSync("AGENTS.md","INJECTED")'`,
+    `powershell -NoProfile -Command "Set-Content -LiteralPath 'AGENTS.md' -Value x"`,
+    `powershell -NoProfile -Command "Add-Content -LiteralPath 'AGENTS.md' -Value x"`,
+    `powershell -NoProfile -Command "'x' | Out-File -FilePath 'AGENTS.md'"`,
+  ];
+
+  for (const command of commands) {
+    writeFileSync(payload, "INJECTED\n");
+    writeFileSync(protectedFile, "ORIGINAL\n");
+    expect(checkShellDenied(command, workdir)).toMatch(/受保护路径/);
+    const out = await executeTool("shell", { command, timeout: 10 }, ctx);
+    expect(out).toMatch(/受保护路径/);
+    expect(readFileSync(protectedFile, "utf-8")).toBe("ORIGINAL\n");
+  }
+});
+
+test("SecurityP0.windows_copy_switches_and_executable_names_are_classified", () => {
+  const workdir = tmpHome("nyra-sec0-windows-shell-");
+  try {
+    for (const command of [
+      "copy /Y payload.txt AGENTS.md",
+      "copy payload.txt AGENTS.md /Y",
+      "copy payload.txt AGENTS.md /-Y",
+      "move /Y payload.txt AGENTS.md",
+      "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoProfile -Command \"Set-Content -LiteralPath 'AGENTS.md' -Value x\"",
+      "pwsh.exe -Command \"Add-Content -Path AGENTS.md -Value x\"",
+      "powershell.exe -Command \"Clear-Content -LiteralPath 'AGENTS.md'\"",
+    ]) {
+      expect(checkShellDenied(command, workdir), command).toMatch(/受保护路径/);
+    }
+    expect(checkShellDenied("copy payload.txt notes.txt /Y", workdir)).toBeNull();
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });
 
 // ---- 3) 子进程环境白名单 ----

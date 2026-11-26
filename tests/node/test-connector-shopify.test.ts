@@ -46,16 +46,14 @@ function tmpHome(prefix: string): string {
 const FAKE_TOKEN = "shpat_SECRET_abc123";
 const SHOP = "hollowandscale.myshopify.com";
 
-function initVault(home: string, password: string): void {
+function initVault(home: string, password: string): Vault {
   const vault = new Vault(join(home, "vault.json"));
   vault.init(password);
-  vault.unlock(password);
+  return vault;
 }
 
 function seedShopifyVault(home: string, password: string, shop = SHOP, token = FAKE_TOKEN): void {
-  initVault(home, password);
-  const vault = new Vault(join(home, "vault.json"));
-  vault.unlock(password);
+  const vault = initVault(home, password);
   vault.add(SHOPIFY_VAULT_CREDENTIALS_ENTRY, JSON.stringify({ shop, access_token: token }), true);
 }
 
@@ -186,8 +184,9 @@ test("ConnectorShopifyTest.test_load_credentials_validates_shop", () => {
   const home2 = tmpHome("nyra-shop-goodshop-");
   seedShopifyVault(home2, "pw-12345", "hollowandscale");
   withVaultPassword("pw-12345", () => {
-    expect(loadShopifyCredentials(home2)?.shop).toBe(SHOP);
-    expect(loadShopifyCredentials(home2)?.accessToken).toBe(FAKE_TOKEN);
+    const credentials = loadShopifyCredentials(home2);
+    expect(credentials?.shop).toBe(SHOP);
+    expect(credentials?.accessToken).toBe(FAKE_TOKEN);
   });
 });
 

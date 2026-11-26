@@ -29,6 +29,7 @@ import {
   formatSlackChannels,
   formatSlackMessages,
   getSlackStatus,
+  hasSlackCredentialsEntry,
   handleApprovalCallback,
   isSlackBotToken,
   isSlackChannelId,
@@ -49,16 +50,14 @@ const FAKE_TOKEN = "xoxb-fake-token-123456";
 const TEAM = "hollow-scale";
 const CHANNEL_ID = "C0123456789";
 
-function initVault(home: string, password: string): void {
+function initVault(home: string, password: string): Vault {
   const vault = new Vault(join(home, "vault.json"));
   vault.init(password);
-  vault.unlock(password);
+  return vault;
 }
 
 function seedSlackVault(home: string, password: string, token = FAKE_TOKEN, team = TEAM): void {
-  initVault(home, password);
-  const vault = new Vault(join(home, "vault.json"));
-  vault.unlock(password);
+  const vault = initVault(home, password);
   vault.add(SLACK_VAULT_CREDENTIALS_ENTRY, JSON.stringify({ token, team }), true);
 }
 
@@ -431,16 +430,12 @@ test("SlackTest.test_cli_slack_auth", async () => {
   // token 不合法 → 1，不存。
   const bad = await handleSlack(["auth"], home, { secrets: ["pw123456", "", "not-a-token"] });
   expect(bad).toBe(1);
-  withVaultPassword("pw123456", () => {
-    expect(loadSlackCredentials(home)).toBeNull();
-  });
+  expect(hasSlackCredentialsEntry(home)).toBe(false);
   // 探 token 返回 invalid_auth → 1，不存。
   const invalidFetch: FetchFn = async () => jsonResponse({ ok: false, error: "invalid_auth" });
   const invalid = await handleSlack(["auth"], home, { secrets: ["pw123456", TEAM, FAKE_TOKEN], fetchFn: invalidFetch });
   expect(invalid).toBe(1);
-  withVaultPassword("pw123456", () => {
-    expect(loadSlackCredentials(home)).toBeNull();
-  });
+  expect(hasSlackCredentialsEntry(home)).toBe(false);
   // 探通 → 0，凭证进密码箱、连接器启用、状态机记已授权。
   const okFetch: FetchFn = async (url) => {
     expect(url).toContain("auth.test");
@@ -449,8 +444,9 @@ test("SlackTest.test_cli_slack_auth", async () => {
   const code = await handleSlack(["auth"], home, { secrets: ["pw123456", TEAM, FAKE_TOKEN], fetchFn: okFetch });
   expect(code).toBe(0);
   withVaultPassword("pw123456", () => {
-    expect(loadSlackCredentials(home)?.token).toBe(FAKE_TOKEN);
-    expect(loadSlackCredentials(home)?.team).toBe(TEAM);
+    const credentials = loadSlackCredentials(home);
+    expect(credentials?.token).toBe(FAKE_TOKEN);
+    expect(credentials?.team).toBe(TEAM);
   });
   expect(loadConfig(home).connectors).toMatchObject({ slack: { enabled: true } });
   expect(new ConnectorAuthStore(home).get("slack", "local")?.state).toBe("authorized");

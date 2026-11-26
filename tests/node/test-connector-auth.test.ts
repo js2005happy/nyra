@@ -46,7 +46,6 @@ const CLIENT = { client_id: "cid-123.apps.googleusercontent.com", client_secret:
 function seedVault(home: string, password: string, tokens: GmailTokens): void {
   const vault = new Vault(join(home, "vault.json"));
   vault.init(password);
-  vault.unlock(password);
   vault.add(GMAIL_VAULT_TOKENS_ENTRY, JSON.stringify(tokens), true);
   vault.add(GMAIL_VAULT_CLIENT_ENTRY, JSON.stringify(CLIENT), true);
 }
@@ -299,14 +298,18 @@ test("ConnectorAuthTest.test_create_transport_gate_with_state_machine", () => {
 
     // 撤销后：建传输层直接报未授权（GmailAuthError），不再放行。
     markConnectorRevoked(home, "gmail", "local");
-    expect(() => createGmailTransport(home, loadConfig(home))).toThrow(GmailAuthError);
-    expect(() => createGmailTransport(home, loadConfig(home))).toThrow(/已被撤销/);
+    let revokedError: unknown;
+    try { createGmailTransport(home, loadConfig(home)); } catch (err) { revokedError = err; }
+    expect(revokedError).toBeInstanceOf(GmailAuthError);
+    expect((revokedError as Error).message).toMatch(/已被撤销/);
 
     // 过期后：同样拦住，并给重新授权入口。
     markConnectorAuthorized(home, "gmail", "local");
     markConnectorExpired(home, "gmail", "local", "refresh token 失效");
-    expect(() => createGmailTransport(home, loadConfig(home))).toThrow(GmailAuthError);
-    expect(() => createGmailTransport(home, loadConfig(home))).toThrow(/已过期/);
+    let expiredError: unknown;
+    try { createGmailTransport(home, loadConfig(home)); } catch (err) { expiredError = err; }
+    expect(expiredError).toBeInstanceOf(GmailAuthError);
+    expect((expiredError as Error).message).toMatch(/已过期/);
 
     // 重新批准后恢复。
     markConnectorAuthorized(home, "gmail", "local");

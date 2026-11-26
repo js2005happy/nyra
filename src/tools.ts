@@ -720,11 +720,11 @@ export function resolveBackendPath(ctx: ToolContext, path: string): string {
 // agent 能改自己的规则文件，等于所有权限设计都失效：AGENTS.md / commands/*.md /
 // skills/*.md 都是它的指令来源，.git 是回滚与审计的底线。
 //
-// **覆盖范围（务必看清）**：这个守卫挂在 `workspaceWritePath` 上，因此只覆盖走这条
-// 路径的文件工具——write_file、edit_file、apply_patch、plan 等。shell 工具的重定向
-// 写受保护路径由 `checkShellDenied` 拦（`echo x >> AGENTS.md` 会被拒绝）；
-// 但 shell 里其他写形态（例如 `cp x AGENTS.md`、`tee AGENTS.md`）仍不在覆盖范围内，
-// 要真正封死必须靠权限规则层（S5）或把 shell 的写操作也接到同一守卫上。
+// **覆盖范围（务必看清）**：文件工具走 `workspaceWritePath`；shell 通过
+// `checkShellDenied` 拦截重定向及常见的直接文件写入（cp/copy、mv/move、tee、
+// PowerShell 内容 cmdlet、内联 Python/Node）。
+// 这只是命令文本启发式检查，不是 shell/OS 沙箱；动态拼接路径、间接启动脚本、
+// 未覆盖的写工具等仍可能绕过，不能把它当成对任意 shell 命令的完整保证。
 //
 // 另外：判定按"工作目录内相对路径"做，顶层 commands/ 与 skills/ 会被整体拦掉。
 // 普通项目里若有同名目录（例如前端的 skills/ 组件目录），agent 将无法写入，需要
@@ -1526,6 +1526,83 @@ export function checkShellDenied(command: string, workdir?: string): string | nu
       if (target.startsWith("~")) continue;
       if (isProtectedWriteTarget(workdir, target)) {
         return `禁止重定向写入受保护路径：${target}`;
+      }
+    }
+    // 常见的非重定向写法也会绕过 `>` 检查：cp/copy、mv/move、install 的目标参数，
+    // tee 输出参数、PowerShell 内容 cmdlet，以及内联 Python/Node 的文件写 API。
+    // 对这些可静态识别的目标复用文件工具的保护路径判定（含软链）；不尝试执行
+    // 或完整解析 shell/脚本。
+    const protectedTarget = (target: string | undefined): boolean =>
+      Boolean(target && !target.startsWith("~") && isProtectedWriteTarget(workdir, target));
+    const quotedLiterals = (text: string): string[] => {
+      const found: string[] = [];
+      const re = /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`/g;
+      for (const match of text.matchAll(re)) {
+        const value = match[0].slice(1, -1).replace(/\\([\\'"`])/g, "$1");
+        found.push(value);
+      }
+      return found;
+    };
+    for (const seg of segments) {
+      for (let i = 0; i < seg.length; i++) {
+        const executable = (seg[i].split(/[\\/]/).pop() ?? seg[i]).toLowerCase().replace(/\.exe$/, "");
+        const args = seg.slice(i + 1);
+        if (["cp", "copy", "mv", "move", "install"].includes(executable)) {
+          let targetDir: string | undefined;
+          const operands: string[] = [];
+          for (let j = 0; j < args.length; j++) {
+            const arg = args[j];
+            if (arg === "--") { operands.push(...args.slice(j + 1)); break; }
+            if (arg === "-t" || arg === "--target-directory") { targetDir = args[++j]; continue; }
+            if (arg.startsWith("--target-directory=")) { targetDir = arg.slice("--target-directory=".length); continue; }
+            if (executable === "copy" && /^\/(?:-?y|[abdvnlz])$/i.test(arg)) continue;
+            if (executable === "move" && /^\/-?y$/i.test(arg)) continue;
+            if (arg.startsWith("-")) continue;
+            operands.push(arg);
+          }
+          const target = targetDir ?? operands[operands.length - 1];
+          if (protectedTarget(target)) return `禁止 shell 写入受保护路径：${target}`;
+        }
+        if (executable === "tee" || executable.endsWith("/tee")) {
+          for (const arg of args) {
+            if (arg === "--") continue;
+            if (arg.startsWith("-")) continue;
+            if (protectedTarget(arg)) return `禁止 shell 写入受保护路径：${arg}`;
+          }
+        }
+        const isPython = /^python(?:\d+(?:\.\d+)*)?$/.test(executable);
+        const isNode = executable === "node" || executable === "nodejs";
+        const isPowerShell = executable === "powershell" || executable === "pwsh";
+        const evalFlag = isPython ? "-c" : isNode ? "-e" : "";
+        if (evalFlag && args.includes(evalFlag)) {
+          const script = args.slice(args.indexOf(evalFlag) + 1).join(" ");
+          const writesFile = isPython
+            ? /\bopen\s*\([^)]{0,512},\s*["'][^"']*[wax+][^"']*["']\s*\)|\bopen\s*\([^)]{0,512}\)\s*\.\s*(?:write|writelines)\s*\(|\bwrite_(?:text|bytes)\s*\(|\b(?:shutil\.)?(?:copy2?|copyfile|move)\s*\(/i.test(script)
+            : /\b(?:writeFile|appendFile|createWriteStream|copyFile|rename)(?:Sync)?\s*\(/i.test(script);
+          if (writesFile) {
+            const target = quotedLiterals(script).find(protectedTarget);
+            if (target) return `禁止脚本写入受保护路径：${target}`;
+          }
+        }
+        if (isPowerShell) {
+          const commandIndex = args.findIndex((arg) => ["-command", "-c"].includes(arg.toLowerCase()));
+          if (commandIndex >= 0) {
+            const script = args.slice(commandIndex + 1).join(" ");
+            if (/\b(?:Set-Content|Add-Content|Out-File|Clear-Content)\b/i.test(script)) {
+              const candidates = quotedLiterals(script);
+              const namedPath = /(?:^|\s)-(?:LiteralPath|FilePath|Path)\s+(?:"([^"]+)"|'([^']+)'|([^\s;|]+))/gi;
+              const positionalPath = /\b(?:Set-Content|Add-Content|Out-File|Clear-Content)\s+(?:"([^"]+)"|'([^']+)'|([^\s;|]+))/gi;
+              for (const pathPattern of [namedPath, positionalPath]) {
+                for (const match of script.matchAll(pathPattern)) {
+                  const target = match[1] ?? match[2] ?? match[3];
+                  if (target) candidates.push(target);
+                }
+              }
+              const target = candidates.find(protectedTarget);
+              if (target) return `禁止 PowerShell 写入受保护路径：${target}`;
+            }
+          }
+        }
       }
     }
   }
@@ -4331,4 +4408,3 @@ export async function executeToolIdempotent(
   }
   return result;
 }
-

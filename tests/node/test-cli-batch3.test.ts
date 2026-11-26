@@ -7,6 +7,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Vault } from "../../src/vault.ts";
+import { handlePeer } from "../../src/peer.ts";
+import { handlePeerFriends } from "../../src/peerCard.ts";
 
 const CLI = join(import.meta.dir, "..", "..", "src", "cli.ts");
 
@@ -42,6 +44,21 @@ function fresh(): { home: string; workdir: string } {
     home: mkdtempSync(join(tmpdir(), "nyra-b3cli-home-")),
     workdir: mkdtempSync(join(tmpdir(), "nyra-b3cli-wd-")),
   };
+}
+
+async function captureCli(fn: () => Promise<number>): Promise<{ code: number; stdout: string; stderr: string }> {
+  const origOut = process.stdout.write.bind(process.stdout);
+  const origErr = process.stderr.write.bind(process.stderr);
+  let stdout = "";
+  let stderr = "";
+  (process.stdout as unknown as { write: (chunk: unknown) => boolean }).write = (chunk: unknown) => { stdout += String(chunk); return true; };
+  (process.stderr as unknown as { write: (chunk: unknown) => boolean }).write = (chunk: unknown) => { stderr += String(chunk); return true; };
+  try {
+    return { code: await fn(), stdout, stderr };
+  } finally {
+    (process.stdout as unknown as { write: unknown }).write = origOut;
+    (process.stderr as unknown as { write: unknown }).write = origErr;
+  }
 }
 
 test("CliBatch3.test_sfu_video_commands", async () => {
@@ -183,8 +200,11 @@ test("CliBatch3.test_peer_discover_fake_peer_and_card_signing", async () => {
       return new Response("not found", { status: 404 });
     },
   });
+  const previousVaultPassword = process.env.NYRA_VAULT_PASSWORD;
   try {
     const origin = `http://127.0.0.1:${server.port}`;
+    // 保留一个真子进程端到端 smoke；其余同一 CLI handler 的子命令在本进程调用，
+    // 避免反复启动 Bun，同时仍逐项断言 discover/list/enable/--as/card/token 行为。
     const disc = await runCli(["peer", "discover", origin], home, workdir);
     expect(disc.code).toBe(0);
     expect(disc.stdout).toContain("已发现 FakeBot");
@@ -193,27 +213,30 @@ test("CliBatch3.test_peer_discover_fake_peer_and_card_signing", async () => {
     expect(list.code).toBe(0);
     expect(list.stdout).toContain("FakeBot");
     // --as 发好友请求须先开对端协作
-    const enable = await runCli(["peer", "enable"], home, workdir);
+    const enable = await captureCli(() => handlePeer(["enable"], home));
     expect(enable.code).toBe(0);
-    const add = await runCli(["peer", "discover", origin, "--as", "pilot"], home, workdir);
+    const fetchDeps = { fetchFn: async () => new Response(JSON.stringify(card), { headers: { "content-type": "application/json" } }) };
+    const add = await captureCli(() => handlePeerFriends(["discover", origin, "--as", "pilot"], home, { fetchDeps }));
     expect(add.code).toBe(0);
     expect(add.stdout).toContain("好友请求已发给 pilot");
-    // 名片签名：密码箱进程内初始化（`nyra vault init` 严格拒绝额外参数，
-    // runCli 统一追加的 --workdir 会被它当成额外参数，CLI 路径本身没问题）
+    // 名片签名：密码箱进程内初始化；keygen / sign / show 使用与 CLI 相同的 handler。
     new Vault(join(home, "vault.json")).init("pw123456");
-    const keygen = await runCli(["peer", "card", "keygen"], home, workdir, { NYRA_VAULT_PASSWORD: "pw123456" });
+    process.env.NYRA_VAULT_PASSWORD = "pw123456";
+    const keygen = await captureCli(() => handlePeerFriends(["card", "keygen"], home, { passwords: ["pw123456"] }));
     expect(keygen.code).toBe(0);
     expect(keygen.stdout).toContain("签名钥匙已生成");
-    const signOn = await runCli(["peer", "card", "sign", "on"], home, workdir, { NYRA_VAULT_PASSWORD: "pw123456" });
+    const signOn = await captureCli(() => handlePeerFriends(["card", "sign", "on"], home));
     expect(signOn.code).toBe(0);
-    const show = await runCli(["peer", "card"], home, workdir, { NYRA_VAULT_PASSWORD: "pw123456" });
+    const show = await captureCli(() => handlePeerFriends(["card"], home));
     expect(show.code).toBe(0);
     expect(show.stdout).toContain("signature");
     expect(show.stdout).toContain("public_key");
-    const tokenList = await runCli(["peer", "token", "list"], home, workdir, { NYRA_VAULT_PASSWORD: "pw123456" });
+    const tokenList = await captureCli(() => handlePeerFriends(["token", "list"], home, { passwords: ["pw123456"] }));
     expect(tokenList.code).toBe(0);
     expect(tokenList.stdout).toContain("还没存过出站 token");
   } finally {
+    if (previousVaultPassword === undefined) delete process.env.NYRA_VAULT_PASSWORD;
+    else process.env.NYRA_VAULT_PASSWORD = previousVaultPassword;
     server.stop();
     rmSync(home, { recursive: true, force: true });
     rmSync(workdir, { recursive: true, force: true });

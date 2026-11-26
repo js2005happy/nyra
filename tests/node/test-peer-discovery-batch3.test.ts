@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { Vault } from "../../src/vault.ts";
 import { discoverPeer, addDiscoveredPeer, listDiscoveredPeers } from "../../src/peerDiscovery.ts";
 import { generateSigningKeypair, signAgentCard, jwkThumbprint, pinCardKey, cardKeyStatus } from "../../src/cardSignature.ts";
-import { setPeerToken, getPeerToken, revokePeerToken, listPeerTokenNames, fetchAgentCardAuthed } from "../../src/peerTokens.ts";
+import { PEER_TOKEN_VAULT_PREFIX, setPeerToken, getPeerToken, revokePeerToken, listPeerTokenNames, fetchAgentCardAuthed } from "../../src/peerTokens.ts";
 import { loadFriendBook } from "../../src/peerCard.ts";
 
 function tmpHome(prefix: string): string {
@@ -49,9 +49,10 @@ function fetchDepsFor(text: string, status = 200) {
 }
 
 /** 建一个已解锁的密码箱（token/签名钥匙测试用）。 */
-function initVault(home: string, password: string): void {
+function initVault(home: string, password: string): Vault {
   const vault = new Vault(join(home, "vault.json"));
   vault.init(password);
+  return vault;
 }
 
 test("PeerDiscoveryBatch3.test_discover_unsigned_card_absent", async () => {
@@ -137,9 +138,9 @@ test("PeerDiscoveryBatch3.test_peer_token_per_peer_revoke_isolated", async () =>
   const prevPw = process.env.NYRA_VAULT_PASSWORD;
   process.env.NYRA_VAULT_PASSWORD = "pw123456";
   try {
-    initVault(home, "pw123456");
+    const vault = initVault(home, "pw123456");
     setPeerToken(home, "alice", "token-alice-1", "pw123456");
-    setPeerToken(home, "bob", "token-bob-1", "pw123456");
+    vault.add(`${PEER_TOKEN_VAULT_PREFIX}bob`, "token-bob-1");
     expect(getPeerToken(home, "alice")).toBe("token-alice-1");
     expect(listPeerTokenNames(home, "pw123456").sort()).toEqual(["alice", "bob"]);
     // 吊销一家，别家不动
