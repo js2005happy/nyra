@@ -6,10 +6,11 @@
 //   - 预留/结算/释放账本一致性；
 //   - 账本损坏先备份再抛错。
 import { test, expect } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BudgetLedger, estimateCallUsd, isPidAlive, resolveStrictUnknownAmount } from "../../src/budget.ts";
+import { acquireBudgetLock, BudgetLedger, estimateCallUsd, isPidAlive, resolveStrictUnknownAmount } from "../../src/budget.ts";
 import { Agent } from "../../src/agent.ts";
 import { echoProvider } from "./fake-provider.ts";
 import { expectPerms } from "./fsPerms.ts";
@@ -48,8 +49,10 @@ function noUsageProvider(): ProviderLike & { calls: number } {
 const PRICING = { inputPer1M: 1, outputPer1M: 2 };
 
 test("BudgetReservation.test_estimate_call_usd", () => {
-  // 2500 字提示 ≈ 1000 输入 token（$0.001）+ 400 补全 token（$0.0008）。
-  expect(estimateCallUsd(2500, PRICING)).toBeCloseTo(0.0018, 10);
+  // 2500 字提示 ≈ 1000 输入 token（$0.001）+ 2000 补全 token（$0.004）。
+  // 补全默认按 2000 算是保守值（典型回复约 400）：预留要拦超支，不是精确报价。
+  expect(estimateCallUsd(2500, PRICING)).toBeCloseTo(0.005, 10);
+  expect(estimateCallUsd(2500, PRICING, 400)).toBeCloseTo(0.0018, 10);
   expect(estimateCallUsd(100, null)).toBeNull();
 });
 
@@ -133,6 +136,52 @@ test("BudgetReservation.test_ledger_shared_across_instances", () => {
   });
   expect(r2.ok).toBe(false);
   expect(b.activeReservedUsd()).toBeCloseTo(0.06, 10);
+  rmSync(home, { recursive: true, force: true });
+});
+
+test("BudgetReservation.test_ledger_cross_process_reserve_is_atomic", async () => {
+  const home = tmp("nyra-budget-race-");
+  const child = join(import.meta.dir, "budget-race-child.ts");
+  const runOnce = (): Promise<string> => new Promise((resolvePromise, rejectPromise) => {
+    const p = spawn(process.execPath, [child, home, "0.6", "1"], { stdio: ["ignore", "pipe", "pipe"] });
+    let out = "";
+    p.stdout.on("data", (d: Buffer) => { out += d.toString("utf-8"); });
+    p.on("error", rejectPromise);
+    p.on("close", () => resolvePromise(out));
+  });
+  // 8 个进程同时抢：每笔 $0.60，上限 $1.00，只能有一笔成功；账本里也只剩一笔。
+  // 没锁时两笔可能同时读到空账本、同时通过，事后互相覆盖丢记录。
+  const results = await Promise.all(Array.from({ length: 8 }, () => runOnce()));
+  expect(results.filter((r) => r === "ok").length).toBe(1);
+  expect(results.filter((r) => r === "rejected").length).toBe(7);
+  const ledger = new BudgetLedger(home);
+  expect(ledger.activeReservedUsd()).toBeCloseTo(0.6, 10);
+  expect(ledger.list().filter((r) => r.status === "reserved").length).toBe(1);
+  rmSync(home, { recursive: true, force: true });
+});
+
+test("BudgetReservation.test_ledger_stale_lock_is_recovered", () => {
+  const home = tmp("nyra-budget-stale-lock-");
+  const dir = join(home, ".budget-ledger.lock");
+  mkdirSync(dir, { recursive: true });
+  // 锁主已死（pid 不存在）：后来者应能抢走，不会永远卡住。
+  writeFileSync(join(dir, "owner.json"), JSON.stringify({ pid: 999999, createdAt: Date.now() - 60_000 }), "utf-8");
+  const ledger = new BudgetLedger(home);
+  const res = ledger.reserve("cli", 0.05, { reason: "manual" });
+  expect(res.ok).toBe(true);
+  expect(existsSync(dir)).toBe(false);
+  rmSync(home, { recursive: true, force: true });
+});
+
+test("BudgetReservation.test_ledger_live_lock_times_out", () => {
+  const home = tmp("nyra-budget-live-lock-");
+  const release = acquireBudgetLock(home);
+  // 锁被活进程占着：500ms 内拿不到就抛错，不无限等。
+  expect(() => acquireBudgetLock(home, { timeoutMs: 500 })).toThrow("正被另一进程占用");
+  release();
+  // 释放后能正常拿到。
+  const release2 = acquireBudgetLock(home);
+  release2();
   rmSync(home, { recursive: true, force: true });
 });
 

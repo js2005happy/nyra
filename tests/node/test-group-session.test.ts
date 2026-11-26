@@ -27,7 +27,7 @@ import { recordPresenceHeartbeat } from "../../src/gatewayPresence.ts";
 import { createCircle } from "../../src/circles.ts";
 import { RunStore } from "../../src/runs.ts";
 import { TOOL_SCHEMAS } from "../../src/tools.ts";
-import type { BudgetReservation } from "../../src/budget.ts";
+import { BudgetLedger, type BudgetReservation } from "../../src/budget.ts";
 
 function tmpHome(): string {
   return mkdtempSync(join(tmpdir(), "nyra-group-session-"));
@@ -216,6 +216,40 @@ test("GroupSession.test_round_robin_and_consecutive_cap", async () => {
     for (let i = 0; i + 2 < speakers.length; i++) {
       expect(speakers[i] === speakers[i + 1] && speakers[i + 1] === speakers[i + 2]).toBe(false);
     }
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("GroupSession.test_round_reserves_conservative_estimate_without_estimate_usd", async () => {
+  const home = tmpHome();
+  try {
+    const runner = scriptRunner({ "bot-a": ["a1"], "bot-b": ["b1"] });
+    const store = makeStore(home, runner);
+    makeRoom(home, store);
+    const session = createGroupSession(home, "room-1", { store }).session;
+    const ledger = new BudgetLedger(home);
+    const result = await runSessionRound(home, session.id, "开始讨论", {
+      store, botRunner: runner, ledger, rounds: 1,
+      pricing: { inputPer1M: 1, outputPer1M: 2 },
+    });
+    expect(result.turns.length).toBe(1);
+    // 没给 estimateUsd 时不再预留 0：按单价保守估算（4 字提示 + 2000 补全 ≈ $0.004）。
+    const rows = ledger.list().filter((r) => r.reason === "group-turn");
+    expect(rows.length).toBe(1);
+    expect(rows[0].amountUsd).toBeCloseTo(0.004, 4);
+    // 既没 estimateUsd 也没 pricing：仍留 0（只靠事后 checkCost），如实记下来。
+    const store2 = makeStore(home, runner);
+    makeRoom(home, store2, ["bot-a", "bot-b"], "room-2");
+    const session2 = createGroupSession(home, "room-2", { store: store2 }).session;
+    const before = ledger.list().filter((r) => r.reason === "group-turn").length;
+    await runSessionRound(home, session2.id, "开始讨论", {
+      store: store2, botRunner: runner, ledger, rounds: 1,
+    });
+    const after = ledger.list().filter((r) => r.reason === "group-turn");
+    expect(after.length).toBe(before + 1);
+    // list() 是最新在前：after[0] 才是第二场的新行。
+    expect(after[0].amountUsd).toBe(0);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
