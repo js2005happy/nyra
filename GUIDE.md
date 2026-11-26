@@ -598,7 +598,7 @@ Nyra 会按任务关键词自动加载最相关的技能。你自己的技能存
 
 ## 工具
 
-Nyra 内置 48 个工具（`TOOL_SCHEMAS`，测试会核对这个数字）：文件与代码 `read_file`、`write_file`、`edit_file`、`apply_patch`、`list_dir`、`grep_search`、`git_status`、`lsp_diagnostics`、`lsp_symbols`、`editor_context`；命令 `shell`（带危险命令黑名单）；网络 `web_fetch`、`web_search`、`http_post`、`multi_model_research`（多模型并行调研）；浏览器 `browser_navigate` / `browser_click` / `browser_screenshot`（CDP）；电脑操作 `computer_screenshot` / `computer_click` / `computer_type` / `computer_key` / `computer_windows`（均需审批）；媒体与文档 `describe_image`、`media_ingest`、`export_office`；记忆与检索 `memory_append`、`memory_search`、`memory_forget`、`memory_delete`、`knowledge_search`、`session_search`、`usage`（查自己剩多少用量）；生成式 UI `render_component`（只读渲染白名单组件 table / card / list / code / chart-bar）；连接器 `gmail_search` / `gmail_read` / `gmail_send`、`shopify_products` / `shopify_orders` / `shopify_inventory`、`slack_channels` / `slack_history` / `slack_send`（默认关闭，连上账号才可用，发送类需审批）；技能与协作 `save_skill`、`read_skill`、`delegate`（子 agent）、`delegate_parallel`、`plan`（先写计划再执行）。另有默认关闭、需显式开启的 3 个 Poppy opt-in 工具：`poppy_discover`、`poppy_identity_check`、`poppy_permission_check`（只做公开协议发现与本地权限意向核验，不登录、不发交易），不计入上面的 48 个。
+Nyra 内置 51 个工具（`TOOL_SCHEMAS`，测试会核对这个数字）：文件与代码 `read_file`、`write_file`、`edit_file`、`apply_patch`、`list_dir`、`grep_search`、`git_status`、`lsp_diagnostics`、`lsp_symbols`、`editor_context`；命令 `shell`（带危险命令黑名单）；网络 `web_fetch`、`web_search`、`http_post`、`multi_model_research`（多模型并行调研）；浏览器 `browser_navigate` / `browser_click` / `browser_screenshot`（CDP）；电脑操作 `computer_screenshot` / `computer_click` / `computer_type` / `computer_key` / `computer_windows`（均需审批）；媒体与文档 `describe_image`、`media_ingest`、`export_office`；记忆与检索 `memory_append`、`memory_search`、`memory_forget`、`memory_delete`、`knowledge_search`、`session_search`、`usage`（查自己剩多少用量）；生成式 UI `render_component`（只读渲染白名单组件 table / card / list / code / chart-bar）；连接器 `gmail_search` / `gmail_read` / `gmail_send`、`shopify_products` / `shopify_orders` / `shopify_inventory`、`slack_channels` / `slack_history` / `slack_send`（默认关闭，连上账号才可用，发送类需审批）；技能与协作 `save_skill`、`read_skill`、`delegate`（子 agent）、`delegate_parallel`、`plan`（先写计划再执行）；群聊会话 `group_session_create` / `group_session_send` / `group_session_assign`（机主是正式成员的联合会话，见 `docs/group-chat.md`“群聊会话”一节）。另有默认关闭、需显式开启的 3 个 Poppy opt-in 工具：`poppy_discover`、`poppy_identity_check`、`poppy_permission_check`（只做公开协议发现与本地权限意向核验，不登录、不发交易），不计入上面的 51 个。
 
 - **plan**：多步骤任务先写计划文件（默认 `plan.md`）再执行。
 - **delegate**：把子任务交给一个子 agent（轮数受限），拿回摘要再继续。
@@ -627,7 +627,7 @@ bun x tsc -p tsconfig.json --noEmit   # 类型检查
 ├── src/               Node 运行时（0.5.1 唯一实现，Bun --compile 打包成单文件二进制）
 │   ├── cli.ts         入口：参数解析 + 交互 REPL + 全部子命令
 │   ├── agent.ts       agent 主循环（plan → 工具调用 → 汇报）+ 模式切换（含创造模式技能）
-│   ├── tools.ts       48 个工具 + 审批 + shell 黑名单
+│   ├── tools.ts       51 个工具 + 审批 + shell 黑名单
 │   ├── providers.ts   OpenAI 兼容客户端 + 模型自动兜底 + 同模型多 Key 轮换 + 14 个预置
 │   ├── gateway.ts     本地网页界面服务器（nyra ui，含群聊页、模式切换、创造模式）
 │   ├── webuiPage.ts   网页界面内嵌单页（HTML/CSS/JS，含模式选择器）
