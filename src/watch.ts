@@ -47,7 +47,7 @@ import { createHash } from "node:crypto";
 import { randomBytes } from "node:crypto";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { realpathSync } from "node:fs";
-import { loadConfig, resolveHome, saveConfig } from "./config.ts";
+import { VERSION, loadConfig, resolveHome, saveConfig } from "./config.ts";
 import { RunStore } from "./runs.ts";
 import { addTask, appendInbox } from "./tasks.ts";
 
@@ -357,7 +357,7 @@ fetchText?: (url: string) => Promise<WatchContent>;
 readFile?: (path: string) => WatchContent;
 }
 
-const UA = "Nyra/0.5.15 (watch)";
+const UA = `Nyra/${VERSION} (watch)`;
 
 async function defaultFetchText(url: string): Promise<WatchContent> {
 let res: Response;

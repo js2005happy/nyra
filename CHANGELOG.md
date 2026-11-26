@@ -3,6 +3,7 @@
 > Changelog is in Chinese; see [Release notes](https://github.com/js2005happy/nyra/releases) for English summaries.
 
 ## 未发布（2026-11-27）
+- 版本准备：根 CLI、桌面/Tauri 与 Rust crate、移动端参考清单及 Helm `appVersion` 同步到 **0.5.16**，并同步 `Cargo.lock`。尚未创建 tag 或 Release；安装器默认版本仍固定在最近已发布的 `v0.5.15`，发布页 `docs/index.html` 保持不变。
 - 受保护路径 shell 写入拦截：除重定向外，静态拒绝 `cp` / `copy`、`mv` / `move`、`install`、`tee`、可识别的内联 Python `-c` / Node `-e` 文件写 API，以及 PowerShell `-Command` 的 `Set-Content`、`Add-Content`、`Out-File`、`Clear-Content` 写入受保护路径；测试覆盖 `AGENTS.md` 写入后内容保持不变。该守卫仅静态分类命令文本，不是完整 shell/文件系统隔离；动态路径、包装器、脚本文件、其他解释器及未知 API 仍可能绕过。
 - Gateway 会话 SSE：`GatewayClient.sessionEvents()` 在连接意外中断后从最后接受的 `seq + 1` 续接，忽略已消费序号的重复事件，支持 AbortSignal 取消；对外仍使用现有 SSE endpoint 与 envelope。
 - 视频模拟与测试稳定性：模拟会话批量生成和落盘帧，减少长时模拟的逐帧日志扫描及写入；帧日志仍封顶 1000 条，录制保留模拟帧。CLI、连接器、peer 和接管测试调整 fixture、进程调用和验证以减少超时，并保留真实 CLI、非 TTY、凭据写入等覆盖。模拟不等同真实媒体/网络验证；共享同一数据目录的多进程写帧没有并发安全保证，模拟期间外部更改成员/producer 的行为可能与逐帧发布不同。
