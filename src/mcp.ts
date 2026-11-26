@@ -2,7 +2,9 @@
 // 协议 2026-07-28：先 server/discover 探测（-32022 时按 supported 列表
 // 挑版本），失败回退旧版 initialize（2025-11-25）+ notifications/initialized；
 // tools/list 分页；tools/call 遇多轮往返（input_required）直接报错，不假装完成。
-// 服务器主动发来的请求一律回 -32601（不支持）。超时放弃的旧响应按 id 丢弃。
+// 无状态：HTTP 客户端不存、不发 Mcp-Session-Id，每请求自带 _meta 版本 +
+// MCP-Protocol-Version 头；服务器主动发来的请求一律回 -32601（不支持）。
+// 超时放弃的旧响应按 id 丢弃。
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, statSync } from "node:fs";
@@ -699,7 +701,8 @@ function buildModernMeta(version: string): Record<string, unknown> {
 /**
  * 缺口 17：MCP Streamable HTTP 客户端（与 MCPClient 同公共面）。
  * - 每个请求都是独立的 HTTP POST（JSON-RPC 2.0），响应是 JSON 或 SSE；
- *   有状态的服务器回 Mcp-Session-Id 时，后续请求带上它。
+ *   无状态：不存、不发 Mcp-Session-Id（老式有状态服务器回了也忽略），
+ *   每请求自带协议版本（_meta + MCP-Protocol-Version 请求头）。
  * - 协商与 stdio 客户端同款：先 server/discover 探现代版，失败回退旧版
  *   initialize；tools/list 分页、tools/call 结果拼文本都与 stdio 一致。
  * - 不启子进程、不走沙箱（沙箱只约束本地子进程）；url 只接受 http/https；
@@ -715,7 +718,6 @@ export class MCPHttpClient implements MCPTransportLike {
   serverInfo: Record<string, unknown> | null = null;
   private nextId = 1;
   private negotiatePromise: Promise<void> | null = null;
-  private sessionId: string | null = null;
 
   constructor(config: MCPServerConfig, timeout = 30.0) {
     if (!config.url) throw new MCPError(`MCP 服务器 ${config.name} 用 http 传输却未配 url`);
@@ -726,7 +728,7 @@ export class MCPHttpClient implements MCPTransportLike {
   /** 无状态传输：start 是空操作，协商在首次请求时懒完成（与 MCPClient 同款）。 */
   start(): void {}
 
-  private async postJsonRpc(payload: Record<string, unknown>, timeout?: number): Promise<unknown> {
+  private async postJsonRpc(payload: Record<string, unknown>, timeout?: number, protocolVersion?: string): Promise<unknown> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), (timeout ?? this.timeout) * 1000);
     const headers: Record<string, string> = {
@@ -734,7 +736,9 @@ export class MCPHttpClient implements MCPTransportLike {
       Accept: "application/json, text/event-stream",
       ...this.config.headers,
     };
-    if (this.sessionId) headers["Mcp-Session-Id"] = this.sessionId;
+    // 2026-07-28：版本声明随每请求走（与 _meta 里同款值一致，供服务端在
+    // 解析 body 前路由/拒绝；旧服务器不认这个头，直接忽略）。
+    if (protocolVersion) headers["MCP-Protocol-Version"] = protocolVersion;
     let res: Response;
     try {
       res = await fetch(this.config.url!, {
@@ -751,8 +755,7 @@ export class MCPHttpClient implements MCPTransportLike {
     } finally {
       clearTimeout(timer);
     }
-    const sid = res.headers.get("mcp-session-id");
-    if (sid) this.sessionId = sid;
+    // 2026-07-28：没有会话——服务端回的 Mcp-Session-Id 一律忽略，不存、不发。
     const text = await res.text();
     if (!res.ok) {
       throw new MCPRequestError(`MCP HTTP 服务器返回 ${res.status}：${text.slice(0, 200)}`, res.status);
@@ -783,9 +786,18 @@ export class MCPHttpClient implements MCPTransportLike {
   private async sendRequest(method: string, params: Record<string, unknown> = {}, meta?: Record<string, unknown> | null, timeout?: number): Promise<Record<string, unknown>> {
     const id = this.nextId++;
     const body: Record<string, unknown> = { ...params };
-    if (meta !== undefined && meta !== null) body._meta = meta;
-    else if (this.era === "modern") body._meta = buildModernMeta(this.negotiatedVersion ?? LATEST_PROTOCOL_VERSION);
-    const raw = await this.postJsonRpc({ jsonrpc: "2.0", id, method, params: body }, timeout);
+    // 头里的版本与 _meta 里的版本取同一值（discover 挑版本重试时是挑中的版本，
+    // 平时是协商好的版本）；旧版握手期没 _meta，也不发这个头。
+    let protocolVersion: string | undefined;
+    if (meta !== undefined && meta !== null) {
+      body._meta = meta;
+      const v = meta[META_PROTOCOL_VERSION];
+      if (typeof v === "string") protocolVersion = v;
+    } else if (this.era === "modern") {
+      body._meta = buildModernMeta(this.negotiatedVersion ?? LATEST_PROTOCOL_VERSION);
+      protocolVersion = this.negotiatedVersion ?? LATEST_PROTOCOL_VERSION;
+    }
+    const raw = await this.postJsonRpc({ jsonrpc: "2.0", id, method, params: body }, timeout, protocolVersion);
     const msg = this.pickResponse(raw, id);
     if (msg === null) throw new MCPError(`MCP HTTP 服务器未回应该请求：${method}（id ${id}）`);
     if (msg.error && typeof msg.error === "object") {
@@ -1124,8 +1136,12 @@ export async function buildMcpManager(
 //   ~/.nyra/mcp-server-audit.jsonl；ping 与 notifications/* 是协议噪声，
 //   只进审计、不进运行记录；
 // - 默认：服务关闭、写操作关闭；端点关闭时当不存在（404），不泄露端点。
-// 协议：无状态 Streamable HTTP——只回 JSON（暂不支持 SSE 流式回包），不要求
-// Mcp-Session-Id；批量请求（数组）不支持；通知（无 id）不执行、不回包。
+// 协议：无状态 Streamable HTTP（2026-07-28）——只回 JSON（暂不支持 SSE
+// 流式回包），没有会话、不要求也不理会 Mcp-Session-Id；主路是 server/discover
+// （回支持的版本列表 + capabilities + _meta 里的 serverInfo + 缓存提示），
+// 请求带了不支持的协议版本时回 -32022 并列出支持的版本；initialize 只留给
+// 不会 discover 的老客户端作兼容。批量请求（数组）不支持；通知（无 id）
+// 不执行、不回包。
 
 /** 对外 MCP 服务的审计文件（~/.nyra/mcp-server-audit.jsonl，一行一次调用）。 */
 export const MCP_SERVER_AUDIT_FILE = "mcp-server-audit.jsonl";
@@ -1348,6 +1364,27 @@ export class NyraMcpServer {
     return { jsonrpc: "2.0", id, error: { code, message } };
   }
 
+  /**
+   * 2026-07-28：server/discover——无状态发现（客户端探版本与能力的主路）。
+   * 回 supportedVersions（只列无状态版）+ capabilities + _meta 里的 serverInfo
+   * + 缓存提示 ttlMs/cacheScope（规范要求字段；工具列表随 allow_writes 开关变，
+   * ttlMs 取 0 = 立即过期，客户端每次现取）。
+   */
+  private doDiscover(): Record<string, unknown> {
+    return {
+      supportedVersions: [...MODERN_PROTOCOL_VERSIONS],
+      capabilities: { tools: {} },
+      _meta: { [META_SERVER_INFO]: { name: "Nyra", version: VERSION } },
+      ttlMs: 0,
+      cacheScope: "public",
+    };
+  }
+
+  /**
+   * 旧版握手（2025-11-25 及更早）：只作兼容——老客户端（包括旧版 Nyra）
+   * 不会调 server/discover，直接发 initialize；新客户端走 discover，
+   * 不再经过这里。
+   */
   private doInitialize(params: unknown): Record<string, unknown> {
     let version = LATEST_PROTOCOL_VERSION;
     if (params && typeof params === "object" && !Array.isArray(params)) {
@@ -1510,6 +1547,19 @@ export class NyraMcpServer {
       return { status: 202, body: null };
     }
     const params = msg.params ?? {};
+    // 2026-07-28：请求自带协议版本（params._meta）；带了不支持的版本时回
+    // -32022 并列出支持的版本（客户端据此挑版本重试）；没带 _meta 的当旧
+    // 客户端兼容（initialize 路径本就无 _meta）；discover/initialize/ping
+    // 不做版本检查（discover 本就是探版本的口子）。
+    if (method !== "server/discover" && method !== "initialize" && method !== "ping") {
+      const meta = params && typeof params === "object" && !Array.isArray(params)
+        ? (params as Record<string, unknown>)._meta : undefined;
+      const asked = meta && typeof meta === "object"
+        ? (meta as Record<string, unknown>)[META_PROTOCOL_VERSION] : undefined;
+      if (typeof asked === "string" && !MODERN_PROTOCOL_VERSIONS.includes(asked)) {
+        return { status: 200, body: { jsonrpc: "2.0", id, error: { code: UNSUPPORTED_PROTOCOL_VERSION_CODE, message: `不支持的协议版本：${asked}`, data: { supported: [...MODERN_PROTOCOL_VERSIONS] } } } };
+      }
+    }
     try {
       let result: Record<string, unknown>;
       let toolName = method;
@@ -1517,7 +1567,9 @@ export class NyraMcpServer {
       let runId: string | undefined;
       let ok = true;
       let errorText: string | undefined;
-      if (method === "initialize") {
+      if (method === "server/discover") {
+        result = this.doDiscover();
+      } else if (method === "initialize") {
         result = this.doInitialize(params);
       } else if (method === "ping") {
         result = {};
