@@ -35,6 +35,8 @@ import {
   takeoverStatus,
 } from "../../src/botTakeover.ts";
 
+const CLI = join(import.meta.dir, "..", "..", "src", "cli.ts");
+
 function tmpHome(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
 }
@@ -288,8 +290,19 @@ test("BotTakeoverTest.test_cli_takeover_handover", async () => {
   const { id } = setupComputer(home);
   const working = createKanbanTask(home, { title: "正在做的活", agent: "nyra" });
   startKanbanTask(home, working.id);
-  // 没加 --yes、stdin 不是 TTY：拒绝接管。
-  const noYes = await capture(() => handleScreenTakeover(["takeover", id], home));
+  // 真实 CLI 子进程的 stdin 明确不是 TTY：无 --yes 时必须直接拒绝，不能等待输入。
+  const noYesProc = Bun.spawn({
+    cmd: [process.execPath, CLI, "screen", "takeover", id],
+    env: { ...process.env, NYRA_HOME: home, NYRA_CONFIG: join(home, "config.json"), NYRA_LAZY_TOOLS: "0" },
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [noYesOut, noYesErr] = await Promise.all([
+    new Response(noYesProc.stdout).text(),
+    new Response(noYesProc.stderr).text(),
+  ]);
+  const noYes = { code: await noYesProc.exited, out: noYesOut, err: noYesErr };
   expect(noYes.code).toBe(1);
   expect(noYes.err).toContain("--yes");
   expect(getActiveTakeover(home, id)).toBeNull();

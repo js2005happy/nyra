@@ -2,7 +2,11 @@
 
 > Changelog is in Chinese; see [Release notes](https://github.com/js2005happy/nyra/releases) for English summaries.
 
-## 未发布（2026-11-25）
+## 未发布（2026-11-27）
+- 版本准备：根 CLI、桌面/Tauri 与 Rust crate、移动端参考清单及 Helm `appVersion` 同步到 **0.5.16**，并同步 `Cargo.lock`。尚未创建 tag 或 Release；安装器默认版本仍固定在最近已发布的 `v0.5.15`，发布页 `docs/index.html` 保持不变。
+- 受保护路径 shell 写入拦截：除重定向外，静态拒绝 `cp` / `copy`、`mv` / `move`、`install`、`tee`、可识别的内联 Python `-c` / Node `-e` 文件写 API，以及 PowerShell `-Command` 的 `Set-Content`、`Add-Content`、`Out-File`、`Clear-Content` 写入受保护路径；测试覆盖 `AGENTS.md` 写入后内容保持不变。该守卫仅静态分类命令文本，不是完整 shell/文件系统隔离；动态路径、包装器、脚本文件、其他解释器及未知 API 仍可能绕过。
+- Gateway 会话 SSE：`GatewayClient.sessionEvents()` 在连接意外中断后从最后接受的 `seq + 1` 续接，忽略已消费序号的重复事件，支持 AbortSignal 取消；对外仍使用现有 SSE endpoint 与 envelope。
+- 视频模拟与测试稳定性：模拟会话批量生成和落盘帧，减少长时模拟的逐帧日志扫描及写入；帧日志仍封顶 1000 条，录制保留模拟帧。CLI、连接器、peer 和接管测试调整 fixture、进程调用和验证以减少超时，并保留真实 CLI、非 TTY、凭据写入等覆盖。模拟不等同真实媒体/网络验证；共享同一数据目录的多进程写帧没有并发安全保证，模拟期间外部更改成员/producer 的行为可能与逐帧发布不同。
 
 - 安全修复 + 预算硬上限收紧（2026-11-27，仓库核查三件中的前两件；第三件真实基线重跑随后）：**① exec 白名单 `..` 逃逸（PR #124 落地）**：`src/execDaemon.ts` 的 `allowedRoots` 判定原来是纯字符串前缀比较，cwd 由请求方提供，`/work/../etc` 能绕过白名单；现抽出 `isWithinRoots`——先统一分隔符、再 `resolve()`、再比，根后须紧跟分隔符或完全相等，Windows 忽略大小写。合入时发现 PR 原版在 Linux 上有一处漏：先 resolve 再换斜杠会漏掉藏在反斜杠后的 `..`（R9 在 Linux 上失败，疑似该 PR 的 CI 曾红的原因），已改成先统一分隔符再 resolve，9 项断言全过。另查出同款问题在 `src/skills.ts` 的 `isTrustedSkillPath`（只归一分隔符、不折叠 `..`），一并用 `posix.normalize` 堵上并补断言；`src/tools.ts` 的写侧判定两侧都过 `canonicalizePath`（resolve + realpath），已确认安全不动。**② 预算预留跨进程原子化 + 保守额度**：`src/budget.ts` 的 reserve/settle/release/pruneExpired 原来是无锁读-改-写，两进程同时预留会互相覆盖丢记录；现加 `.budget-ledger.lock` 目录锁（mkdir 原子创建，owner.json 记 pid + 建锁时间；锁主进程已死或锁超 30 秒算 stale 可抢走；10 秒拿不到抛错），读侧不加锁（写盘是 rename 原子写）。`estimateCallUsd` 的补全默认从 400 改 2000 token——400 是典型回复长度，预留要拦超支，按 400 算时长回复的结算会顶穿预留；调用方知道输出上限时显式传 `completionTokens`。群聊轮次：`runSessionRound` 没给 `estimateUsd` 时按 `pricing` 保守估算，不再预留 0；既没 `estimateUsd` 也没 `pricing` 时仍留 0（只靠事后 `checkCost`），CLI 与模型工具尚未把定价接进来（待办，见 `docs/budget.md` 诚实边界）。文档：`docs/budget.md` 同步改锁、2000 默认与群聊后备三处。测试：`test-budget-reservation` 新增跨进程 8 进程抢预留（只能 1 笔成功）、stale 锁回收、活锁 500ms 超时三项，`test-group-session` 新增群聊保守预留一项；本批相关 90 项全过。诚实边界：只在临时 home / 假 provider 上验过；锁在极端情况下（持有者活着但超过 30 秒不放）会被抢走，写操作本身是毫秒级，正常不会触发；Windows/macOS 真机未验证。
 

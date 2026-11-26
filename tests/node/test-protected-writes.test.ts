@@ -5,7 +5,7 @@
 //   - 子目录里的同名文件不拦（docs/AGENTS.md、src/skills/x.md）
 //   - NYRA_ALLOW_PROTECTED_WRITES=1 显式放开
 //   - 工作目录之外仍然拒写（原有行为不能被破坏）
-//   - 只拦文件工具：本文件不覆盖 shell（已知边界，见 src/tools.ts 注释）
+//   - 文件工具与直接 shell 重定向受保护；cp/tee/脚本等替代 shell 写法另有安全回归
 import { test, expect, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

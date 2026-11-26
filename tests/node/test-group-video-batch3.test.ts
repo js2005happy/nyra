@@ -2,7 +2,7 @@
 // 群组视频（Producer/Consumer、按需看帧、带宽自适应、10 分钟模拟）。
 // 全部用临时 home，不起真服务器、不联网。
 import { test, expect } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SfuRegistry } from "../../src/sfu.ts";
@@ -12,6 +12,7 @@ import {
   tierForBandwidth,
   tierFrameStride,
   VIDEO_ROOM_BUDGET_KBPS,
+  VIDEO_MAX_FRAMES,
 } from "../../src/groupVideo.ts";
 
 function tmpHome(prefix: string): string {
@@ -147,6 +148,35 @@ test("GroupVideoBatch3.test_simulate_ten_minutes_three_peers", () => {
     expect(res.framesDroppedByTier).toBe(600);
     expect(res.producersAlive).toBe(3);
     expect(res.roomOpen).toBe(true);
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test("GroupVideoBatch3.test_simulation_batches_frames_and_preserves_recording", () => {
+  const home = tmpHome("nyra-gvideo-");
+  try {
+    setupRoom(home, "room-g", ["alice", "bob"]);
+    const sfu = new SfuRegistry(home);
+    const video = new VideoRegistry(home);
+    video.startProducer("room-g", "alice", "camera");
+    expect(video.publishFrame("room-g", "alice", "before-recording").seq).toBe(1);
+    sfu.consentRecording("room-g", "alice");
+    sfu.consentRecording("room-g", "bob");
+    video.startVideoRecording("room-g");
+
+    const res = simulateVideoSession(home, "room-g", ["alice", "bob"], 501, { fps: 1 });
+    expect(res.framesPublished).toBe(1002);
+
+    const framePath = join(home, "group-video-frames-room-g.jsonl");
+    const frames = readFileSync(framePath, "utf-8").trim().split("\n").map((line) => JSON.parse(line) as { seq: number; at: string; fingerprint: string });
+    expect(frames).toHaveLength(VIDEO_MAX_FRAMES);
+    expect(frames[0]?.seq).toBe(4);
+    expect(frames.at(-1)?.seq).toBe(1003);
+    expect(frames.every((frame) => Number.isFinite(Date.parse(frame.at)) && /^[0-9a-f]{12}$/.test(frame.fingerprint))).toBe(true);
+
+    const recordings = readFileSync(join(home, "group-video-recordings-room-g.jsonl"), "utf-8").trim().split("\n").map((line) => JSON.parse(line) as { seq: number; at: string; fingerprint: string });
+    expect(recordings).toHaveLength(1002);
+    expect(recordings[0]?.seq).toBe(2);
+    expect(recordings.at(-1)).toEqual(frames.at(-1));
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
 

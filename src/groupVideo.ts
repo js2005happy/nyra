@@ -20,7 +20,7 @@
 //   回收、Producer 一个不少、帧序号连续；真机 10 分钟留待验证。
 // 真 mediasoup 视频接线是下一步（与语音同款 SfuProvider 抽象层）。
 import { createHash, randomBytes } from "node:crypto";
-import { copyFileSync, existsSync, lstatSync, mkdirSync, openSync, closeSync, writeSync, readFileSync, renameSync, rmSync, appendFileSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, openSync, closeSync, writeSync, readFileSync, renameSync, rmSync, appendFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { resolveNyraHome } from "./memory.ts";
 import { RunStore } from "./runs.ts";
@@ -174,26 +174,89 @@ function readFrames(home: string, roomId: string): VideoFrame[] {
   return out;
 }
 
-function appendFrame(home: string, frame: VideoFrame): void {
+interface FrameLogState {
+  size: number;
+  mtimeMs: number;
+  count: number;
+  nextSeq: number;
+}
+
+// 模拟长会话会在同一个进程连续写帧。只有文件被外部改动时才重新扫描；正常发帧
+// 用此状态维护序号和行数，避免每帧都读取、解析最多 1000 行的日志。
+const frameLogStates = new Map<string, FrameLogState>();
+
+function getFrameLogState(home: string, roomId: string): FrameLogState {
+  const path = framesPath(home, roomId);
+  let size = 0;
+  let mtimeMs = 0;
+  try {
+    const stat = statSync(path);
+    size = stat.size;
+    mtimeMs = stat.mtimeMs;
+  } catch { /* 首次写入时文件尚不存在 */ }
+  const cached = frameLogStates.get(path);
+  if (cached && cached.size === size && cached.mtimeMs === mtimeMs) return cached;
+  const frames = readFrames(home, roomId);
+  let maxSeq = 0;
+  for (const f of frames) if (f.seq > maxSeq) maxSeq = f.seq;
+  const state = { size, mtimeMs, count: frames.length, nextSeq: maxSeq + 1 };
+  frameLogStates.set(path, state);
+  return state;
+}
+
+function appendFrame(home: string, frame: VideoFrame, state = getFrameLogState(home, frame.room)): void {
   const path = framesPath(home, frame.room);
   mkdirSync(dirname(path), { recursive: true });
   appendFileSync(path, JSON.stringify(frame) + "\n", "utf-8");
-  // 封顶：先数行（读文件 + 数换行，不逐行 JSON.parse）；超了 1000 行
-  // 再读一次截断。模拟 10 分钟要发上万帧，每帧都全量解析太慢。
-  let text: string;
-  try { text = readFileSync(path, "utf-8"); } catch { return; }
-  let lines = 0;
-  for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) === 10) lines++;
-  if (lines <= VIDEO_MAX_FRAMES) return;
-  const frames = readFrames(home, frame.room);
-  if (frames.length > VIDEO_MAX_FRAMES) {
-    const kept = frames.slice(-VIDEO_MAX_FRAMES);
-    const tmp = `${path}.tmp-${process.pid}`;
-    const fd = openSync(tmp, "w", 0o600);
+  state.count++;
+  state.nextSeq = Math.max(state.nextSeq, frame.seq + 1);
+  if (state.count > VIDEO_MAX_FRAMES) {
+    const frames = readFrames(home, frame.room);
+    if (frames.length > VIDEO_MAX_FRAMES) {
+      const kept = frames.slice(-VIDEO_MAX_FRAMES);
+      const tmp = `${path}.tmp-${process.pid}`;
+      const fd = openSync(tmp, "w", 0o600);
+      try {
+        writeSync(fd, kept.map((f) => JSON.stringify(f)).join("\n") + "\n", null, "utf-8");
+      } finally { closeSync(fd); }
+      renameSync(tmp, path);
+      state.count = kept.length;
+    }
+  }
+  const stat = statSync(path);
+  state.size = stat.size;
+  state.mtimeMs = stat.mtimeMs;
+}
+
+/** 模拟会话在内存生成全部帧后一次刷新帧日志；只保留最近 1000 帧。 */
+function persistSimulatedFrames(home: string, roomId: string, frames: VideoFrame[], recording: boolean): void {
+  if (!frames.length) return;
+  const path = framesPath(home, roomId);
+  mkdirSync(dirname(path), { recursive: true });
+  const state = getFrameLogState(home, roomId);
+  const kept = [...readFrames(home, roomId), ...frames].slice(-VIDEO_MAX_FRAMES);
+  const tmp = `${path}.tmp-${process.pid}`;
+  const fd = openSync(tmp, "w", 0o600);
+  try {
+    writeSync(fd, kept.map((f) => JSON.stringify(f)).join("\n") + "\n", null, "utf-8");
+  } finally { closeSync(fd); }
+  try { renameSync(tmp, path); }
+  finally { try { rmSync(tmp, { force: true }); } catch { /* already renamed */ } }
+  state.count = kept.length;
+  state.nextSeq = Math.max(state.nextSeq, frames[frames.length - 1]!.seq + 1);
+  const stat = statSync(path);
+  state.size = stat.size;
+  state.mtimeMs = stat.mtimeMs;
+
+  // 普通帧日志封顶；录制日志仍按既有语义保留模拟会话的每一帧。
+  if (recording) {
+    const recordingPath = recordingsPath(home, roomId);
+    const lines = frames.map((f) => JSON.stringify(f) + "\n");
     try {
-      writeSync(fd, kept.map((f) => JSON.stringify(f)).join("\n") + "\n", null, "utf-8");
-    } finally { closeSync(fd); }
-    renameSync(tmp, path);
+      for (let i = 0; i < lines.length; i += 256) {
+        appendFileSync(recordingPath, lines.slice(i, i + 256).join(""), "utf-8");
+      }
+    } catch { /* 录制写失败不破坏模拟结论，与逐帧写入一致 */ }
   }
 }
 
@@ -374,14 +437,14 @@ export class VideoRegistry {
     if (!vr?.producers.some((p) => p.peer === peer)) {
       throw new GroupVideoError(`${peer} 在房间 ${roomId} 里没开视频（先开一路再发帧）`);
     }
-    const frames = readFrames(this.home, roomId);
-    const seq = frames.length ? frames[frames.length - 1].seq + 1 : 1;
+    const frameState = getFrameLogState(this.home, roomId);
+    const seq = frameState.nextSeq;
     const frame: VideoFrame = {
       room: roomId, producer: peer, seq,
       fingerprint: createHash("sha256").update(payload, "utf-8").digest("hex").slice(0, 12),
       at: new Date(this.nowFn()).toISOString(),
     };
-    appendFrame(this.home, frame);
+    appendFrame(this.home, frame, frameState);
     if (vr.recording) {
       try {
         appendFileSync(recordingsPath(this.home, roomId), JSON.stringify(frame) + "\n", "utf-8");
@@ -500,10 +563,21 @@ export function simulateVideoSession(
   const ticks = Math.floor(seconds * fps);
   // 每路自己的帧序号（下采样按它算，不按房间全局序号——见 framesFor）。
   const perProducerCount = new Map<string, number>();
+  const frameState = getFrameLogState(home, roomId);
+  let nextSeq = frameState.nextSeq;
+  const simulatedFrames: VideoFrame[] = [];
+  const recording = video.isRecording(roomId);
   for (let t = 0; t < ticks; t++) {
     nowMs += stepMs;
     for (const p of peers) {
-      video.publishFrame(roomId, p, `${roomId}:${p}:${t}`);
+      const payload = `${roomId}:${p}:${t}`;
+      simulatedFrames.push({
+        room: roomId,
+        producer: p,
+        seq: nextSeq++,
+        fingerprint: createHash("sha256").update(payload, "utf-8").digest("hex").slice(0, 12),
+        at: new Date(nowMs).toISOString(),
+      });
       published++;
       const count = (perProducerCount.get(p) ?? 0) + 1;
       perProducerCount.set(p, count);
@@ -514,6 +588,7 @@ export function simulateVideoSession(
       }
     }
   }
+  persistSimulatedFrames(home, roomId, simulatedFrames, recording);
   const roomAfter = sfu.getRoom(roomId);
   const producersAlive = video.listProducers(roomId).length;
   const result: VideoSessionSimulation = {
