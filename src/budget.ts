@@ -31,7 +31,7 @@ export const BUDGET_LEDGER_FILE = "budget-ledger.json";
 export const DEFAULT_RESERVATION_TTL_MS = 3_600_000;
 const MAX_HISTORY = 200;
 
-export type ReservationReason = "next-call" | "parallel-thread" | "manual";
+export type ReservationReason = "next-call" | "parallel-thread" | "manual" | "group-turn";
 export type ReservationStatus = "reserved" | "settled" | "released";
 
 export interface BudgetReservation {

@@ -118,6 +118,15 @@ dream_run: ["sessions_scanned", "proposals_added", "duplicates_pruned", "stale_r
 // H4：免疫体检——查了几项、几项没过、隔离了几个（只记计数与隔离区相对名）。
 immune_check: ["checks", "failed", "quarantined"],
 immune_quarantined: ["kind", "name", "detail"],
+// 群聊会话（Bot 群聊批）：会话创建/结束、轮次发言、指派、成员、批准、预算
+// 预留/结算。只记 id 与计数，不记消息全文、不记绝对路径。
+group_session_created: ["session", "room", "members"],
+group_session_ended: ["session", "room", "turns"],
+group_turn: ["session", "room", "speaker", "mode"],
+group_assignment: ["session", "room", "assignment", "assignee", "status"],
+group_member: ["session", "room", "member", "kind", "action"],
+group_approval: ["session", "room", "bot", "tool", "approved"],
+group_budget: ["session", "room", "bot", "reserved_usd", "settled_usd"],
 // 缺口 33：外部文档知识库检索进证据链——哪个库、问了什么、命中几条、
 // 最高分多少（只记元数据与分数，不记笔记正文、不记绝对路径）。
 knowledge_search: ["base", "query", "hits", "top_score"],
