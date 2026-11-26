@@ -309,7 +309,9 @@ export function isWithinRoots(
     // 分隔符必须先统一：Windows 风格的 `C:\work\..\Windows` 里 `..` 藏在反斜杠后面，
     // POSIX 的 resolve 不认 `\` 是分隔符，先 resolve 再换斜杠就漏了这段 `..`（R9 在 Linux 上失败就是这个原因）。
     const unified = p.replace(/\\/g, "/");
-    const resolved = resolve(unified).replace(/\/+$/, "");
+    // resolve 之后还要再统一一次：Windows 的 resolve 输出反斜杠（`C:\work`），不换回来，
+    // 下面 `root + "/"` 的比较在 Windows 上全错（CI #841 Windows 全红就是这个原因）。
+    const resolved = resolve(unified).replace(/\\/g, "/").replace(/\/+$/, "");
     return ci ? resolved.toLowerCase() : resolved;
   };
   const target = norm(cwd);
