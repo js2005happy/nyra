@@ -259,7 +259,7 @@ nyra sfu <create|rooms|status|join|leave|turn|record|close|reclaim|video>   群�
 nyra meeting <create|list|join|reconnect|transcript|minutes|record|dispatch>   进外部会议：Meet/Zoom 受控浏览器进会、听字幕出纪要；进会、录制、发言都要机主批（详见 docs/meeting.md）
 nyra rendezvous <register|nodes|route|status|remove|epoch>   Rendezvous 多节点路由：HRW 一致性哈希把任务 key 路由到节点（本机/局域网节点，详见 docs/mesh.md）
 nyra queue <enqueue|list|show|claim|complete|fail>   队列驱动底座：幂等键入队、节点认领 + 租约、纪元防旧指令重执行（详见 docs/mesh.md）
-nyra group <room|chat|plan|route>   群聊：房间与机器人、swarm 顺序发言（可组合终止条件）、群组计划引擎（步骤 worktree 隔离 + 独立验收）、Jev 路由干跑（详见 docs/group-chat.md 与 docs/group-plan.md）
+nyra group <room|chat|plan|route|session>   群聊：房间与机器人、swarm 顺序发言（可组合终止条件）、群组计划引擎（步骤 worktree 隔离 + 独立验收）、Jev 路由干跑、群聊会话（机主是正式成员，轮次状态机 + 每 Bot 预算/审批独立 + @ 定向指派，详见 docs/group-chat.md 与 docs/group-plan.md）
 nyra call <ledger|show <通话 id>|summary>   通话成本与隐私仪表：每通电话三本账（传输 / 媒体 / token），录制默认关、须全体同意，纪要进证据链（详见 docs/call-ledger.md）
 nyra budget <list|show|reserve|settle|release|strict>   并发预算预留：模型调用前先预留额度、超上限不发请求；金额未知默认暂停等人工处理（详见 docs/budget.md）
 nyra usage [--agent <id>] [--json]   每 Bot 用量仪表：当日/当月已花多少、每 Bot 上限是多少、到 80% 了没有（详见 docs/budget.md）
@@ -430,7 +430,7 @@ nyra sfu <create|rooms|status|join|leave|turn|record|close|reclaim|video>   grou
 nyra meeting <create|list|join|reconnect|transcript|minutes|record|dispatch>   join external meetings: controlled-browser join for Meet/Zoom, listen to captions and build minutes; joining, recording and speaking all need the owner's approval (see docs/meeting.md)
 nyra rendezvous <register|nodes|route|status|remove|epoch>   Rendezvous multi-node routing: HRW consistent hashing routes a task key to a node (local/LAN nodes only, see docs/mesh.md)
 nyra queue <enqueue|list|show|claim|complete|fail>   queue-driven base: idempotent enqueue, node claim + lease, epoch guard against stale re-execution (see docs/mesh.md)
-nyra group <room|chat|plan|route>   group chat: rooms and bots, swarm turn-taking (composable stop conditions), group plan engine (per-step worktree isolation + independent acceptance), Jev route dry-run (see docs/group-chat.md and docs/group-plan.md)
+nyra group <room|chat|plan|route|session>   group chat: rooms and bots, swarm turn-taking (composable stop conditions), group plan engine (per-step worktree isolation + independent acceptance), Jev route dry-run, group sessions (owner is a member, turn state machine + per-bot budget/approval + @ assignment, see docs/group-chat.md and docs/group-plan.md)
 nyra call <ledger|show <call id>|summary>   call cost and privacy dashboard: three books per call (transport / media / tokens), recording off by default and needs everyone's consent, minutes go into the evidence chain (see docs/call-ledger.md)
 nyra budget <list|show|reserve|settle|release|strict>   concurrent budget reservation: reserve budget before a model call, over-limit calls are not sent; unknown amounts pause by default until a human handles them (see docs/budget.md)
 nyra usage [--agent <id>] [--json]   per-Bot usage dashboard: how much each Bot spent today / this month, its caps, and whether it hit the 80% warning (see docs/budget.md)
@@ -2671,7 +2671,7 @@ async function handleQueue(argv: string[], home: string): Promise<number> {
 async function handleGroupChat(argv: string[], home: string, args: CliArgs): Promise<number> {
   const action = argv[0];
   if (!action) {
-    process.stdout.write("用法：nyra group <room|chat|plan|route> ...（nyra group room --help / nyra group chat --help / nyra group plan --help 看细分用法；nyra group route --room <房间 id> --message <消息> 干跑 Jev 路由）\n");
+    process.stdout.write("用法：nyra group <room|chat|plan|route|session> ...（nyra group room --help / nyra group chat --help / nyra group plan --help / nyra group session --help 看细分用法；nyra group route --room <房间 id> --message <消息> 干跑 Jev 路由）\n");
     return 2;
   }
   const get = (flag: string): string | undefined => {
@@ -2785,6 +2785,167 @@ async function handleGroupChat(argv: string[], home: string, args: CliArgs): Pro
         return 0;
       }
       process.stderr.write("错误：用法：nyra group chat <run|send> ...\n");
+      return 2;
+    }
+    if (action === "session") {
+      const sub = argv[1];
+      const sessMod = await import("./groupSession.ts");
+      const sessionUsage = "用法：nyra group session <create|list|show|send|members|assign|done|presence|invite|end> ...（create <房间 id> [--name <名>] [--circle <圈>]；send <会话> <消息> [--rounds <轮数>]；assign <会话> @<bot> <任务>；done <会话> <指派 id>；invite <会话> --card <URL|好友名>；详见 docs/group-chat.md）\n";
+      if (sub === "--help") {
+        process.stdout.write(sessionUsage);
+        return 0;
+      }
+      if (sub === "create") {
+        const roomId = argv[2];
+        const name = get("--name");
+        const circle = get("--circle");
+        if (!roomId) {
+          process.stderr.write("错误：用法：nyra group session create <房间 id> [--name <名>] [--circle <圈>]\n");
+          return 2;
+        }
+        const { session, pausedPrevious } = sessMod.createGroupSession(home, roomId, {
+          ...(name ? { name } : {}),
+          ...(circle ? { circle } : {}),
+        });
+        process.stdout.write(`群聊会话已建：${session.id}（${session.name}，房间 ${session.roomId}，成员 ${session.members.map((m) => m.id).join("、")}）\n`);
+        if (pausedPrevious.length) process.stdout.write(`同一房间的上一个会话 ${pausedPrevious.join("、")} 已暂停。\n`);
+        return 0;
+      }
+      if (sub === "list" || !sub) {
+        const circle = get("--circle");
+        const sessions = sessMod.listGroupSessions(home, circle ? { circle } : {});
+        if (!sessions.length) {
+          process.stdout.write("还没有群聊会话：nyra group session create 建一个。\n");
+          return 0;
+        }
+        for (const s of sessions) {
+          process.stdout.write(`${s.id}\t${s.status}\t${s.name}\t房间 ${s.roomId}\t${s.members.length} 个成员\t${s.turnCount} 轮\n`);
+        }
+        return 0;
+      }
+      if (sub === "show") {
+        const sessionId = argv[2];
+        if (!sessionId) { process.stderr.write("错误：用法：nyra group session show <会话 id>\n"); return 2; }
+        const s = sessMod.getGroupSession(home, sessionId);
+        process.stdout.write(`${s.id} ${s.status} — ${s.name}（房间 ${s.roomId}${s.circle ? `，圈 ${s.circle}` : ""}，${s.turnCount} 轮）\n`);
+        process.stdout.write(`成员：${s.members.map((m) => `${m.id}（${m.kind === "owner" ? "机主" : "Bot"}${m.invited ? "，名片邀请" : ""}）`).join("、")}\n`);
+        const stale = new Set(sessMod.staleAssignments(s).map((a) => a.id));
+        for (const a of s.assignments) {
+          process.stdout.write(` ${a.id} [${a.status}${stale.has(a.id) ? "，stale" : ""}] ${a.assignee}：${a.task}\n`);
+        }
+        return 0;
+      }
+      if (sub === "send") {
+        const sessionId = argv[2];
+        const roundsRaw = get("--rounds");
+        const rounds = roundsRaw === undefined ? undefined : parseInt(roundsRaw, 10);
+        const msgParts: string[] = [];
+        for (let i = 3; i < argv.length; i++) {
+          if (argv[i] === "--rounds") { i++; continue; }
+          msgParts.push(argv[i]);
+        }
+        const message = msgParts.join(" ").trim();
+        if (!sessionId || !message) {
+          process.stderr.write("错误：用法：nyra group session send <会话> <消息> [--rounds <轮数>]\n");
+          return 2;
+        }
+        // 路由接线（与 group route 干跑同一条链：本地小路由先判、再走 Jev 便宜模型）。
+        const { chainDeciders, createJevDecider, jevRouterConfig, routeMessage } = await import("./jevRouter.ts");
+        const cfg = jevRouterConfig(home);
+        const { createLocalRouterDecider, localRouterConfig } = await import("./localRouter.ts");
+        const localCfg = localRouterConfig(home);
+        let decider = createJevDecider(home, { model: cfg.model });
+        if (localCfg.enabled) {
+          decider = chainDeciders(
+            createLocalRouterDecider(home, { threshold: Math.min(localCfg.threshold, cfg.threshold) }),
+            decider,
+          );
+        }
+        const router = async (
+          msg: string,
+          members: { id: string; name: string; role: string; instructions: string }[],
+        ): Promise<string | null> => {
+          const decision = await routeMessage(msg, members, decider, { threshold: cfg.threshold });
+          return decision.member;
+        };
+        const result = await sessMod.runSessionRound(home, sessionId, message, {
+          store,
+          router,
+          ...(rounds !== undefined && Number.isInteger(rounds) ? { rounds } : {}),
+        });
+        for (const t of result.turns) {
+          process.stdout.write(`[${t.speaker}] ${t.content}\n`);
+        }
+        for (const s of result.skipped) {
+          process.stdout.write(`（${s.bot} 跳过：${s.reason}）\n`);
+        }
+        process.stdout.write(`—— ${result.turns.length} 轮，停下原因：${result.stoppedBy}\n`);
+        return 0;
+      }
+      if (sub === "members") {
+        const sessionId = argv[2];
+        if (!sessionId) { process.stderr.write("错误：用法：nyra group session members <会话 id>\n"); return 2; }
+        const s = sessMod.getGroupSession(home, sessionId);
+        for (const m of s.members) {
+          process.stdout.write(`${m.id}\t${m.kind === "owner" ? "机主" : "Bot"}${m.invited ? "\t名片邀请" : ""}${m.role ? `\t${m.role}` : ""}\n`);
+        }
+        return 0;
+      }
+      if (sub === "assign") {
+        const sessionId = argv[2];
+        const at = argv[3];
+        const task = argv.slice(4).join(" ").trim();
+        if (!sessionId || !at || !at.startsWith("@") || !task) {
+          process.stderr.write("错误：用法：nyra group session assign <会话> @<bot> <任务>\n");
+          return 2;
+        }
+        const s = sessMod.getGroupSession(home, sessionId);
+        const assignment = sessMod.createAssignment(home, s, at.slice(1), task, "owner");
+        process.stdout.write(`指派已建：${assignment.id}（负责人 ${assignment.assignee}，任务：${task}）\n`);
+        return 0;
+      }
+      if (sub === "done") {
+        const sessionId = argv[2];
+        const assignmentId = argv[3];
+        if (!sessionId || !assignmentId) {
+          process.stderr.write("错误：用法：nyra group session done <会话> <指派 id>\n");
+          return 2;
+        }
+        const s = sessMod.getGroupSession(home, sessionId);
+        const done = sessMod.completeAssignment(home, s, assignmentId);
+        process.stdout.write(`指派已完成：${done.id}（${done.assignee}：${done.task}）\n`);
+        return 0;
+      }
+      if (sub === "presence") {
+        const sessionId = argv[2];
+        if (!sessionId) { process.stderr.write("错误：用法：nyra group session presence <会话 id>\n"); return 2; }
+        const s = sessMod.getGroupSession(home, sessionId);
+        const p = sessMod.sessionPresence(home, s);
+        process.stdout.write(`机主：${p.owner.active ? "在线（桌面活跃）" : "离线"}\n`);
+        for (const b of p.bots) {
+          process.stdout.write(`${b.id}：${b.active ? "在线" : "离线"}（最后发言 ${b.lastActiveAt || "无"}）\n`);
+        }
+        return 0;
+      }
+      if (sub === "invite") {
+        const sessionId = argv[2];
+        const card = get("--card");
+        if (!sessionId || !card) {
+          process.stderr.write("错误：用法：nyra group session invite <会话> --card <名片 URL|好友名>\n");
+          return 2;
+        }
+        const member = await sessMod.inviteToSession(home, sessionId, card);
+        process.stdout.write(`成员已邀请：${member.id}（${member.name}，名片邀请加入，只读）\n`);
+        return 0;
+      }
+      if (sub === "end") {
+        const sessionId = argv[2];
+        if (!sessionId) { process.stderr.write("错误：用法：nyra group session end <会话 id>\n"); return 2; }
+        const ended = sessMod.endGroupSession(home, sessionId);
+        process.stdout.write(`会话已结束：${ended.id}（${ended.name}，共 ${ended.turnCount} 轮）\n`);
+        return 0;
+      }
+      process.stderr.write(`错误：${sessionUsage}`);
       return 2;
     }
     if (action === "route") {

@@ -690,6 +690,17 @@ export const TOOL_SCHEMAS: Record<string, unknown>[] = [
       column: { type: "integer", description: "列号（1 基；definition/references/hover 需要，symbols 忽略）" },
     },
     ["path", "query"]),
+  // 群聊会话（Bot 群聊批）：机主是正式成员的群组会话——轮次状态机、每 Bot
+  // 预算/审批独立、@ 定向指派。只读查询（members/presence/show）不做成工具，走 CLI。
+  schema("group_session_create", "在群聊房间里开一个群聊会话（机主是正式成员，同一房间同时只一个进行中的会话，旧的自动暂停）。返回会话 id 与成员；房间须已存在且至少有一个机器人",
+    { room: { type: "string", description: "房间 id" }, name: { type: "string", description: "会话名，不填用房间名" }, circle: { type: "string", description: "信任圈名，不填为默认圈；非默认圈须已存在" } },
+    ["room"]),
+  schema("group_session_send", "往群聊会话里发一条机主消息并跑轮次引擎：按 @ 点名 > 交接 > 指派 > 路由 > 轮询选发言者，每 Bot 预算与审批各自独立，同一 Bot 连续最多 2 轮、每轮最多 20 条。返回各 Bot 的回复与停下原因",
+    { session: { type: "string", description: "会话 id" }, message: { type: "string", description: "机主消息" }, rounds: { type: "integer", description: "最多跑几轮 Bot 发言（1–20，默认 3；机主提问时只跑 1 轮）" } },
+    ["session", "message"]),
+  schema("group_session_assign", "在群聊会话里给某个 Bot 定向指派一个任务：指派创建时记一条该 Bot 专用的、一次性的批准，另一 Bot 不能复用；负责人回复含“完成”或机主调 done 标记完成",
+    { session: { type: "string", description: "会话 id" }, bot: { type: "string", description: "负责人 Bot id" }, task: { type: "string", description: "任务内容" } },
+    ["session", "bot", "task"]),
 ];
 
 // ---- 路径解析 ----
@@ -2933,6 +2944,62 @@ async function toolRenderComponent(ctx: ToolContext, args: Record<string, unknow
   }
 }
 
+// 群聊会话（Bot 群聊批）：动态 import（与 toolUsage 同款原因：静态导入
+// 会在 tools.ts 初始化完之前跑对方的顶层代码、直接炸掉 TOOL_SCHEMAS 的 TDZ）。
+async function toolGroupSessionCreate(ctx: ToolContext, args: Record<string, unknown>): Promise<string> {
+  const { createGroupSession } = await import("./groupSession.ts");
+  const home = ctx.home ?? resolveHome();
+  try {
+    const room = typeof args.room === "string" ? args.room : "";
+    if (!room) return "错误：须给 room（房间 id）";
+    const { session, pausedPrevious } = createGroupSession(home, room, {
+      name: typeof args.name === "string" ? args.name : undefined,
+      circle: typeof args.circle === "string" ? args.circle : undefined,
+    });
+    const paused = pausedPrevious.length ? `；同一房间的上一个会话 ${pausedPrevious.join("、")} 已暂停` : "";
+    return `群聊会话已建：${session.id}（${session.name}，房间 ${session.roomId}，成员 ${session.members.map((m) => m.id).join("、")}）${paused}`;
+  } catch (err: unknown) {
+    return `错误：${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
+async function toolGroupSessionSend(ctx: ToolContext, args: Record<string, unknown>): Promise<string> {
+  const { runSessionRound } = await import("./groupSession.ts");
+  const home = ctx.home ?? resolveHome();
+  try {
+    const sessionId = typeof args.session === "string" ? args.session : "";
+    const message = typeof args.message === "string" ? args.message : "";
+    if (!sessionId) return "错误：须给 session（会话 id）";
+    if (!message.trim()) return "错误：消息不能为空";
+    const rounds = typeof args.rounds === "number" && Number.isInteger(args.rounds) ? args.rounds : undefined;
+    const result = await runSessionRound(home, sessionId, message, rounds === undefined ? {} : { rounds });
+    const lines = result.turns.map((t) => `[${t.speaker}] ${t.content}`);
+    for (const s of result.skipped) lines.push(`（${s.bot} 跳过：${s.reason}）`);
+    lines.push(`—— ${result.turns.length} 轮，停下原因：${result.stoppedBy}`);
+    return lines.join("\n");
+  } catch (err: unknown) {
+    return `错误：${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
+async function toolGroupSessionAssign(ctx: ToolContext, args: Record<string, unknown>): Promise<string> {
+  const { createAssignment, getGroupSession } = await import("./groupSession.ts");
+  const home = ctx.home ?? resolveHome();
+  try {
+    const sessionId = typeof args.session === "string" ? args.session : "";
+    const bot = typeof args.bot === "string" ? args.bot : "";
+    const task = typeof args.task === "string" ? args.task : "";
+    if (!sessionId) return "错误：须给 session（会话 id）";
+    if (!bot) return "错误：须给 bot（负责人 Bot id）";
+    if (!task.trim()) return "错误：任务不能为空";
+    const session = getGroupSession(home, sessionId);
+    const assignment = createAssignment(home, session, bot, task, "owner");
+    return `指派已建：${assignment.id}（负责人 ${bot}，任务：${task}）`;
+  } catch (err: unknown) {
+    return `错误：${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
 async function toolMemoryForget(ctx: ToolContext, toolName: string, args: Record<string, unknown>): Promise<string> {
   const ids = Array.isArray(args.ids)
     ? (args.ids as unknown[]).map((v) => String(v)).filter(Boolean)
@@ -3903,6 +3970,9 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
       case "editor_context": return await toolEditorContext(ctx, args);
       case "usage": return await toolUsage(ctx, args);
       case "render_component": return await toolRenderComponent(ctx, args);
+      case "group_session_create": return await toolGroupSessionCreate(ctx, args);
+      case "group_session_send": return await toolGroupSessionSend(ctx, args);
+      case "group_session_assign": return await toolGroupSessionAssign(ctx, args);
       case "memory_forget": case "memory_delete": return await toolMemoryForget(ctx, name, args);
       case "gmail_search": return await toolGmailSearch(ctx, String(args.query), typeof args.limit === "number" ? args.limit : undefined, typeof args.page_token === "string" ? args.page_token : undefined);
       case "gmail_read": return await toolGmailRead(ctx, String(args.id));
