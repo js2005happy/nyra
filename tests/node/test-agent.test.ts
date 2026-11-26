@@ -70,16 +70,16 @@ test("AgentTest.test_delegation_budget", () => {
 test("AgentTest.test_tool_schemas_count_and_disabled", () => {
   const { home, workdir } = setup();
   const agent = new Agent(new FakeProvider([]) as never, { workdir, home, mode: "full", skillsDirs: [] });
-  expect(agent.toolSchemas().length).toBe(48); // 缺口 1 + 缺口 2：新增 memory_search / memory_forget / memory_delete；缺口 3a：新增 delegate_parallel；缺口 6：新增 gmail_search / gmail_read / gmail_send；缺口 24：新增 lsp_diagnostics / lsp_symbols；缺口 16：新增 describe_image；缺口 23：新增 export_office；候选提案 4：新增 media_ingest；缺口 33：新增 knowledge_search；G-P1-14：新增 session_search；G-P0-3：新增 editor_context；缺口 44 深化：新增 shopify_products / shopify_orders / shopify_inventory / slack_channels / slack_history / slack_send；M1：新增 usage；O7：新增 render_component。
+  expect(agent.toolSchemas().length).toBe(51); // 缺口 1 + 缺口 2：新增 memory_search / memory_forget / memory_delete；缺口 3a：新增 delegate_parallel；缺口 6：新增 gmail_search / gmail_read / gmail_send；缺口 24：新增 lsp_diagnostics / lsp_symbols；缺口 16：新增 describe_image；缺口 23：新增 export_office；候选提案 4：新增 media_ingest；缺口 33：新增 knowledge_search；G-P1-14：新增 session_search；G-P0-3：新增 editor_context；缺口 44 深化：新增 shopify_products / shopify_orders / shopify_inventory / slack_channels / slack_history / slack_send；M1：新增 usage；O7：新增 render_component；Bot 群聊会话：新增 group_session_create / group_session_send / group_session_assign。
   const noShell = new Agent(new FakeProvider([]) as never, {
     workdir, home, mode: "full", skillsDirs: [], disabledTools: ["shell", "write_file"],
   });
   const names = noShell.toolSchemas().map((s) => (s.function as Record<string, unknown>).name);
   expect(names).not.toContain("shell");
   expect(names).not.toContain("write_file");
-  expect(names.length).toBe(46); // 48 个基础工具 − 禁掉的 shell / write_file。
+  expect(names.length).toBe(49); // 51 个基础工具 − 禁掉的 shell / write_file。
   const poppy = new Agent(new FakeProvider([]) as never, { workdir, home, mode: "full", skillsDirs: [], poppyEnabled: true });
-  expect(poppy.toolSchemas().length).toBe(51); // 48 个基础工具 + 3 个 Poppy 工具。
+  expect(poppy.toolSchemas().length).toBe(54); // 51 个基础工具 + 3 个 Poppy 工具。
 });
 
 test("AgentTest.test_tool_schemas_no_apply_patch_with_backend", () => {

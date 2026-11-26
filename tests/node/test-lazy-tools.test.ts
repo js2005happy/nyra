@@ -93,7 +93,7 @@ test("MCP ≤ 8 个时全量发送，不挂 search_tools（行为不变）", () 
   const { manager } = fakeMcp(MCP_TOOLS_10.slice(0, 3));
   const agent = new Agent(new FakeProvider([]) as never, { workdir, home, mode: "full", skillsDirs: [], mcpManager: manager as never });
   const names = schemaNames(agent.toolSchemas("控制浏览器截图"));
-  expect(names.length).toBe(51); // 48 个基础工具 + 3 个 MCP 工具。
+  expect(names.length).toBe(54); // 51 个基础工具 + 3 个 MCP 工具。
   expect(names).not.toContain("search_tools");
   expect(names).toContain("mcp__browser__screenshot");
 });
@@ -108,7 +108,7 @@ test("MCP > 8 个时只发最相关的前 8 个，其余进 deferredTools 并挂
   expect(names).toContain("search_tools");
   expect(names).not.toContain("mcp__memory__search");
   expect(names).not.toContain("mcp__mail__send");
-  expect(names.length).toBe(48 + 2 + 1); // 48 个基础工具 + 2 个相关 MCP 工具 + search_tools。
+  expect(names.length).toBe(51 + 2 + 1); // 51 个基础工具 + 2 个相关 MCP 工具 + search_tools。
   const deferred = schemaNames((agent as unknown as { deferredTools: Record<string, unknown>[] }).deferredTools);
   expect(deferred.length).toBe(8);
   expect(deferred).toContain("mcp__memory__search");
@@ -123,7 +123,7 @@ test("NYRA_LAZY_TOOLS=0 关闭延迟加载（逃生口）", () => {
     const { manager } = fakeMcp(MCP_TOOLS_10);
     const agent = new Agent(new FakeProvider([]) as never, { workdir, home, mode: "full", skillsDirs: [], mcpManager: manager as never });
     const names = schemaNames(agent.toolSchemas("控制浏览器截图"));
-    expect(names.length).toBe(48 + 10); // 48 个基础工具 + 10 个 MCP 工具，无 search_tools。
+    expect(names.length).toBe(51 + 10); // 51 个基础工具 + 10 个 MCP 工具，无 search_tools。
     expect(names).not.toContain("search_tools");
   } finally {
     if (prev === undefined) delete process.env.NYRA_LAZY_TOOLS; else process.env.NYRA_LAZY_TOOLS = prev;
@@ -135,7 +135,7 @@ test("首轮选择无命中时全量回退（绝不让模型没工具用）", ()
   const { manager } = fakeMcp(MCP_TOOLS_10);
   const agent = new Agent(new FakeProvider([]) as never, { workdir, home, mode: "full", skillsDirs: [], mcpManager: manager as never });
   const names = schemaNames(agent.toolSchemas("zzz"));
-  expect(names.length).toBe(48 + 10); // 48 个基础工具 + 10 个 MCP 工具，无 search_tools。
+  expect(names.length).toBe(51 + 10); // 51 个基础工具 + 10 个 MCP 工具，无 search_tools。
   expect(names).not.toContain("search_tools");
 });
 
@@ -218,6 +218,6 @@ test("MCP 恰好 8 个时不延迟：全量发送（边界）", () => {
   const { manager } = fakeMcp(MCP_TOOLS_10.slice(0, 8));
   const agent = new Agent(new FakeProvider([]) as never, { workdir, home, mode: "full", skillsDirs: [], mcpManager: manager as never });
   const names = schemaNames(agent.toolSchemas("控制浏览器截图"));
-  expect(names.length).toBe(48 + 8); // 48 个基础工具 + 8 个 MCP 工具，无 search_tools。
+  expect(names.length).toBe(51 + 8); // 51 个基础工具 + 8 个 MCP 工具，无 search_tools。
   expect(names).not.toContain("search_tools");
 });

@@ -36,7 +36,7 @@ expect(BUILTIN_COMPONENTS.every((c) => c.published)).toBe(true);
 expect(getComponentSpec("table")!.props.columns.required).toBe(true);
 expect(getComponentSpec("nope")).toBe(null);
 expect(TOOL_SCHEMAS.map((s) => (s.function as Record<string, unknown>).name)).toContain("render_component");
-expect(TOOL_SCHEMAS.length).toBe(48);
+expect(TOOL_SCHEMAS.length).toBe(51);
 });
 
 // ---- 校验 ----
