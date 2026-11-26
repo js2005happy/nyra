@@ -17,7 +17,7 @@
 //     写盘时把过期行标 released 留痕，不静默删记录。
 //   - 本模块是叶子：只 import cost.ts 与 config.ts，不 import agent、
 //     costCaps、parallelDelegate，任何模块都能 import 它。
-import { closeSync, copyFileSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, writeSync } from "node:fs";
+import { closeSync, copyFileSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { resolveHome } from "./config.ts";
@@ -103,6 +103,98 @@ function saveJsonAtomic(home: string, file: string, data: unknown): void {
   renameSync(tmp, path);
 }
 
+/**
+ * 预算账本的跨进程互斥锁：目录即锁（mkdir 原子创建，EEXIST 即已被占）。
+ * 锁目录里放 owner.json（pid + 建锁时间）。持有者崩溃时锁不会永远卡住：
+ * owner 进程已死、或锁超过 BUDGET_LOCK_STALE_MS 未释放，都算 stale、可由
+ * 后来者抢走（先整目录删掉再重建；两个抢锁者同时删，mkdir 的原子性再决
+ * 胜负）。锁只护“读-改-写”这一段（毫秒级），不是长期持有；超过
+ * BUDGET_LOCK_ACQUIRE_TIMEOUT_MS 拿不到就抛错，不静默等、不假装写成功。
+ * 读侧（active/list/get）不加锁：写盘是 rename 原子写，读不到撕裂内容，
+ * 读到稍旧的版本对展示无害。
+ */
+const BUDGET_LOCK_DIR = ".budget-ledger.lock";
+const BUDGET_LOCK_STALE_MS = 30_000;
+const BUDGET_LOCK_ACQUIRE_TIMEOUT_MS = 10_000;
+const BUDGET_LOCK_RETRY_MS = 10;
+
+interface BudgetLockOwner { pid: number; createdAt: number; }
+
+function budgetLockDir(home: string): string {
+  return join(resolveHome(home), BUDGET_LOCK_DIR);
+}
+
+function readBudgetLockOwner(dir: string): BudgetLockOwner | null {
+  try {
+    const raw = JSON.parse(readFileSync(join(dir, "owner.json"), "utf-8")) as Partial<BudgetLockOwner>;
+    if (typeof raw.pid !== "number" || typeof raw.createdAt !== "number") return null;
+    return { pid: raw.pid, createdAt: raw.createdAt };
+  } catch {
+    return null;
+  }
+}
+
+function budgetLockAgeMs(dir: string, owner: BudgetLockOwner | null): number {
+  if (owner) return Date.now() - owner.createdAt;
+  try {
+    return Date.now() - statSync(dir).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
+/** 拿锁（阻塞重试到超时）；返回释放函数（只删自己的锁，幂等）。 */
+export function acquireBudgetLock(home: string, opts: { timeoutMs?: number } = {}): () => void {
+  const dir = budgetLockDir(home);
+  mkdirSync(resolveHome(home), { recursive: true });
+  const me: BudgetLockOwner = { pid: process.pid, createdAt: Date.now() };
+  const timeoutMs = typeof opts.timeoutMs === "number" && Number.isFinite(opts.timeoutMs) && opts.timeoutMs > 0
+    ? Math.floor(opts.timeoutMs)
+    : BUDGET_LOCK_ACQUIRE_TIMEOUT_MS;
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      mkdirSync(dir);
+      try {
+        writeFileSync(join(dir, "owner.json"), JSON.stringify(me), "utf-8");
+      } catch { /* owner 写不上不影响锁本身，stale 判断回落到目录 mtime */ }
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        // 只删自己的锁：锁被别人抢走后（stale 回收），不能替别人解锁。
+        const cur = readBudgetLockOwner(dir);
+        if (cur && cur.pid === me.pid && cur.createdAt === me.createdAt) {
+          try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+        }
+      };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code !== "EEXIST") throw err;
+      const owner = readBudgetLockOwner(dir);
+      const stale = (owner !== null && (!isPidAlive(owner.pid) || Date.now() - owner.createdAt > BUDGET_LOCK_STALE_MS)) ||
+        (owner === null && budgetLockAgeMs(dir, null) > BUDGET_LOCK_STALE_MS);
+      if (stale) {
+        try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+        continue;
+      }
+      if (Date.now() > deadline) {
+        throw new BudgetError(`预算账本正被另一进程占用（${BUDGET_LOCK_DIR}），${timeoutMs / 1000} 秒内没拿到锁；稍后重试，不要手动删锁目录（stale 锁会自动回收）。`);
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, BUDGET_LOCK_RETRY_MS);
+    }
+  }
+}
+
+/** 在锁内跑一段账本写操作（读-改-写原子化）。 */
+function withBudgetLock<T>(home: string, fn: () => T): T {
+  const release = acquireBudgetLock(home);
+  try {
+    return fn();
+  } finally {
+    release();
+  }
+}
+
 function isLedgerStore(raw: unknown): raw is BudgetLedgerStore {
   return !!raw && typeof raw === "object" && (raw as BudgetLedgerStore).version === 1 &&
     Array.isArray((raw as BudgetLedgerStore).reservations);
@@ -175,15 +267,19 @@ export function resolveStrictUnknownAmount(config: Record<string, unknown> | nul
 
 /**
  * 估一次模型调用的费用（预留用）：prompt 按字符数换算 token（与 cost.ts
- * 同一套 CHARS_PER_TOKEN），completion 默认 400 token（与 estimateRunCost
- * 的每轮输出经验值同款）。pricing 为 null 时返回 null——不编单价。
+ * 同一套 CHARS_PER_TOKEN），completion 默认 2000 token。2000 不是典型值、
+ * 是保守值：400 才是典型回复长度，但预留的职责是“事前拦超支”不是“精
+ * 确报价”——按 400 预留时一次长回复的结算会顶穿预留额（结算按实报 usage
+ * 补记），上限就不再是硬上限。按 2000 算只会早拒、不会超支；调用方知道
+ * 本次输出上限时显式传 completionTokens。
+ * pricing 为 null 时返回 null——不编单价。
  * 注意：这只是预留的“押金”，结算以实报 usage 为准；估少了结算时补记，
  * 估多了结算时释放，checkCost 事后硬停仍在。
  */
 export function estimateCallUsd(
   promptChars: number,
   pricing: Pricing | null,
-  completionTokens = 400,
+  completionTokens = 2000,
 ): number | null {
   if (!pricing) return null;
   const promptTokens = Math.ceil(Math.max(0, promptChars) / CHARS_PER_TOKEN);
@@ -235,9 +331,9 @@ function tightestScope(limits: ReserveLimit[], reservedUsd: number): string | nu
 /**
  * 共享预算账本：每次读写都重新读文件，不在内存里缓存——跨会话、跨进程、
  * 跨并行任务共享靠文件本身（与 costCaps 的账本同款做法；rename 原子写
- * 保证单次写入不撕裂，读-改-写之间的竞态窗口与现有账本同级，不在本批
- * 另起锁——预留判定本身是保守的，竞态只会让两笔同时通过、事后由
- * checkCost 硬停兜底，见 docs/budget.md）。
+ * 保证单次写入不撕裂，读-改-写一段由 acquireBudgetLock 串行化：跨进程
+ * 同时预留时后到的那笔读到的是已含前一笔的账本，不会互相覆盖；事后仍
+ * 由 checkCost 硬停兜底，见 docs/budget.md）。
  */
 export class BudgetLedger {
   home: string;
@@ -274,6 +370,15 @@ export class BudgetLedger {
    * 写盘时把过期行标 released 留痕、历史截断到最近 MAX_HISTORY 条。
    */
   reserve(
+    owner: string,
+    amountUsd: number,
+    opts: { limits?: ReserveLimit[]; ttlMs?: number; reason?: ReservationReason; bindingScope?: string | null } = {},
+  ): { ok: true; reservation: BudgetReservation } | { ok: false; reason: string; bindingScope: string | null } {
+    return withBudgetLock(this.home, () => this.reserveLocked(owner, amountUsd, opts));
+  }
+
+  /** reserve 的锁内实现（不要直接调，跨进程原子性靠外层锁）。 */
+  private reserveLocked(
     owner: string,
     amountUsd: number,
     opts: { limits?: ReserveLimit[]; ttlMs?: number; reason?: ReservationReason; bindingScope?: string | null } = {},
@@ -323,6 +428,11 @@ export class BudgetLedger {
    * 的行照常结算（钱已经花了，结算只是记账，不拦）。
    */
   settle(id: string, actualUsd: number): BudgetReservation {
+    return withBudgetLock(this.home, () => this.settleLocked(id, actualUsd));
+  }
+
+  /** settle 的锁内实现（不要直接调）。 */
+  private settleLocked(id: string, actualUsd: number): BudgetReservation {
     if (typeof actualUsd !== "number" || !Number.isFinite(actualUsd) || actualUsd < 0) {
       throw new BudgetError(`结算金额必须是 ≥ 0 的数字（收到 ${JSON.stringify(actualUsd)}）`);
     }
@@ -343,6 +453,11 @@ export class BudgetLedger {
    * id 不存在抛错。
    */
   release(id: string): BudgetReservation {
+    return withBudgetLock(this.home, () => this.releaseLocked(id));
+  }
+
+  /** release 的锁内实现（不要直接调）。 */
+  private releaseLocked(id: string): BudgetReservation {
     const store = loadBudgetLedger(this.home);
     const row = store.reservations.find((r) => r.id === id);
     if (!row) throw new BudgetError(`找不到预留记录 ${id}`);
@@ -355,6 +470,11 @@ export class BudgetLedger {
 
   /** 把过期行标 released 并写盘；返回清掉的条数（0 = 没有过期行）。 */
   pruneExpired(now = new Date()): number {
+    return withBudgetLock(this.home, () => this.pruneExpiredLocked(now));
+  }
+
+  /** pruneExpired 的锁内实现（不要直接调）。 */
+  private pruneExpiredLocked(now = new Date()): number {
     const store = loadBudgetLedger(this.home);
     const nowMs = now.getTime();
     let n = 0;

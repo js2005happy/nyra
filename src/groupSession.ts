@@ -18,7 +18,8 @@ import {
 import { dirname, join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { Agent, AgentError } from "./agent.ts";
-import { BudgetLedger, type ReserveLimit } from "./budget.ts";
+import { BudgetLedger, estimateCallUsd, type ReserveLimit } from "./budget.ts";
+import type { Pricing } from "./cost.ts";
 import { findCircle, loadCircleBook, memberCircles, OWNER_IDENTITY } from "./circles.ts";
 import { isDesktopActive } from "./gatewayPresence.ts";
 import { handoffTarget, mentionedBot } from "./groupChat.ts";
@@ -771,6 +772,10 @@ export interface RunSessionRoundOptions {
   ledger?: Pick<BudgetLedger, "reserve" | "settle" | "release"> | null;
   limitsFor?: (botId: string) => ReserveLimit[];
   estimateUsd?: (botId: string, promptChars: number) => number | null;
+  /** 单价表（没给 estimateUsd 时的后备：按 estimateCallUsd 保守估算；
+   * 既没 estimateUsd 也没 pricing 时该轮预留 0，只靠事后 checkCost，
+   * 生产调用方应把定价接进来，不要长期留 0。 */
+  pricing?: Pricing | null;
   /** 能算出本轮实际花费时返回数字（走 settle），算不出返回 null（走 release，不编数字）。 */
   actualUsdFor?: (botId: string, turn: SessionBotTurn) => number | null;
   rounds?: number;
@@ -1009,7 +1014,10 @@ export async function runSessionRound(
     let reservationId: string | null = null;
     let reservedUsd = 0;
     if (ledger) {
-      const amount = opts.estimateUsd?.(botId, text.length) ?? null;
+      // 没给 estimateUsd 时按单价保守估算；pricing 也没给才留 0（只靠事后
+      // checkCost，生产调用方应把定价接进来）。
+      const amount = opts.estimateUsd?.(botId, text.length) ??
+        (opts.pricing ? estimateCallUsd(text.length, opts.pricing) : null);
       reservedUsd = typeof amount === "number" && Number.isFinite(amount) && amount >= 0 ? amount : 0;
       const res = ledger.reserve(`group:${session.id}:${botId}`, reservedUsd, {
         reason: "group-turn",
