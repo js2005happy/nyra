@@ -142,6 +142,10 @@ Nyra 是一个**开源**、**跑在你自己电脑上**的 AI Agent：**桌面�
 
 ## 更新了什么
 
+**A2A 对齐 v1.0（2026-11-28）**：Nyra 对外暴露成 A2A agent 的那套，照 A2A v1.0（2026-03-12 生产稳定版）对齐了一遍。名片改成 v1.0 的形状：地址放 `supportedInterfaces[0]` 里、能力里多了 `stateTransitionHistory` 与 `extendedAgentCard: false`（扩展卡片没做，调了回 -32601），技能带标签和示例。签名也升了一级：签名前先把名片按 RFC 8785 规范化（键怎么排都不影响验签了），名片上同时带 v1.0 的 `signatures[]` 和老版紧凑 JWS，老对方还能认。发现和加好友现在只收验过签名的名片——没签名、改过、过期的一律拒绝，不进账本；对方得先跑 `nyra peer card keygen` 再开 `nyra peer card sign on` 才会被发现。任务信封线上也走 v1.0 的写法：状态是 `TASK_STATE_*`、角色是 `ROLE_USER`/`ROLE_AGENT`、part 没 `kind`、Task 带创建时间与修改时间、错误 data 是 google.rpc.ErrorInfo、列表支持游标分页、流式事件包在 `taskStatusUpdate` / `taskArtifactUpdate` 里。对方发来的话进模型前打一层不可信标记（`[untrusted-content kind="peer" ...]`），账本里仍存原文。工具总数没变，还是 53。
+
+- 诚实边界：只在临时 home / 假 provider / 假对端上验过；真 A2A 客户端（ADK / LangGraph 等）没接过；注入没解决，扫描 + 标记 + 审批是兜底，不是根治；Windows/macOS 真机未验证；gRPC 与多租户不做。
+
 **致命三元组检查进了 doctor（2026-11-27）**：Nyra 同时有三样东西——能读你的邮箱文件、能看网上的东西、能往外发东西——三样齐了，一段网上的坏内容就能骗它把你的东西发出去。现在每轮任务都记着这三条腿各走了哪一步：三条腿齐了，本轮所有写操作都必须人批，批了才执行，没人可问就直接拒绝；`nyra doctor` 里也多了一项，专门报这三条腿齐没齐、守卫开没开。不可信内容（网页、邮件、第三方返回）进上下文前，除了中文框线，还多了一行机器能读的标签 `[untrusted-content kind="..." source="..." integrity="untrusted"]`，下游不用猜这段是不是外部来的；内容里伪造的同款标签会被中和掉，伪造者改不了自己内容的定级。关掉守卫的口子是 `NYRA_TRIFECTA_GUARD=0`，关了 doctor 会报失败。工具总数没变，还是 53。
 
 - 诚实边界：只在临时 home / 假 provider 上验过；真模型没跑；注入没解决，标记 + 隔离 + 审批是兜底，不是根治；Windows/macOS 真机未验证。
