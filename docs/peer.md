@@ -154,8 +154,10 @@ nyra peer handoff --to b --run 20261120-120000-abcdef
 
 - `publish` 默认关；关时网关 `GET /.well-known/agent-card.json` 当不存在
   （404），不泄露端点。
-- `public_url` 只认 http(s)，即网关根地址；名片的 `url` 就是它，`endpoints.mcp`
-  是它后面加 `/mcp`。不配时 `url` 与 `endpoints.mcp` 都是 null。
+- `public_url` 只认 http(s)，即网关根地址；名片里
+  `supportedInterfaces[0].url` 就是它（v1.0 形状；A2A 名片的 MCP
+  端点是它后面加 `/mcp`，只在 A2A 名片里发）。不配时
+  `supportedInterfaces[0].url` 是 null。
 - 开关也可以用命令改：`nyra peer card publish on|off`（改 `config.json`，
   不重启也生效——网关每次请求都读当前配置）。
 - 第 3 批 G-P1-7 名片 JWS 签名：`nyra peer card keygen` 生成 P-256 钥匙
@@ -257,8 +259,10 @@ nyra video call start --friend pilot --yes
 
 不靠线下传码发现并加上一台别人的机器人：`nyra peer discover <地址>`
 拉对方 well-known 名片、验签名、记进发现账本；`--as <好友名>` 时
-同时发好友请求，仍须对方批准。名片 JWS 签名（G-P1-7）与 per-peer
-token（出站，每好友一条，吊销一家不影响别家）详见
+同时发好友请求，仍须对方批准。A2A v1.0 起名片签名是准入门槛：没签名、
+篡改过、过期签名都拒绝、不进账本，对方须先跑 `nyra peer card keygen`
+再开 `nyra peer card sign on`。名片 JWS 签名（G-P1-7，v1.0 升级）与
+per-peer token（出站，每好友一条，吊销一家不影响别家）详见
 `docs/peer-discovery.md`。
 
 ### 已知局限
