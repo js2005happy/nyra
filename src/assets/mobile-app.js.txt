@@ -1,6 +1,8 @@
 'use strict';
-// 手机 PWA（/m）前端：设计稿 nyra-design v14 / v14.1。四个标签：对话 / 待你决定 / 自动化 / 设置（技能收在设置里）；
-// 另有会话页 + 审批抽屉、总指挥（方案卡）、群聊页。页面不含任何秘密：设备 token 只在 localStorage，每次 API 调用带 X-Nyra-Token 头。
+// 手机 PWA（/m）前端：设计稿 nyra-design v14 / v14.1。六个标签：对话 / 待你决定 / 探索 / 自动化 / 我的 / 设置（技能收在设置里）；
+// 另有会话页 + 审批抽屉、总指挥（方案卡）、群聊页。探索页模板只是开场白，点后在群聊里开一轮执行，不编结果；
+// 个人页六个入口（用量 / 钱包 / 应用 / 邮箱 / 电话 / 技能 / 电脑）+ 邀请账本，钱包与电话只是入口、邮箱如实报未通。
+// 页面不含任何秘密：设备 token 只在 localStorage，每次 API 调用带 X-Nyra-Token 头。
 // 文案来自 src/i18n.ts 的 m.* 键（中英），语言跟随 navigator.language，认不出回落 en。
 // 不用浏览器原生对话框：所有确认、编辑都用页内抽屉（#sheet）。
 const $ = (id) => document.getElementById(id);
@@ -75,8 +77,8 @@ function applyI18n(root){
   (root || document).querySelectorAll('[data-ip]').forEach(n => { n.placeholder = t(n.dataset.ip); });
   (root || document).querySelectorAll('[data-ia]').forEach(n => { n.setAttribute('aria-label', t(n.dataset.ia)); });
 }
-const VIEWS = ['pair-view', 'threads-view', 'chat-view', 'inbox-view', 'automations-view', 'settings-view', 'skills-view', 'chief-view', 'group-view'];
-const TABBED = ['threads-view', 'inbox-view', 'automations-view', 'settings-view'];
+const VIEWS = ['pair-view', 'threads-view', 'chat-view', 'inbox-view', 'explore-view', 'automations-view', 'profile-view', 'settings-view', 'skills-view', 'chief-view', 'group-view'];
+const TABBED = ['threads-view', 'inbox-view', 'explore-view', 'automations-view', 'profile-view', 'settings-view'];
 function show(view){
   VIEWS.forEach(v => $(v).classList.toggle('hidden', v !== view));
   $('nav').classList.toggle('hidden', !TABBED.includes(view));
@@ -734,7 +736,9 @@ async function setTab(tab){
   try {
     if (tab === 'threads') { if (!lastSessions) skeleton(); await loadSessions(); }
     if (tab === 'inbox') await loadReview(true);
+    if (tab === 'explore') await loadExplore();
     if (tab === 'automations') await loadAutomations();
+    if (tab === 'profile') await loadProfile();
     if (tab === 'settings') await openSettings();
   } catch (e) { if (!(e instanceof NetError)) toast(e.message); }
 }
@@ -946,6 +950,7 @@ async function openSettings(){
   $('skills-line').textContent = t('m.set.skillsBody', { n });
   renderConn();
   await loadRules();
+  loadBotMode().catch(() => {});
 }
 function renderModes(){
   const box = $('modes'); box.innerHTML = '';
@@ -1159,6 +1164,184 @@ async function chiefReply(){
   await openChief(chiefState && chiefState.task ? chiefState.task + '\n' + v : v);
 }
 
+// ---------------------------------------------------------------- 探索页与个人页（Cue B 批） ---
+function pickLang(v){ if (!v) return ''; if (typeof v === 'string') return v; return v[LANG] || v.zh || v.en || ''; }
+async function loadExplore(){
+  const box = $('explore-list'); box.innerHTML = '';
+  let data;
+  try { data = await api('/api/mobile/explore'); }
+  catch (e) { if (!(e instanceof NetError)) toast(e.message); return; }
+  const g = el('div', 'grp');
+  (data.templates || []).forEach(tpl => {
+    const b = el('button', 'r2');
+    const tile = el('span', 'tile'); tile.appendChild(icon(tpl.icon || 'search', 's18')); b.appendChild(tile);
+    const k = el('div', 'k');
+    k.appendChild(el('span', '', pickLang(tpl.title)));
+    k.appendChild(el('small', '', pickLang(tpl.subtitle)));
+    b.appendChild(k);
+    const ch = el('span'); ch.style.color = 'var(--t3)'; ch.appendChild(icon('chev')); b.appendChild(ch);
+    b.onclick = () => pickRoomForTemplate(tpl);
+    g.appendChild(b);
+  });
+  box.appendChild(g);
+}
+async function pickRoomForTemplate(tpl){
+  let rooms = [];
+  try { const data = await api('/api/groups'); rooms = data.groups || []; }
+  catch (e) { if (!(e instanceof NetError)) toast(e.message); return; }
+  if (!rooms.length) { toast(t('m.explore.noRoom')); return; }
+  const sh = openSheet('explore-room');
+  sh.appendChild(el('div', 'sec', t('m.explore.runIn')));
+  const g = el('div', 'grp');
+  rooms.forEach(r => {
+    const b = el('button', 'r2');
+    const k = el('div', 'k');
+    k.appendChild(el('span', '', r.name || r.id));
+    const bots = (r.bots || []).map(x => x.name || x.id).filter(Boolean).join('、');
+    if (bots) k.appendChild(el('small', '', bots));
+    b.appendChild(k);
+    b.onclick = () => { closeSheet(); runTemplate(tpl, r.id); };
+    g.appendChild(b);
+  });
+  sh.appendChild(g);
+}
+async function runTemplate(tpl, roomId){
+  try {
+    await api('/api/groups/' + encodeURIComponent(roomId) + '/messages', { method: 'POST', body: JSON.stringify({ text: pickLang(tpl.prompt), async: true }) });
+    toast(t('m.explore.started'));
+    await openGroup(roomId);
+  } catch (e) { if (!(e instanceof NetError)) toast(e.message); }
+}
+function profileRow(iconName, title, sub){
+  const r = el('div', 'r2');
+  const tile = el('span', 'tile'); tile.appendChild(icon(iconName, 's18')); r.appendChild(tile);
+  const k = el('div', 'k');
+  k.appendChild(el('span', '', title));
+  if (sub) k.appendChild(el('small', '', sub));
+  r.appendChild(k);
+  return r;
+}
+function profileSoonRow(iconName, title, sub){
+  const r = profileRow(iconName, title, sub);
+  r.appendChild(el('span', 'tag soon', t('m.soon')));
+  return r;
+}
+function money(n){ return '$' + Number(n).toFixed(2); }
+function usageLine(u){
+  if (!u || u.monthly_spent_usd === null || u.monthly_spent_usd === undefined) return t('m.profile.spentUnknown');
+  let s = t('m.profile.spent', { spent: money(u.monthly_spent_usd) });
+  if (u.monthly_cost_limit_usd !== null && u.monthly_cost_limit_usd !== undefined) s += ' / ' + t('m.profile.limit', { limit: money(u.monthly_cost_limit_usd), reset: u.monthly_reset_at ? fmtWhen(u.monthly_reset_at) : '' });
+  else s += ' / ' + t('m.profile.noLimit');
+  if (u.monthly_spent_incomplete) s += t('m.profile.spentIncomplete');
+  return s;
+}
+function appsLine(apps){
+  if (!apps) return '';
+  if (!apps.mcp_enabled) return t('m.profile.mcpOff');
+  const servers = Array.isArray(apps.mcp) ? apps.mcp : [];
+  const connected = servers.filter(s => s.connected).length;
+  return t('m.profile.appsBody', { n: connected, total: servers.length });
+}
+function mailLine(mail){
+  if (!mail) return t('m.profile.mailOff');
+  if (mail.configured && mail.email) return t('m.profile.mailConfigured', { email: mail.email });
+  if (mail.configured) return t('m.profile.mailConfiguredNoMail');
+  return t('m.profile.mailOff');
+}
+function computerLine(c){
+  if (!c) return '';
+  let s = t('m.profile.computerBody', { version: c.version || '', n: c.devices || 0 });
+  if (c.cloud && !c.cloud.available) s += ' · ' + t('m.profile.computerCloud');
+  return s;
+}
+async function loadProfile(){
+  const body = $('profile-body'); body.innerHTML = '';
+  let data;
+  try { data = await api('/api/mobile/profile'); }
+  catch (e) { if (!(e instanceof NetError)) toast(e.message); return; }
+  const g = el('div', 'grp');
+  g.appendChild(profileRow('clock', t('m.profile.usage'), usageLine(data.usage)));
+  g.appendChild(profileSoonRow('key', t('m.profile.wallet'), t('m.profile.walletBody')));
+  g.appendChild(profileRow('chip', t('m.profile.apps'), appsLine(data.apps)));
+  g.appendChild(profileRow('inbox', t('m.profile.mail'), mailLine(data.mail)));
+  g.appendChild(profileSoonRow('phone', t('m.profile.phone'), t('m.profile.phoneBody')));
+  const sk = el('button', 'r2');
+  const skTile = el('span', 'tile'); skTile.appendChild(icon('skills', 's18')); sk.appendChild(skTile);
+  const skK = el('div', 'k');
+  skK.appendChild(el('span', '', t('m.profile.skills')));
+  skK.appendChild(el('small', '', t('m.profile.skillsBody', { n: (data.skills && data.skills.count) || 0 })));
+  sk.appendChild(skK);
+  const skCh = el('span'); skCh.style.color = 'var(--t3)'; skCh.appendChild(icon('chev')); sk.appendChild(skCh);
+  sk.onclick = openSkills;
+  g.appendChild(sk);
+  g.appendChild(profileRow('laptop', t('m.profile.computer'), computerLine(data.computer)));
+  body.appendChild(g);
+  await loadInvites();
+}
+async function loadInvites(){
+  const box = $('invite-box'); if (!box) return; box.innerHTML = '';
+  let data;
+  try { data = await api('/api/mobile/invites'); }
+  catch (e) { if (!(e instanceof NetError)) toast(e.message); return; }
+  const quota = el('div', 'r2 nolead');
+  const k = el('div', 'k');
+  k.appendChild(el('span', '', t('m.invite.quota', { used: data.used, total: data.total, remaining: data.remaining })));
+  quota.appendChild(k);
+  const mk = el('button', 'btn sm pri', t('m.invite.create'));
+  mk.disabled = data.remaining <= 0;
+  mk.onclick = async () => {
+    try {
+      const r = await api('/api/mobile/invites', { method: 'POST', body: JSON.stringify({}) });
+      toast(t('m.invite.created', { code: r.invite.code }));
+      await loadInvites();
+    } catch (e) { if (!(e instanceof NetError)) toast(e.message); }
+  };
+  quota.appendChild(mk);
+  box.appendChild(quota);
+  (data.invites || []).forEach(inv => {
+    const r = el('div', 'r2 nolead');
+    const kk = el('div', 'k');
+    kk.appendChild(el('span', 'mono', inv.code));
+    kk.appendChild(el('small', '', inv.status === 'revoked' ? t('m.invite.revoked') : (inv.note || fmtWhen(inv.createdAt))));
+    r.appendChild(kk);
+    if (inv.status === 'active') {
+      const rv = el('button', 'btn sm', t('m.invite.revoke'));
+      rv.onclick = async () => {
+        try { await api('/api/mobile/invites/' + inv.code + '/revoke', { method: 'POST', body: JSON.stringify({}) }); await loadInvites(); }
+        catch (e) { if (!(e instanceof NetError)) toast(e.message); }
+      };
+      r.appendChild(rv);
+    }
+    box.appendChild(r);
+  });
+  if (!(data.invites || []).length) {
+    const e = el('div', 'note'); e.style.padding = '8px 20px'; e.textContent = t('m.invite.empty'); box.appendChild(e);
+  }
+}
+// Bot Mode 开关（Hermes 缺口 7）：设置页的开关与 CLI 共用 group-bot-mode.json。
+let botModeState = null;
+async function loadBotMode(){
+  try {
+    const data = await api('/api/mobile/bot-mode');
+    botModeState = !!data.enabled;
+    renderBotModeSwitch();
+  } catch (e) { if (!(e instanceof NetError)) toast(e.message); }
+}
+function renderBotModeSwitch(){
+  const sw = $('botmode-switch'); if (!sw) return;
+  sw.classList.toggle('on', botModeState === true);
+  const st = $('botmode-state'); if (st) { st.className = 'tag ' + (botModeState ? 'ok' : 'bad'); st.textContent = botModeState ? t('m.set.botModeOn') : t('m.set.botModeOff'); }
+}
+async function toggleBotMode(){
+  const next = !(botModeState === true);
+  try {
+    const data = await api('/api/mobile/bot-mode', { method: 'POST', body: JSON.stringify({ enabled: next }) });
+    botModeState = !!data.enabled;
+    renderBotModeSwitch();
+    toast(botModeState ? t('m.set.botModeOnToast') : t('m.set.botModeOffToast'));
+  } catch (e) { if (!(e instanceof NetError)) toast(e.message); }
+}
+
 // ---------------------------------------------------------------- 群聊 ---
 let groupData = null, groupKey = '';
 async function openGroup(roomId){
@@ -1347,6 +1530,7 @@ window.addEventListener('load', async () => {
   $('group-input').oninput = () => autoGrow($('group-input'));
   $('disconnect').onclick = forgetDevice;
   $('open-skills').onclick = openSkills;
+  $('botmode-row').onclick = toggleBotMode;
   $('cloud-row').onclick = cloudSoon;
   $('dim').onclick = () => { if (sheetMode !== 'approval') closeSheet(); };
   document.querySelectorAll('#nav button').forEach(b => { b.onclick = () => setTab(b.dataset.tab); });

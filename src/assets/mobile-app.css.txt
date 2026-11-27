@@ -78,12 +78,17 @@ code{background:rgba(255,255,255,.06);padding:1px 5px;border-radius:5px;color:va
 .tag.ok{background:var(--ok-soft);color:var(--ok-t)}
 .tag.bad{background:var(--bad-soft);color:var(--bad-t)}
 .tag.brand{background:var(--brand-soft);color:var(--brand-t)}
+/* 开关（Bot Mode 行用）：44×26，圆点左右滑；关是灰底、开是品牌紫。 */
+.switch{width:44px;height:26px;border-radius:13px;background:var(--t3);position:relative;flex:none}
+.switch i{position:absolute;left:3px;top:3px;width:20px;height:20px;border-radius:50%;background:var(--t1);transition:left .15s}
+.switch.on{background:var(--brand)}
+.switch.on i{left:21px}
 .badge{min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--wait);color:#141414;font:650 var(--f-xs)/18px var(--sans);text-align:center;position:absolute;top:-5px;right:-9px;box-shadow:0 0 0 2.5px var(--ground)}
 /* 底栏：4 个（对话 / 待你决定 / 自动化 / 设置） */
-.nav{position:fixed;left:0;right:0;bottom:0;z-index:6;display:grid;grid-template-columns:repeat(4,1fr);padding:6px 8px calc(4px + var(--safe-b));background:var(--ground)}
+.nav{position:fixed;left:0;right:0;bottom:0;z-index:6;display:grid;grid-template-columns:repeat(6,1fr);padding:6px 8px calc(4px + var(--safe-b));background:var(--ground)}
 .nav:before{content:"";position:absolute;left:0;right:0;top:0;height:1px;background:var(--hair)}
 .nav button{display:flex;flex-direction:column;align-items:center;gap:3px;color:var(--t3);font-size:var(--f-xs);line-height:16px;font-weight:500;min-height:56px;justify-content:center}
-.nav .pill{width:56px;height:30px;border-radius:15px;display:flex;align-items:center;justify-content:center;position:relative}
+.nav .pill{width:48px;height:30px;border-radius:15px;display:flex;align-items:center;justify-content:center;position:relative}
 .nav .on{color:var(--t1)}.nav .on .pill{background:var(--brand-soft);color:var(--brand-t)}
 /* 按钮 */
 .btn{height:48px;border-radius:14px;display:inline-flex;align-items:center;justify-content:center;gap:9px;font-size:var(--f-m);font-weight:600;background:var(--s3);color:var(--t1);box-shadow:var(--lift),inset 0 0 0 1px var(--hair);padding:0 16px;white-space:nowrap;text-align:center}
