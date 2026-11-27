@@ -16,7 +16,7 @@ import {
 const TOOL_NAMES = ["read_file", "write_file", "edit_file", "apply_patch", "list_dir", "shell",
   "web_fetch", "web_search", "github_repo_read", "github_search", "feed_read", "browser_navigate", "browser_click", "browser_screenshot",
   "computer_screenshot", "computer_click", "computer_type", "computer_key", "computer_windows", "describe_image", "export_office", "media_ingest",
-  "multi_model_research", "memory_append", "memory_search", "knowledge_search", "session_search", "editor_context", "usage", "render_component", "memory_forget", "memory_delete", "gmail_search", "gmail_read", "gmail_send", "shopify_products", "shopify_orders", "shopify_inventory", "slack_channels", "slack_history", "slack_send", "save_skill", "read_skill", "delegate", "delegate_parallel", "plan",
+  "multi_model_research", "memory_append", "memory_search", "knowledge_search", "session_search", "editor_context", "usage", "render_component", "memory_forget", "gmail_search", "gmail_read", "gmail_send", "shopify_products", "shopify_orders", "shopify_inventory", "slack_channels", "slack_history", "slack_send", "save_skill", "read_skill", "delegate", "delegate_parallel", "plan",
   "grep_search", "git_status", "http_post", "lsp_diagnostics", "lsp_symbols",
   "group_session_create", "group_session_send", "group_session_assign"];
 
@@ -27,7 +27,7 @@ function fullCtx(workdir: string, extra: Partial<ToolContext> = {}): ToolContext
 test("ToolsTest.test_schema_names_match_python_24_plus_read_skill", () => {
   const names = TOOL_SCHEMAS.map((s) => (s.function as Record<string, unknown>).name as string);
   expect(names).toEqual(TOOL_NAMES);
-  expect(TOOL_SCHEMAS.length).toBe(54); // 缺口 1 + 缺口 2：新增 memory_search / memory_forget / memory_delete；缺口 3a：新增 delegate_parallel；缺口 6：新增 gmail_search / gmail_read / gmail_send；缺口 24：新增 lsp_diagnostics / lsp_symbols；缺口 16：新增 describe_image；缺口 23：新增 export_office；候选提案 4：新增 media_ingest；缺口 33：新增 knowledge_search；G-P1-14：新增 session_search；G-P0-3：新增 editor_context；缺口 44 深化：新增 shopify_products / shopify_orders / shopify_inventory / slack_channels / slack_history / slack_send；M1：新增 usage；O7：新增 render_component；Bot 群聊会话：新增 group_session_create / group_session_send / group_session_assign；Cue A 批 5.2：新增 github_repo_read / github_search；Cue A 批 5.3：新增 feed_read。
+  expect(TOOL_SCHEMAS.length).toBe(53); // 缺口 1 + 缺口 2：新增 memory_search / memory_forget / memory_delete；工具检索批：memory_delete 与 memory_forget 同义，合并后只留 memory_forget（memory_delete 仍是分派别名，不计入 53）；缺口 3a：新增 delegate_parallel；缺口 6：新增 gmail_search / gmail_read / gmail_send；缺口 24：新增 lsp_diagnostics / lsp_symbols；缺口 16：新增 describe_image；缺口 23：新增 export_office；候选提案 4：新增 media_ingest；缺口 33：新增 knowledge_search；G-P1-14：新增 session_search；G-P0-3：新增 editor_context；缺口 44 深化：新增 shopify_products / shopify_orders / shopify_inventory / slack_channels / slack_history / slack_send；M1：新增 usage；O7：新增 render_component；Bot 群聊会话：新增 group_session_create / group_session_send / group_session_assign；Cue A 批 5.2：新增 github_repo_read / github_search；Cue A 批 5.3：新增 feed_read。
   const poppy = [POPPY_TOOL_SCHEMA, POPPY_IDENTITY_SCHEMA, POPPY_PERMISSION_SCHEMA]
     .map((s) => (s.function as Record<string, unknown>).name as string);
   expect(poppy).toEqual(["poppy_discover", "poppy_identity_check", "poppy_permission_check"]);

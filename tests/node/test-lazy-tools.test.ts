@@ -1,13 +1,17 @@
-// tests/node/test-lazy-tools.test.ts — MCP 延迟加载第二步（search_tools 元工具）。
+// tests/node/test-lazy-tools.test.ts — MCP 延迟加载第二步（search_tools 元工具）+
+// 工具检索批：内置工具懒加载（核心集 10 个 + 召回最多 8 个）同一套机制。
 //
 // 契约：
-//   - MCP 工具 ≤ 8 个时全量发送，不挂 search_tools（行为与原来完全一致）
+//   - MCP 工具 ≤ 8 个时 MCP 全量发送；内置工具任务非空时总懒加载
+//     （53 个远超上限 18 个），只发核心集 + 召回，search_tools 照常挂
 //   - MCP 工具 > 8 个时按任务文本挑最相关的前 8 个，其余进 deferredTools，
 //     search_tools 挂进 schemas，describeDeferred 说明拼进 system prompt
-//   - NYRA_LAZY_TOOLS=0 关闭延迟加载（逃生口）
+//   - NYRA_LAZY_TOOLS=0 关闭延迟加载（逃生口，内置 + MCP 都全量）
 //   - search_tools 只读、无副作用、不走审批；命中工具的完整定义以 JSON 返回，
 //     并追加进本轮 schemas（后续轮次直接发给模型），同时从 deferredTools 移除
-//   - 检索无命中返回空列表（不全量回退）；首轮选择无命中时仍全量回退
+//   - 检索无命中返回空列表（不全量回退）；首轮选择无命中时 MCP 全量回退、
+//     内置只剩核心集（核心集就是安全底线，绝不让模型没工具用）
+//   - 任务为空时全量发送（调用方没给任务时不猜）
 import { test, expect } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -88,17 +92,23 @@ function schemaNames(schemas: Record<string, unknown>[]): string[] {
   return schemas.map((s) => (s.function as Record<string, unknown>).name as string);
 }
 
-test("MCP ≤ 8 个时全量发送，不挂 search_tools（行为不变）", () => {
+test("MCP ≤ 8 个时 MCP 全量，但内置工具仍懒加载（核心集 + 召回 + search_tools）", () => {
   const { home, workdir } = setup();
   const { manager } = fakeMcp(MCP_TOOLS_10.slice(0, 3));
   const agent = new Agent(new FakeProvider([]) as never, { workdir, home, mode: "full", skillsDirs: [], mcpManager: manager as never });
   const names = schemaNames(agent.toolSchemas("控制浏览器截图"));
-  expect(names.length).toBe(57); // 54 个基础工具 + 3 个 MCP 工具。
-  expect(names).not.toContain("search_tools");
+  // 14 个内置（核心集 10 个 + 召回 4 个：browser_navigate/browser_click/
+  // browser_screenshot/computer_screenshot）+ 3 个 MCP + search_tools。
+  expect(names.length).toBe(14 + 3 + 1);
+  expect(names).toContain("search_tools");
   expect(names).toContain("mcp__browser__screenshot");
+  expect(names).not.toContain("apply_patch"); // 内置非核心、未召回，进 deferred
+  const deferred = schemaNames((agent as unknown as { deferredTools: Record<string, unknown>[] }).deferredTools);
+  expect(deferred.length).toBe(53 - 14);
+  expect(deferred).toContain("apply_patch");
 });
 
-test("MCP > 8 个时只发最相关的前 8 个，其余进 deferredTools 并挂 search_tools", () => {
+test("MCP > 8 个时只发最相关的前 8 个 MCP，内置只发核心集 + 召回，其余进 deferredTools 并挂 search_tools", () => {
   const { home, workdir } = setup();
   const { manager } = fakeMcp(MCP_TOOLS_10);
   const agent = new Agent(new FakeProvider([]) as never, { workdir, home, mode: "full", skillsDirs: [], mcpManager: manager as never });
@@ -108,14 +118,15 @@ test("MCP > 8 个时只发最相关的前 8 个，其余进 deferredTools 并挂
   expect(names).toContain("search_tools");
   expect(names).not.toContain("mcp__memory__search");
   expect(names).not.toContain("mcp__mail__send");
-  expect(names.length).toBe(54 + 2 + 1); // 54 个基础工具 + 2 个相关 MCP 工具 + search_tools。
+  expect(names.length).toBe(14 + 2 + 1); // 14 个内置 + 2 个相关 MCP 工具 + search_tools。
   const deferred = schemaNames((agent as unknown as { deferredTools: Record<string, unknown>[] }).deferredTools);
-  expect(deferred.length).toBe(8);
+  expect(deferred.length).toBe((53 - 14) + 8); // 39 个内置 + 8 个 MCP。
   expect(deferred).toContain("mcp__memory__search");
+  expect(deferred).toContain("apply_patch");
   expect(deferred).not.toContain("mcp__browser__screenshot");
 });
 
-test("NYRA_LAZY_TOOLS=0 关闭延迟加载（逃生口）", () => {
+test("NYRA_LAZY_TOOLS=0 关闭延迟加载（逃生口，内置 + MCP 都全量）", () => {
   const prev = process.env.NYRA_LAZY_TOOLS;
   process.env.NYRA_LAZY_TOOLS = "0";
   try {
@@ -123,20 +134,27 @@ test("NYRA_LAZY_TOOLS=0 关闭延迟加载（逃生口）", () => {
     const { manager } = fakeMcp(MCP_TOOLS_10);
     const agent = new Agent(new FakeProvider([]) as never, { workdir, home, mode: "full", skillsDirs: [], mcpManager: manager as never });
     const names = schemaNames(agent.toolSchemas("控制浏览器截图"));
-    expect(names.length).toBe(54 + 10); // 54 个基础工具 + 10 个 MCP 工具，无 search_tools。
+    expect(names.length).toBe(53 + 10); // 53 个基础工具 + 10 个 MCP 工具，无 search_tools。
     expect(names).not.toContain("search_tools");
   } finally {
     if (prev === undefined) delete process.env.NYRA_LAZY_TOOLS; else process.env.NYRA_LAZY_TOOLS = prev;
   }
 });
 
-test("首轮选择无命中时全量回退（绝不让模型没工具用）", () => {
+test("首轮选择无命中时：MCP 全量回退，内置只剩核心集 + search_tools（绝不让模型没工具用）", () => {
   const { home, workdir } = setup();
   const { manager } = fakeMcp(MCP_TOOLS_10);
   const agent = new Agent(new FakeProvider([]) as never, { workdir, home, mode: "full", skillsDirs: [], mcpManager: manager as never });
   const names = schemaNames(agent.toolSchemas("zzz"));
-  expect(names.length).toBe(54 + 10); // 54 个基础工具 + 10 个 MCP 工具，无 search_tools。
-  expect(names).not.toContain("search_tools");
+  // 核心集 10 个 + MCP 全量 10 个 + search_tools（内置 43 个未召回，进 deferred）。
+  expect(names.length).toBe(10 + 10 + 1);
+  expect(names).toContain("search_tools");
+  expect(names).toContain("read_file"); // 核心集在场
+  expect(names).toContain("mcp__browser__screenshot"); // MCP 无命中全量回退
+  const deferred = schemaNames((agent as unknown as { deferredTools: Record<string, unknown>[] }).deferredTools);
+  expect(deferred.length).toBe(53 - 10);
+  expect(deferred).toContain("apply_patch");
+  expect(deferred).not.toContain("read_file");
 });
 
 test("searchDeferredTools：命中返回完整定义 JSON，无命中返回空列表", () => {
@@ -197,12 +215,15 @@ test("search_tools 只读：不走审批（approveFn 不被调用）", async () 
   expect(approvals).toEqual([]);
 });
 
-test("拉回后工具从 deferredTools 移除：二次检索同一关键词无命中", async () => {
+test("拉回后工具从 deferredTools 移除：二次检索同一工具无命中", async () => {
   const { home, workdir } = setup();
   const { manager } = fakeMcp(MCP_TOOLS_10);
   const provider = new FakeProvider([
     toolReply("c1", "search_tools", { query: "打开网页" }),
-    toolReply("c2", "search_tools", { query: "打开网页" }),
+    // 第二次按 MCP 工具全名检索：它已被第一轮拉回，deferred 里没有了；
+    // 内置 browser_navigate 的名字与描述都不含 "mcp__browser__navigate"，
+    // 所以也不会命中——如实返回没有匹配到。
+    toolReply("c2", "search_tools", { query: "mcp__browser__navigate" }),
     textReply("查完了"),
   ]);
   const agent = new Agent(provider as never, { workdir, home, mode: "full", skillsDirs: [], mcpManager: manager as never });
@@ -210,14 +231,15 @@ test("拉回后工具从 deferredTools 移除：二次检索同一关键词无�
   expect(final).toBe("查完了");
   const toolResults = provider.calls[2].messages.filter((m) => m.role === "tool").map((m) => m.content as string);
   expect(toolResults.length).toBe(2);
+  expect(toolResults[0]).toContain("mcp__browser__navigate");
   expect(toolResults[1]).toContain("没有匹配到工具");
 });
 
-test("MCP 恰好 8 个时不延迟：全量发送（边界）", () => {
+test("MCP 恰好 8 个时 MCP 不延迟（全量发送），内置仍只发核心集 + 召回（边界）", () => {
   const { home, workdir } = setup();
   const { manager } = fakeMcp(MCP_TOOLS_10.slice(0, 8));
   const agent = new Agent(new FakeProvider([]) as never, { workdir, home, mode: "full", skillsDirs: [], mcpManager: manager as never });
   const names = schemaNames(agent.toolSchemas("控制浏览器截图"));
-  expect(names.length).toBe(54 + 8); // 54 个基础工具 + 8 个 MCP 工具，无 search_tools。
-  expect(names).not.toContain("search_tools");
+  expect(names.length).toBe(14 + 8 + 1); // 14 个内置 + 8 个 MCP 工具 + search_tools（内置有延迟）。
+  expect(names).toContain("search_tools");
 });
