@@ -1,8 +1,9 @@
 // tests/node/test-usage-heatmap-monthly.test.ts — 缺口 20 + 缺口 29。
 //
-// 覆盖：用量账本（delta 记账、日/月汇总）、热力图渲染、月度硬顶判定与
+// 覆盖：用量账本（delta 记账、日/月汇总）、热力图渲染、每任务硬顶判定与
 // Agent 接线（含子任务继承）、Retry-After 解析与重试等待、onRetry 透传、
 // 运行级统计头（含 CLI 先挂 onEvent 再建 recorder 的接线修复）。
+// 月度上限已移除：本月汇总只做记账展示，不再有月度判定函数。
 import { test, expect } from "bun:test";
 import { mkdtempSync, writeFileSync, readFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,7 +12,7 @@ import {
   UsageLedger, formatHeatmap, localDateString, monthKeyString, nextMonthlyResetDate,
   type DayTotal,
 } from "../../src/usageLedger.ts";
-import { resolveMonthlyLimit, checkMonthlyCap } from "../../src/cost.ts";
+import * as cost from "../../src/cost.ts";
 import { McpCostTracker } from "../../src/mcpCost.ts";
 import {
   ProviderError, FallbackProvider, KeyRotatingProvider, buildProviderChain,
@@ -125,96 +126,73 @@ test("热力图：全空时如实说没有记录，不编历史", () => {
   expect(out).not.toContain("█");
 });
 
-// ---------- 月度硬顶判定 ----------
+// ---------- 月度上限已移除 ----------
 
-test("resolveMonthlyLimit：非法值按未设处理；0 是合法的锁死值；CLI 优先于配置", () => {
-  expect(resolveMonthlyLimit({})).toBeNull();
-  expect(resolveMonthlyLimit({ monthly_cost_limit_usd: -1 })).toBeNull();
-  expect(resolveMonthlyLimit({ monthly_cost_limit_usd: NaN })).toBeNull();
-  expect(resolveMonthlyLimit({ monthly_cost_limit_usd: "5" })).toBeNull();
-  expect(resolveMonthlyLimit({ monthly_cost_limit_usd: 0 })).toBe(0);
-  expect(resolveMonthlyLimit({ monthly_cost_limit_usd: 5 }, 10)).toBe(10);
-  expect(resolveMonthlyLimit({ monthly_cost_limit_usd: 5 }, null)).toBe(5);
+test("月度上限已移除：cost.ts 不再导出月度判定函数，本月汇总只做记账", () => {
+  expect("resolveMonthlyLimit" in cost).toBe(false);
+  expect("checkMonthlyCap" in cost).toBe(false);
+  expect("monthlyCapDecided" in cost).toBe(false);
+  // 本月已花照常能记、能读：记账与展示不受影响。
+  const home = tmpHome();
+  const ledger = new UsageLedger(home);
+  ledger.recordDelta(snap({ calls: 1, total_tokens: 10 }), null, 0.01, null, "fake-1");
+  const total = ledger.monthTotal(monthKeyString());
+  expect(total.spentUsd).toBeCloseTo(0.01);
 });
 
-test("checkMonthlyCap：三数齐全才判定；任一算不出就不超限", () => {
-  expect(checkMonthlyCap(9, 2, 10).exceeded).toBe(true);
-  expect(checkMonthlyCap(9, 2, 10).monthSpentUsd).toBeCloseTo(11, 10);
-  expect(checkMonthlyCap(9, 1, 10).exceeded).toBe(false);
-  expect(checkMonthlyCap(null, 1, 10).exceeded).toBe(false);
-  expect(checkMonthlyCap(9, null, 10).exceeded).toBe(false);
-  expect(checkMonthlyCap(9, 1, null).exceeded).toBe(false);
-});
-
-// ---------- Agent 月度硬顶 ----------
+// ---------- Agent 每任务硬顶 ----------
 
 const PRICING = { inputPer1M: 1, outputPer1M: 2 };
 
-test("Agent 月度硬顶：超限抛错，报错说清已花/上限/重置日/怎么放宽", async () => {
+test("Agent 每任务硬顶：超限抛错，报错说清已花/上限", async () => {
   const home = tmpHome();
   const agent = new Agent(fakeProvider([{ content: "ok" }]) as never, {
     workdir: home, mode: "full", maxTurns: 3, skillsDirs: [], home,
     pricing: PRICING,
-    monthlyCostLimitUsd: 0.0001,
-    monthlySpentBeforeUsd: () => ({ spentUsd: 0, incomplete: false }),
+    maxCostUsd: 0.0001,
   });
   // 一次调用预估约 0.0011（系统提示也算输入）> 上限 0.0001：请求前预留
-  // 直接拒绝，调用不发出（可靠性打磨第 2 项；旧口径是调用发出后再由
-  // checkCost 抛“月度支出上限已超”）。拒因里仍须说清月度上限、重置日与放宽办法。
+  // 直接拒绝，调用不发出。拒因里说清是单次运行层、剩余额度与上限。
   let err: unknown = null;
   try { await agent.run("hi"); } catch (e) { err = e; }
   expect(err).toBeInstanceOf(AgentError);
   const msg = String((err as Error).message);
   expect(msg).toContain("预算预留不足");
-  expect(msg).toContain("月度支出上限");
-  expect(msg).toContain("0.0001");
-  expect(msg).toContain(nextMonthlyResetDate());
-  expect(msg).toContain("monthly_cost_limit_usd");
+  expect(msg).toContain("run 层剩余额度不足");
+  expect(msg).toContain("上限");
 });
 
-test("Agent 月度硬顶：未超限正常跑；未计价/before 未知时不假装封顶", async () => {
+test("Agent 每任务硬顶：未超限正常跑；没单价时按严格模式走", async () => {
   const home = tmpHome();
   const ok = new Agent(fakeProvider([{ content: "ok" }]) as never, {
     workdir: home, mode: "full", maxTurns: 3, skillsDirs: [], home,
-    pricing: PRICING, monthlyCostLimitUsd: 10,
-    monthlySpentBeforeUsd: () => ({ spentUsd: 0, incomplete: false }),
+    pricing: PRICING, maxCostUsd: 10,
   });
   expect(await ok.run("hi")).toContain("ok");
 
   const unpriced = new Agent(fakeProvider([{ content: "ok" }]) as never, {
     workdir: home, mode: "full", maxTurns: 3, skillsDirs: [], home,
-    monthlyCostLimitUsd: 0.00001, // 即使上限极低，没单价也算不出
-    monthlySpentBeforeUsd: () => ({ spentUsd: 0, incomplete: false }),
+    maxCostUsd: 0.00001, // 即使上限极低，没单价也算不出
   });
   // 严格模式默认开时，没单价第一次调用前就暂停（可靠性打磨第 2 项；
   // 旧口径是“没单价也算不出，不抛错”）；严格关了才沿用旧行为。
   await expect(unpriced.run("hi")).rejects.toThrow("金额未知");
   const unpricedOff = new Agent(fakeProvider([{ content: "ok" }]) as never, {
     workdir: home, mode: "full", maxTurns: 3, skillsDirs: [], home,
-    monthlyCostLimitUsd: 0.00001,
-    monthlySpentBeforeUsd: () => ({ spentUsd: 0, incomplete: false }),
+    maxCostUsd: 0.00001,
     strictUnknownAmount: false,
   });
   expect(await unpricedOff.run("hi")).toContain("ok");
 
-  const unknownBefore = new Agent(fakeProvider([{ content: "ok" }]) as never, {
+  // 没设任何美元上限时（月度上限已移除，且没传 maxCostUsd）：没单价
+  // 也不暂停——没有上限可守，金额未知拦不住花费。
+  const noCap = new Agent(fakeProvider([{ content: "ok" }]) as never, {
     workdir: home, mode: "full", maxTurns: 3, skillsDirs: [], home,
-    pricing: PRICING, monthlyCostLimitUsd: 0.00001,
-    monthlySpentBeforeUsd: () => null,
   });
-  // before 未知（本月已花算不出）：严格模式下同样暂停（missing-monthly，
-  // 不能把未知当 0 用）；严格关了才跳过月度层继续跑。
-  await expect(unknownBefore.run("hi")).rejects.toThrow("金额未知");
-  const unknownBeforeOff = new Agent(fakeProvider([{ content: "ok" }]) as never, {
-    workdir: home, mode: "full", maxTurns: 3, skillsDirs: [], home,
-    pricing: PRICING, monthlyCostLimitUsd: 0.00001,
-    monthlySpentBeforeUsd: () => null,
-    strictUnknownAmount: false,
-  });
-  expect(await unknownBeforeOff.run("hi")).toContain("ok");
+  expect(await noCap.run("hi")).toContain("ok");
 });
 
-test("Agent 月度硬顶：子任务继承上限与单价，父子共用同一本预留账", async () => {
+test("Agent 每任务硬顶：子任务继承上限与单价，父子共用同一本预留账", async () => {
   const home = tmpHome();
   // 父 2 次调用 + 子 1 次调用；上限放得够宽，重点是子任务走同一本账
   // （旧口径是“父+子合计超限即停”，靠事后 checkCost；预留门把检查点挪到
@@ -226,8 +204,7 @@ test("Agent 月度硬顶：子任务继承上限与单价，父子共用同一�
   ]) as never;
   const agent = new Agent(provider, {
     workdir: home, mode: "full", maxTurns: 5, skillsDirs: [], home,
-    pricing: PRICING, monthlyCostLimitUsd: 10,
-    monthlySpentBeforeUsd: () => ({ spentUsd: 0, incomplete: false }),
+    pricing: PRICING, maxCostUsd: 10,
   });
   expect(await agent.run("做点事")).toContain("子 done");
   // 父 2 次调用 + 子 1 次调用，都从同一本预留账结算，owner 各不相同。

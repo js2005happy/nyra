@@ -208,7 +208,7 @@ test("模型抽取：没用户回合、没凭证、模型抛错都如实报原�
   }
 });
 
-test("模型抽取：月度上限已到就跳过，不调模型", async () => {
+test("模型抽取：月度上限已移除，本月花再多也不跳过，照常调模型", async () => {
   const home = tmpHome("nyra-facts-cap-");
   try {
     saveConfig(home, {
@@ -226,8 +226,8 @@ test("模型抽取：月度上限已到就跳过，不调模型", async () => {
     const res = await runModelExtraction(home, sessionId, {
       modelRunner: async () => { called += 1; return { text: "[]", usage: null }; },
     });
-    expect(res.skippedReason).toBe("monthly-cap-reached");
-    expect(called).toBe(0);
+    expect(res.skippedReason ?? null).toBeNull();
+    expect(called).toBe(1);
   } finally {
     cleanup(home);
   }

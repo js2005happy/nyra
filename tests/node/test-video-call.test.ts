@@ -1,7 +1,7 @@
 // tests/node/test-video-call.test.ts — 缺口 37：视频通话 + 按需视觉采样。
 // STUN 编解码与签名、假 STUN/TURN 服务器、两端 ICE 检查与帧收发、
 // 信令双客户端、两端 WebRtcTransport 协商、采样三档、本地优先与云端
-// opt-in、月度硬顶、敏感意图扣下与确认、双同意落盘、事件与时间线、
+// opt-in、云端花费记账、敏感意图扣下与确认、双同意落盘、事件与时间线、
 // CLI 端到端。
 //
 // 本机沙箱禁 UDP sendto（EPERM）：协议逻辑走内存虚拟 socket 验（注入式

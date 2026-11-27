@@ -269,10 +269,11 @@ test("CancellationTest.test_agent_run_external_signal_aborts_model_call", async 
 });
 
 test("CancellationTest.test_agent_budget_cap_aborts_in_flight_call", async () => {
+  // 月度上限已移除：飞行中 abort 改由每任务硬顶触发——语音花费中途涨到
+  // 超硬顶，500ms 监视器下一轮就发取消信号，挂起的调用被打断。
   const home = tmp("nyra-cancel-budget-");
   const workdir = tmp("nyra-cancel-budget-work-");
   writeFileSync(join(workdir, "hello.txt"), "hello\n");
-  let monthSpent = 0.5;
   const firstStep = {
     choices: [{ message: { content: "", tool_calls: [{ id: "call-1", type: "function", function: { name: "read_file", arguments: JSON.stringify({ path: "hello.txt" }) } }] } }],
     usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 },
@@ -281,12 +282,11 @@ test("CancellationTest.test_agent_budget_cap_aborts_in_flight_call", async () =>
   const agent = new Agent(new HangingProvider(2, firstStep) as never, {
     workdir, home, mode: "full", skillsDirs: [],
     pricing: { inputPer1M: 1, outputPer1M: 2 },
-    monthlyCostLimitUsd: 1,
-    monthlySpentBeforeUsd: () => ({ spentUsd: monthSpent, incomplete: false }),
+    maxCostUsd: 1,
     onEvent: (kind, data) => { events.push({ kind, data }); },
   });
   const promise = agent.run("先读文件再继续");
-  setTimeout(() => { monthSpent = 100; }, 300);
+  setTimeout(() => { agent.voiceSpentUsd = 100; }, 300);
   const text = await promise;
   expect(text).toContain("已取消");
   expect(text).toContain("成本上限已触顶");

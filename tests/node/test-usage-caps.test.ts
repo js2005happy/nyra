@@ -98,7 +98,7 @@ test("UsageCapsTest.test_usage_bar_format", () => {
 test("UsageCapsTest.test_usage_tool_reads_own_agent", async () => {
   const home = tmpHome("nyra-usage-");
   const workdir = tmpHome("nyra-usage-wd-");
-  setCap(home, "agent:bot-a", { dayUsd: 0.1, monthUsd: 1, reason: "测试" });
+  setCap(home, "agent:bot-a", { dayUsd: 0.1, reason: "测试" });
   recordUsage(home, "bot-a", 80, 0.09);
   const ctx = newToolContext({ workdir, home, mode: "full", interactive: false, soulAgent: "bot-a" });
   const out = await executeTool("usage", {}, ctx);
@@ -116,7 +116,7 @@ test("UsageCapsTest.test_usage_tool_reads_own_agent", async () => {
 
 test("UsageCapsTest.test_usage_report_json_and_text", () => {
   const home = tmpHome("nyra-usage-");
-  setCap(home, "agent:bot-a", { dayUsd: 1, monthUsd: 1, reason: "测试" });
+  setCap(home, "agent:bot-a", { dayUsd: 1, reason: "测试" });
   recordUsage(home, "bot-a", 80, 0.9);
   recordUsage(home, "bot-b", 10, 0.01);
   const all = buildUsageReport(home);

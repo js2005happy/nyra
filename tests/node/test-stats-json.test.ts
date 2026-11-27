@@ -1,6 +1,8 @@
 // tests/node/test-stats-json.test.ts — `nyra stats --json` 的机器可读契约。
 //
 // 成本侧第四个 JSON 出口（savings / cost / verdict / stats），契约同一套：只加字段、不改名、不删字段。
+// 例外（2026-11-27 去月度限额批）：monthly_limit_usd 字段随功能一起删掉，
+// 这是批内有意的契约改动，见 T2 / T6。
 //
 // 这里锁的关键语义：**有调用但没配单价时 `month_spent_usd` 是 null，不是 0**，
 // 并且 `incomplete: true` 单独给一个布尔——"有调用未计价"与"真没花钱"是两件事，
@@ -14,7 +16,6 @@ const base = {
   monthSpentUsd: 1.5,
   incomplete: false,
   mcpSpentUsd: 0.2,
-  monthlyLimitUsd: 50,
   resetAt: "2026-12-01",
   today: { date: "2026-11-20", tokens: 800, spent: 0.1, calls: 3 },
   days: [
@@ -31,7 +32,7 @@ test("T1 schema_version 是显式常量", () => {
 test("T2 字段顺序稳定（契约：只加不改）", () => {
   expect(Object.keys(buildStatsJson(base))).toEqual([
     "schema_version", "month", "month_tokens", "month_spent_usd", "incomplete",
-    "mcp_spent_usd", "monthly_limit_usd", "reset_at", "today", "days", "model_switches",
+    "mcp_spent_usd", "reset_at", "today", "days", "model_switches",
   ]);
 });
 
@@ -53,15 +54,17 @@ test("T5 days 保留调用数（看板要画「每天几次」而不只是 token
   expect(j.days[1]).toMatchObject({ date: "2026-11-20", tokens: 800, spent_usd: 0.1, calls: 3 });
 });
 
-test("T6 月度上限没配时是 null（不是 0）", () => {
-  const j = buildStatsJson({ ...base, monthlyLimitUsd: null });
-  expect(j.monthly_limit_usd).toBeNull();
+test("T6 月度上限字段已随功能删掉（不再输出 monthly_limit_usd）", () => {
+  const j = buildStatsJson(base);
+  expect("monthly_limit_usd" in j).toBe(false);
+  // 本月花费记账本身还在：month_spent_usd 照常给数。
+  expect(j.month_spent_usd).toBe(1.5);
 });
 
 test("T7 空账本也能安全输出（全零 + 空 days）", () => {
   const j = buildStatsJson({
     month: "2026-11", monthTokens: 0, monthSpentUsd: 0, incomplete: false, mcpSpentUsd: 0,
-    monthlyLimitUsd: null, resetAt: "2026-12-01", today: null, days: [],
+    resetAt: "2026-12-01", today: null, days: [],
   });
   expect(j.days).toEqual([]);
   expect(j.month_tokens).toBe(0);

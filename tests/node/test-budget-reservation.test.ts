@@ -111,12 +111,12 @@ test("BudgetReservation.test_ledger_check_reserve_limits", () => {
     reason: "manual",
   });
   expect(ok.ok).toBe(true);
-  // 月度上限同理：已花 + 在途 + 本次 <= 上限才放行。
-  const monthOver = ledger.reserve("cli", 0.01, {
-    limits: [{ scope: "monthly", limitUsd: 0.1, spentUsd: 0.09 }],
+  // 第二层上限同理：已花 + 在途 + 本次 <= 上限才放行（这里用分层每日层举例）。
+  const tierOver = ledger.reserve("cli", 0.01, {
+    limits: [{ scope: "tiered:agent:bot-a:day", limitUsd: 0.1, spentUsd: 0.09 }],
     reason: "manual",
   });
-  expect(monthOver.ok).toBe(false);
+  expect(tierOver.ok).toBe(false);
   rmSync(home, { recursive: true, force: true });
 });
 
@@ -437,7 +437,8 @@ test("BudgetReservation.test_budget_cli_show_json", () => {
   const parsed = JSON.parse(logs.join("\n"));
   expect(parsed.strict_unknown_amount).toBe(true);
   expect(parsed.active_reserved_usd).toBe(0);
-  expect(parsed.monthly_limit_usd).toBeNull();
+  // 月度上限已移除：show --json 不再输出 monthly_limit_usd。
+  expect("monthly_limit_usd" in parsed).toBe(false);
   rmSync(home, { recursive: true, force: true });
 });
 
@@ -476,7 +477,7 @@ test("BudgetReservation.test_tiered_token_cap_still_guards_without_pricing", asy
     prompt_samples: 0, completion_samples: 0, total_samples: 0,
     last_prompt_tokens: 150, context_window_tokens: null, context_remaining_tokens: null,
   } as never, null, null, null, "fake-1", new Date(), "bot-a");
-  setCap(home, "agent:bot-a", { monthTokens: 100, reason: "测试" });
+  setCap(home, "agent:bot-a", { dayTokens: 100, reason: "测试" });
   const ctx = { runId: "run-agent-1" };
   const provider = echoProvider("你好", 100);
   const agent = new Agent(provider as never, {

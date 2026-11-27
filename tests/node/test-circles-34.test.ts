@@ -361,7 +361,7 @@ class FakeRunner implements ChannelRunner {
   startServices(): void {}
   stopServices(): void {}
   status(): BotStatus {
-    return { running: true, model: "fake:test", queueDepth: 0, activeSessions: [], todaySpentUsd: 0, dedupSize: 0, monthlySpentUsd: null, monthlyLimitUsd: null, pendingApprovals: 0 };
+    return { running: true, model: "fake:test", queueDepth: 0, activeSessions: [], todaySpentUsd: 0, dedupSize: 0, monthlySpentUsd: null, pendingApprovals: 0 };
   }
 }
 

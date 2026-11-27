@@ -6,7 +6,7 @@
 //   - Policy 发布通知受影响的授权与工单（任务板未终态任务 + 收件箱）；
 //   - observe/auto 两档：默认 observe；切 auto 须显式；
 //   - 干跑记录：只记不执行、同动作去重、定夺后不能再定；
-//   - 月度硬顶门：没配上限不挡人，配了且已触顶就拒绝；
+//   - 分层每日上限门：没配上限不挡人，配了且已触顶就拒绝（月度上限已移除）；
 //   - 续跑/恢复钩子：resume 的 prepare 与 side-effects 的 recover 都先重验证；
 //   - sweep 的 auto 续跑在 observe 模式下只记干跑；Heartbeat 同样只记干跑；
 //   - CLI 端到端与退出码（冲突重验证 exit 2、切 auto 没 --yes exit 2）。
@@ -24,6 +24,7 @@ import {
   policyPath, mandatePath,
 } from "../../src/governance.ts";
 import { UsageLedger, monthKeyString } from "../../src/usageLedger.ts";
+import { setCap } from "../../src/costCaps.ts";
 import { createKanbanTask } from "../../src/kanban.ts";
 import { loadInbox } from "../../src/tasks.ts";
 import {
@@ -160,26 +161,27 @@ test("GovernanceTest.test_dry_run_record_decide_dedup", () => {
   expect(listDryRuns(home, { agent: "other" })).toHaveLength(0);
 });
 
-test("GovernanceTest.test_monthly_cap_gate", () => {
+test("GovernanceTest.test_tiered_daily_cap_gate", () => {
   const home = tmpHome("nyra-gov-");
-  // 没配上限就不挡人。
-  expect(checkAutoAllowed(home, "nyra").allowed).toBe(true);
-  expect(checkAutoAllowed(home, "nyra").limitUsd).toBeNull();
-  // 配了上限、还没花 → 放行；花超了 → 拒绝。
+  // 没配分层每日上限就不挡人（月度上限已移除，旧 config 键也不拦）。
   writeFileSync(join(home, "config.json"), JSON.stringify({ monthly_cost_limit_usd: 0.5 }), "utf-8");
+  expect(checkAutoAllowed(home, "nyra").allowed).toBe(true);
+  // 配了每日上限、还没花 → 放行；花超了 → 拒绝。
+  setCap(home, "agent:nyra", { dayUsd: 0.5, reason: "测试" });
   expect(checkAutoAllowed(home, "nyra").allowed).toBe(true);
   new UsageLedger(home).recordDelta(
     { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150, calls: 1 },
-    null, 1.0, null, "test-model", new Date(),
+    null, 1.0, null, "test-model", new Date(), "nyra",
   );
   const blocked = checkAutoAllowed(home, "nyra");
   expect(blocked.allowed).toBe(false);
   expect(blocked.monthSpentUsd).toBeCloseTo(1.0);
-  expect(blocked.reason).toContain("月度硬顶已触顶");
-  // 月度硬顶已触顶时，would-accept 评估直接 would-deny。
+  expect(blocked.reason).toContain("分层成本上限已触顶");
+  expect(blocked.reason).toContain("当日");
+  // 分层每日上限已触顶时，would-accept 评估直接 would-deny。
   const verdict = evaluateProactiveAction(home, "nyra", { kind: "resume_subagent", target: "run-1" });
   expect(verdict.decision).toBe("would-deny");
-  expect(verdict.reason).toContain("月度硬顶");
+  expect(verdict.reason).toContain("分层成本上限已触顶");
 });
 
 test("GovernanceTest.test_evaluate_proactive_action", () => {

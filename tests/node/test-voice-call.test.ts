@@ -1,6 +1,6 @@
 // tests/node/test-voice-call.test.ts — 缺口 36：实时语音通话通道。
 // 假 whisper / 假云端 STT-TTS / 假音频字节：覆盖通话状态机、VAD 门控、
-// 本地优先与云端 opt-in、月度硬顶拦云端、敏感意图扣下与文字确认、
+// 本地优先与云端 opt-in、云端花费记账、敏感意图扣下与文字确认、
 // 用量账本记账、事件注册与时间线渲染、CLI 端到端。
 import { test, expect } from "bun:test";
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, readdirSync } from "node:fs";
@@ -276,10 +276,11 @@ test("VoiceCallTest.test_cloud_transcription_when_opted_in", async () => {
   expect(rows[0].spent_usd).toBeCloseTo(0.00125, 6);
 });
 
-test("VoiceCallTest.test_monthly_cap_blocks_cloud", async () => {
+test("VoiceCallTest.test_monthly_cap_removed_cloud_not_blocked", async () => {
   const { home, workdir } = setup();
   const id = await activeCall(home);
-  // 本月已花 $100，上限 $1：云端路直接拒绝。
+  // 月度上限已移除：本月已花 $100、旧配置写着上限 $1，云端转写也不再被拦，
+  // 照常走云端；花费照常记进账本（见下断言）。
   const month = monthKeyString(new Date());
   writeFileSync(join(home, "usage_daily.jsonl"),
     JSON.stringify({ date: localDateString(new Date()), month, prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, calls: 1, spent_usd: 100, model: "fake", agent: null }) + "\n");
@@ -287,12 +288,16 @@ test("VoiceCallTest.test_monthly_cap_blocks_cloud", async () => {
   const audio = writeAudio(workdir, "c.mp3", mp3);
   const cfg: VoiceCallConfig = { ...DEFAULT_VOICE_CALL_CONFIG, callCloudEnabled: true };
   const voiceCfg = { ...DEFAULT_VOICE_CONFIG, sttLocalModel: null, sttPricePerMinUsd: 0.006 };
-  await expect(feedCallSegment({
+  const result = await feedCallSegment({
     home, workdir, callId: id, audioPath: audio,
     config: { voice: { call_cloud_enabled: true }, monthly_cost_limit_usd: 1 },
     voiceCfg, callCfg: cfg, endpoint: ENDPOINT,
     runCommand: ffprobeOnlyRunner(), fetchFn: fakeCloudFetch(),
-  })).rejects.toThrow("月度上限");
+  });
+  expect(result.transcript).toBe("云端转写结果");
+  expect(result.segment.engine).toBe("cloud:whisper-1");
+  expect(result.segment.costUsd).not.toBeNull();
+  expect(result.segment.costUsd!).toBeGreaterThan(0);
 });
 
 test("VoiceCallTest.test_sensitive_segment_held_and_confirmed", async () => {

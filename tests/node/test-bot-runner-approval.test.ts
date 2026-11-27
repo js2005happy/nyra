@@ -164,10 +164,10 @@ test("/help 按角色说话：guest 看到只读说明，owner 看到审批命�
   }
 });
 
-test("月度硬顶预检：本月已花 ≥ 上限时直接回绝，不调模型", async () => {
+test("月度上限已移除：本月已花超过旧上限也不再回绝，任务照常跑", async () => {
   const home = tempHome("nyra-bot-rapp6-");
   try {
-    // 先往用量账本里记一笔本月已花 $0.05。
+    // 先往用量账本里记一笔本月已花 $0.05（记账仍在，只是不再拦任务）。
     const ledger = new UsageLedger(home);
     ledger.recordDelta(
       { calls: 1, prompt_tokens: 100, completion_tokens: 100, total_tokens: 200 },
@@ -186,10 +186,8 @@ test("月度硬顶预检：本月已花 ≥ 上限时直接回绝，不调模型
       },
     });
     await runner.handleMessage(makeMsg({ messageId: "1", text: "hi" }));
-    expect(calls).toBe(0);
-    expect(adapter.sent[adapter.sent.length - 1].text).toContain("本月预算已用完");
-    expect(adapter.sent[adapter.sent.length - 1].text).toContain("0.05");
-    expect(readAudit(home).map((r) => r.outcome)).toContain("blocked:monthly-budget");
+    expect(calls).toBe(1);
+    expect(readAudit(home).map((r) => r.outcome)).not.toContain("blocked:monthly-budget");
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

@@ -57,7 +57,7 @@ test("OptimizerTest.test_draft_templates_by_kind", () => {
   expect(draftFromRegressionCase("tool-failed", "shell 超时")).toContain("重试上限 3 次");
   expect(draftFromRegressionCase("delegate-failed", "委派挂了")).toContain("委派前先确认");
   expect(draftFromRegressionCase("verdict-failed", "验收没过")).toContain("自查验收清单");
-  expect(draftFromRegressionCase("llm-failed", "模型 429")).toContain("月度硬顶");
+  expect(draftFromRegressionCase("llm-failed", "模型 429")).toContain("单次硬顶");
   expect(draftFromRegressionCase("run-error", "运行崩了")).toContain("失败记录");
 });
 

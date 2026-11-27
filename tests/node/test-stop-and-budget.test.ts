@@ -1,6 +1,7 @@
 // tests/node/test-stop-and-budget.test.ts — P0-3：窗口里能停止 + 花钱前见上限。
-// 只测纯逻辑与文案：取消接口、停止后状态与打断标记、审批卡文案、月度上限门、
+// 只测纯逻辑与文案：取消接口、停止后状态与打断标记、审批卡文案、本月花费记账、
 // 未知单价暂停、语言切换、窗口撤销。桌面页实际点击由 parent 另行补验。
+// 月度上限已移除：首次花钱不再有选上限的门，旧配置键不再被设置端点接受。
 import { test, expect } from "bun:test";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -8,7 +9,6 @@ import { join } from "node:path";
 import { Gateway } from "../../src/gateway.ts";
 import { fakeProvider } from "./fake-provider.ts";
 import { MESSAGES } from "../../src/i18n.ts";
-import { monthlyCapDecided } from "../../src/cost.ts";
 import { DESKTOP_HTML, desktopMessages } from "../../src/webuiDesktop.ts";
 
 function tmp(p: string): string {
@@ -56,12 +56,17 @@ async function sessionView(base: string, h: H, id: string): Promise<Record<strin
   return (await res.json()) as Record<string, unknown>;
 }
 
-test("StopBudgetTest.test_monthlyCapDecided_only_counts_explicit_decision", () => {
-  expect(monthlyCapDecided({})).toBe(false);
-  expect(monthlyCapDecided({ monthly_cost_limit_usd: 10 } as never)).toBe(false);
-  expect(monthlyCapDecided({ monthly_cost_limit_decided: true } as never)).toBe(true);
-  expect(monthlyCapDecided({ monthly_cost_limit_decided: true, monthly_cost_limit_usd: null } as never)).toBe(true);
-  expect(monthlyCapDecided({ monthly_cost_limit_decided: false, monthly_cost_limit_usd: 10 } as never)).toBe(false);
+test("StopBudgetTest.test_no_monthly_cap_gate_first_paid_task_runs", async () => {
+  // 月度上限已移除：第一次花钱的任务不再被“先选上限”的门拦住。
+  const provider = fakeProvider([{ content: "ok" }], { name: "deepseek", model: "deepseek-flash" });
+  const { gw, base, h } = await startGw({ provider });
+  try {
+    const sid = await createSession(base, h);
+    const sent = await fetch(`${base}/api/sessions/${sid}/messages`, { method: "POST", headers: h, body: JSON.stringify({ text: "花钱的任务" }) });
+    expect(sent.status).toBe(202);
+    await waitFor(async () => ((await sessionView(base, h, sid)).status as string) === "done");
+    expect(provider.calls).toBe(1);
+  } finally { await gw.stop(); }
 });
 
 test("StopBudgetTest.test_appr_and_budget_copy_both_languages", () => {
@@ -85,15 +90,20 @@ test("StopBudgetTest.test_appr_and_budget_copy_both_languages", () => {
   }
   expect(zh["d.stoppedNote"]).toContain("打断");
   expect(en["d.stoppedNote"]).toContain("interrupted");
-  // 上限：必选提示、未知金额、触顶，中英文都有。
-  for (const k of ["d.budgetUndecided", "d.costUnknown", "d.budgetHit", "d.capRequired", "d.budget.title", "d.budget.hint", "d.budget.noCap", "d.budget.setCap", "d.budget.save", "d.budget.spent", "d.budget.spentNoCap", "d.budget.spentUnknown", "d.budget.undecided", "d.budget.needNumber"] as const) {
+  // 本月花费记账（仅展示，无上限）：中英文都有。
+  for (const k of ["d.spend.title", "d.spend.line", "d.budget.spentUnknown", "d.budget.partialNote", "d.costUnknown"] as const) {
     expect(zh[k].length).toBeGreaterThan(0);
     expect(en[k].length).toBeGreaterThan(0);
   }
-  expect(zh["d.budgetUndecided"]).toContain("月度上限");
+  expect(zh["d.spend.line"]).toContain("本月已花");
+  expect(zh["d.spend.line"]).toContain("无月度上限");
   expect(zh["d.costUnknown"]).toContain("金额未知");
   expect(zh["d.costUnknown"]).toContain("已暂停");
-  expect(zh["d.budgetHit"]).toContain("月度上限");
+  // 旧月度上限文案已删干净：键不存在。
+  for (const k of ["d.budgetUndecided", "d.budgetHit", "d.capRequired", "d.budget.title", "d.budget.hint", "d.budget.noCap", "d.budget.setCap", "d.budget.save", "d.budget.spent", "d.budget.spentNoCap", "d.budget.undecided", "d.budget.needNumber"] as const) {
+    expect(k in zh).toBe(false);
+    expect(k in en).toBe(false);
+  }
   // 撤销：按钮与三种结果文案，中英文都有。
   for (const k of ["d.undoLast", "d.undone", "d.undoFailed", "d.undoEmpty", "d.undoBusy"] as const) {
     expect(zh[k].length).toBeGreaterThan(0);
@@ -101,7 +111,7 @@ test("StopBudgetTest.test_appr_and_budget_copy_both_languages", () => {
   }
   // 桌面端文案中英文键集合相等（test-v8-ui 也强制，这里只核对本批新键在两边都在）。
   const msgs = desktopMessages();
-  for (const k of ["d.stop", "d.stopping", "d.stopped", "d.stoppedNote", "d.appr.timeout", "d.appr.expiresIn", "d.appr.timeoutNote", "d.budget.title", "d.budget.undecided", "d.costUnknown", "d.budgetHit", "d.undoLast", "d.undone"] as const) {
+  for (const k of ["d.stop", "d.stopping", "d.stopped", "d.stoppedNote", "d.appr.timeout", "d.appr.expiresIn", "d.appr.timeoutNote", "d.spend.title", "d.spend.line", "d.costUnknown", "d.undoLast", "d.undone"] as const) {
     expect(typeof msgs.zh[k]).toBe("string");
     expect(typeof msgs.en[k]).toBe("string");
   }
@@ -110,7 +120,7 @@ test("StopBudgetTest.test_appr_and_budget_copy_both_languages", () => {
 test("StopBudgetTest.test_desktop_page_ships_stop_undo_budget_controls", () => {
   expect(DESKTOP_HTML).toContain("thread-stop");
   expect(DESKTOP_HTML).toContain("thread-undo");
-  expect(DESKTOP_HTML).toContain("d.budget.title");
+  expect(DESKTOP_HTML).toContain("d.spend.title");
   expect(DESKTOP_HTML).toContain("d.stopping");
   expect(DESKTOP_HTML).toContain("d.appr.expiresIn");
   expect(DESKTOP_HTML).toContain("d.appr.timeout");
@@ -190,24 +200,10 @@ test("StopBudgetTest.test_approval_pending_carries_expiry_and_timeout", async ()
   } finally { await gw.stop(); }
 });
 
-test("StopBudgetTest.test_cap_gate_blocks_paid_provider_until_decided", async () => {
+test("StopBudgetTest.test_old_monthly_config_keys_are_ignored", async () => {
+  // 旧配置里写了月度上限也不再生效：任务照常跑。
   const provider = fakeProvider([{ content: "ok" }], { name: "deepseek", model: "deepseek-flash" });
-  const { gw, base, h } = await startGw({ provider });
-  try {
-    const sid = await createSession(base, h);
-    const sent = await fetch(`${base}/api/sessions/${sid}/messages`, { method: "POST", headers: h, body: JSON.stringify({ text: "花钱的任务" }) });
-    expect(sent.status).toBe(202);
-    const body = (await sent.json()) as { status: string; error: string };
-    expect(body.status).toBe("error");
-    expect(body.error).toContain("月度上限");
-    expect(body.error).toContain("设置");
-    expect(provider.calls).toBe(0);
-  } finally { await gw.stop(); }
-});
-
-test("StopBudgetTest.test_cap_gate_passes_when_no_cap_chosen_explicitly", async () => {
-  const provider = fakeProvider([{ content: "ok" }], { name: "deepseek", model: "deepseek-flash" });
-  const { gw, base, h } = await startGw({ provider, config: { monthly_cost_limit_decided: true, monthly_cost_limit_usd: null } });
+  const { gw, base, h } = await startGw({ provider, config: { monthly_cost_limit_decided: true, monthly_cost_limit_usd: 0.01 } });
   try {
     const sid = await createSession(base, h);
     const sent = await fetch(`${base}/api/sessions/${sid}/messages`, { method: "POST", headers: h, body: JSON.stringify({ text: "花钱的任务" }) });
@@ -230,8 +226,10 @@ test("StopBudgetTest.test_cap_gate_passes_for_local_model", async () => {
 });
 
 test("StopBudgetTest.test_unknown_pricing_pauses_with_amount_unknown", async () => {
+  // 金额未知严格暂停仍由每任务硬顶（max_cost_usd）触发：没单价算不出金额、
+  // 无法判定是否超硬顶，宁可暂停也不悄悄跑。月度上限已移除，不再是触发条件。
   const provider = fakeProvider([{ content: "ok" }]);
-  const { gw, base, h } = await startGw({ provider, config: { monthly_cost_limit_usd: 10, monthly_cost_limit_decided: true } });
+  const { gw, base, h } = await startGw({ provider, config: { max_cost_usd: 10 } });
   try {
     const sid = await createSession(base, h);
     const sent = await fetch(`${base}/api/sessions/${sid}/messages`, { method: "POST", headers: h, body: JSON.stringify({ text: "没单价的任务" }) });
@@ -267,17 +265,20 @@ test("StopBudgetTest.test_budget_summary_in_info_and_session_view", async () => 
   const { gw, base, h } = await startGw({ provider: fakeProvider([{ content: "ok" }]) });
   try {
     const info0 = (await (await fetch(`${base}/api/info`, { headers: h })).json()) as { budget: Record<string, unknown> };
-    expect(info0.budget.monthly_cost_limit_decided).toBe(false);
+    // 摘要只剩记账字段：本月已花、未计价标记、重置时间，没有上限字段。
+    expect(Object.keys(info0.budget).sort()).toEqual(["monthly_reset_at", "monthly_spent_incomplete", "monthly_spent_usd"]);
+    expect(typeof info0.budget.monthly_reset_at).toBe("string");
+    expect(Number.isNaN(Date.parse(String(info0.budget.monthly_reset_at)))).toBe(false);
+    // 设置端点不再接受月度上限键：报不支持的设置项。
     const set = await fetch(`${base}/api/settings`, { method: "POST", headers: h, body: JSON.stringify({ monthly_cost_limit_usd: 5 }) });
-    expect(set.status).toBe(200);
+    expect(set.status).toBeGreaterThanOrEqual(400);
+    const setBody = (await set.json()) as { error?: string };
+    expect(String(setBody.error ?? "")).toContain("monthly_cost_limit_usd");
     const info1 = (await (await fetch(`${base}/api/info`, { headers: h })).json()) as { budget: Record<string, unknown> };
-    expect(info1.budget.monthly_cost_limit_decided).toBe(true);
-    expect(info1.budget.monthly_cost_limit_usd).toBe(5);
-    expect(typeof info1.budget.monthly_reset_at).toBe("string");
-    expect(Number.isNaN(Date.parse(String(info1.budget.monthly_reset_at)))).toBe(false);
+    expect(Object.keys(info1.budget).sort()).toEqual(["monthly_reset_at", "monthly_spent_incomplete", "monthly_spent_usd"]);
     const sid = await createSession(base, h);
     const view = await sessionView(base, h, sid);
-    expect((view.budget as Record<string, unknown>).monthly_cost_limit_decided).toBe(true);
+    expect(Object.keys(view.budget as Record<string, unknown>).sort()).toEqual(["monthly_reset_at", "monthly_spent_incomplete", "monthly_spent_usd"]);
   } finally { await gw.stop(); }
 });
 

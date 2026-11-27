@@ -351,7 +351,7 @@ class FakeRunner implements ChannelRunner {
   status(): BotStatus {
     return {
       running: true, model: "fake:test", queueDepth: 0, activeSessions: [],
-      todaySpentUsd: 0, dedupSize: 0, monthlySpentUsd: null, monthlyLimitUsd: null, pendingApprovals: 0,
+      todaySpentUsd: 0, dedupSize: 0, monthlySpentUsd: null, pendingApprovals: 0,
     };
   }
 }

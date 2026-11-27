@@ -59,9 +59,10 @@ const CASES: Case[] = [
     schemaConst: STATS_JSON_SCHEMA,
     build: () => buildStatsJson({
       month: "2026-11", monthTokens: 0, monthSpentUsd: 0, incomplete: false, mcpSpentUsd: 0,
-      monthlyLimitUsd: null, resetAt: "2026-12-01", today: null, days: [],
+      resetAt: "2026-12-01", today: null, days: [],
     }) as never,
-    keys: ["schema_version", "month", "month_tokens", "month_spent_usd", "incomplete", "mcp_spent_usd", "monthly_limit_usd", "reset_at", "today", "days", "model_switches"],
+    // 月度上限已移除：monthly_limit_usd 字段随功能一起删掉（不是契约违例，是批内有意改动）。
+    keys: ["schema_version", "month", "month_tokens", "month_spent_usd", "incomplete", "mcp_spent_usd", "reset_at", "today", "days", "model_switches"],
   },
   {
     name: "redlines",

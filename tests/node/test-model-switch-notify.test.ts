@@ -372,7 +372,7 @@ test("群聊回复前面附上切换通知，消息里照旧记结构化切换�
 test("stats JSON 带 model_switches：没切换时全零，有切换时含最近一次", () => {
   const base = {
     month: "2026-11", monthTokens: 12000, monthSpentUsd: 1.5, incomplete: false,
-    mcpSpentUsd: 0.2, monthlyLimitUsd: 50, resetAt: "2026-12-01",
+    mcpSpentUsd: 0.2, resetAt: "2026-12-01",
     today: { date: "2026-11-20", tokens: 800, spent: 0.1, calls: 3 }, days: [],
   };
   const empty = buildStatsJson(base);
@@ -391,7 +391,7 @@ test("stats JSON 带 model_switches：没切换时全零，有切换时含最近
 
 test("cost JSON 月度里带 model_switches：没切换时全零", () => {
   const cfg = { pricing: { m1: { inputPer1M: 1, outputPer1M: 2 } } };
-  const monthly = { limitUsd: 50, spentUsd: 1.2, mcpUsd: 0.2, month: "2026-11", resetAt: "2026-12-01" };
+  const monthly = { spentUsd: 1.2, mcpUsd: 0.2, month: "2026-11", resetAt: "2026-12-01" };
   const empty = buildCostJson({ model: "m1", config: cfg, monthly });
   expect(empty.monthly?.model_switches).toEqual({ count: 0, by_trigger: {}, last: null });
   const withSwitch = buildCostJson({

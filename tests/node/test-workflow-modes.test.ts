@@ -2,7 +2,7 @@
 //
 // 覆盖：DSL 校验（goal/coordinator 配置边界、dynamic 空步骤）、协调者循环
 // （按决定跑计划步骤、决策调用计价、动态生成新步骤、ask 挂起与续跑两条路、
-// 连续坏决定、轮数上限、每步骤执行次数上限、月度硬顶重判）、dry-run 候选
+// 连续坏决定、轮数上限、每步骤执行次数上限、每节点重判单次硬顶）、dry-run 候选
 // 标记与新步骤额度、3 个新事件注册与时间线渲染、CLI show。全部在临时 home
 // 里跑，协调者决定用剧本假 provider（按顺序回 JSON 决定），不碰真模型。
 import { test, expect } from "bun:test";
@@ -376,7 +376,7 @@ test("协调者：计划里的审批节点挂起，批复后回到协调者循�
 });
 
 // ---------------------------------------------------------------------------
-// 硬上限：坏决定、轮数、每步骤次数、月度硬顶
+// 硬上限：坏决定、轮数、每步骤次数、单次硬顶
 // ---------------------------------------------------------------------------
 
 test("协调者：连续两次坏决定整轮失败，不循环烧钱", async () => {
@@ -433,23 +433,45 @@ test("协调者：轮数用完即停；同一节点最多跑 3 次", async () =>
   }
 });
 
-test("协调者：月度硬顶在决策调用前重判，超了即停", async () => {
+test("协调者：单次硬顶每节点后重判，超了即停", async () => {
   const home = tempHome();
   try {
+    writePricing(home);
+    const file = join(home, "a.txt");
+    writeFileSync(file, "AAA");
+    const def: WorkflowDefinition = {
+      name: "单次硬顶", version: 1, mode: "coordinator", goal: "读文件",
+      max_cost_usd: 0.001,
+      steps: [{ id: "read", type: "tool", tool: "read_file", args: { path: file } }],
+    };
+    await importWorkflow(home, writeDefFile(home, defToYaml(def)));
+    // 第 1 轮决策调用花 $0.002（已超 $0.001 单次上限）；节点落盘后重判，停下。
+    const script = scriptedProvider([RUN("read"), FINISH()]);
+    const run = await runWorkflowByName(home, "单次硬顶", {}, reqFor(home, script));
+    expect(run.status).toBe("failed");
+    expect(run.error).toContain("成本上限已超");
+    expect(run.error).toContain("本次运行已花");
+  } finally {
+    cleanup(home);
+  }
+});
+
+test("协调者：旧月度上限配置不再拦工作流，照常跑完", async () => {
+  const home = tempHome();
+  try {
+    // 旧配置写着月度上限 $0.001，两轮决策调用共花 $0.004，远超旧上限——
+    // 月度上限已移除，不再重判，工作流照常跑完。
     writePricing(home, 0.001);
     const file = join(home, "a.txt");
     writeFileSync(file, "AAA");
     const def: WorkflowDefinition = {
-      name: "月度硬顶", version: 1, mode: "coordinator", goal: "读文件",
+      name: "旧月度配置", version: 1, mode: "coordinator", goal: "读文件",
       steps: [{ id: "read", type: "tool", tool: "read_file", args: { path: file } }],
     };
     await importWorkflow(home, writeDefFile(home, defToYaml(def)));
-    // 第 1 轮决策调用花 $0.002（已超 $0.001 上限）；第 2 轮调用前重判，停下。
     const script = scriptedProvider([RUN("read"), FINISH()]);
-    const run = await runWorkflowByName(home, "月度硬顶", {}, reqFor(home, script));
-    expect(run.status).toBe("failed");
-    expect(run.error).toContain("月度成本上限已超");
-    expect(run.nodes).toHaveLength(1);
+    const run = await runWorkflowByName(home, "旧月度配置", {}, reqFor(home, script));
+    expect(run.status).toBe("completed");
   } finally {
     cleanup(home);
   }

@@ -13,8 +13,6 @@ function tempHome(prefix: string): string {
 
 function baseState(over: Partial<NotifierState> = {}): NotifierState {
   return {
-    monthlySpentUsd: null,
-    monthlyLimitUsd: null,
     dailySpentUsd: 0,
     dailyBudgetUsd: null,
     pendingApprovals: 0,
@@ -94,27 +92,19 @@ test("任务结果：failures 只推失败，all 成功也推，none 都不推",
   }
 });
 
-test("Heartbeat 月度：0.85 推一次，同值冷却内不重推，升到 1.0 再推", async () => {
+test("Heartbeat 不再有月度提醒：本月花再多也不推月度上限提醒", async () => {
+  // 月度上限已移除：NotifierState 里没有月度上限字段，tick 不再因本月
+  // 花费推任何提醒；每日预算提醒仍在（见下一则测试）。
   const home = tempHome("nyra-bot-ntf4-");
   try {
-    let spent = 8.5;
-    const { notifier, sent, advance } = makeNotifier(home, {}, {
-      state: () => baseState({ monthlySpentUsd: spent, monthlyLimitUsd: 10 }),
+    const { notifier, sent } = makeNotifier(home, {}, {
+      state: () => baseState({ dailySpentUsd: 0, dailyBudgetUsd: null, queueDepth: 0, pendingApprovals: 0 }),
     });
-    const first = await notifier.tick();
-    expect(first.length).toBe(1);
-    expect(first[0]).toContain("85%");
     expect(await notifier.tick()).toEqual([]);
-    expect(sent.length).toBe(1);
-    spent = 10.5;
-    const third = await notifier.tick();
-    expect(third.length).toBe(1);
-    expect(third[0]).toContain("已用完");
-    expect(sent.length).toBe(2);
-    // 冷却过了、同值会再提醒一次（冷却只拦冷却期内重复）。
-    advance(2 * 60 * 60 * 1000);
-    expect((await notifier.tick()).length).toBe(1);
-    expect(sent.length).toBe(3);
+    expect(sent.length).toBe(0);
+    const state = baseState({});
+    expect("monthlySpentUsd" in state).toBe(false);
+    expect("monthlyLimitUsd" in state).toBe(false);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

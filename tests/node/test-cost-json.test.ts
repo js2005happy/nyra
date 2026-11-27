@@ -1,6 +1,8 @@
 // tests/node/test-cost-json.test.ts — `nyra cost --show --json` 的机器可读契约。
 //
 // 与 `savings --json` / `verdict --json` 同一套纪律：只加字段、不改名、不删字段。
+// 例外（2026-11-27 去月度限额批）：monthly.limit_usd 字段随功能一起删掉，
+// 这是批内有意的契约改动，见 C5 / C8。
 //
 // 这里有一条特别重要的语义：**`max_cost_usd` 没配时是 null，不是 0**。
 // 写成 0 会让 CI 把"没设上限"读成"上限是 0 美元"——含义完全相反，
@@ -13,7 +15,7 @@ const cfg = {
   max_cost_usd: 5,
 };
 
-const monthly = { limitUsd: 50, spentUsd: 1.2, mcpUsd: 0.2, month: "2026-11", resetAt: "2026-12-01" };
+const monthly = { spentUsd: 1.2, mcpUsd: 0.2, month: "2026-11", resetAt: "2026-12-01" };
 
 test("C1 schema_version 是显式常量", () => {
   expect(COST_JSON_SCHEMA).toBe(1);
@@ -41,12 +43,13 @@ test("C4 没配单次上限 → null（不是 0，否则语义反转）", () => 
   expect(j.max_cost_usd).not.toBe(0);
 });
 
-test("C5 月度字段用 snake_case，且数值原样搬运", () => {
+test("C5 月度字段用 snake_case，且数值原样搬运（上限字段已删，只剩记账）", () => {
   const j = buildCostJson({ model: "m1", config: cfg, monthly });
   expect(j.monthly).toEqual({
-    limit_usd: 50, spent_usd: 1.2, mcp_usd: 0.2, month: "2026-11", reset_at: "2026-12-01",
+    spent_usd: 1.2, mcp_usd: 0.2, month: "2026-11", reset_at: "2026-12-01",
     model_switches: { count: 0, by_trigger: {}, last: null },
   });
+  expect("limit_usd" in (j.monthly ?? {})).toBe(false);
 });
 
 test("C6 没传 monthly（无 home）→ null，不编造本月花费", () => {
@@ -62,5 +65,5 @@ test("C7 pricing 不是对象时安全降级为空列表", () => {
 test("C8 可 JSON.stringify / parse（CI 与看板消费）", () => {
   const round = JSON.parse(JSON.stringify(buildCostJson({ model: "m1", config: cfg, monthly })));
   expect(round.schema_version).toBe(1);
-  expect(round.monthly.limit_usd).toBe(50);
+  expect(round.monthly.spent_usd).toBe(1.2);
 });

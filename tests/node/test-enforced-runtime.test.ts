@@ -13,7 +13,6 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { effectiveValue, effectiveStringList, enforcedOnly } from "../../src/enforcedConfig.ts";
-import { resolveMonthlyLimit } from "../../src/cost.ts";
 import { resolveVerifyOrigin } from "../../src/runs.ts";
 import { isDenyReadPath, resetDenyReadCache } from "../../src/tools.ts";
 import { resolveSandbox } from "../../src/config.ts";
@@ -72,17 +71,17 @@ test("没锁时 sandbox 仍按顶层走（回归保护）", () => {
 });
 
 // ---- 另外三个可锁键的运行时生效（同一类问题：锁了但没读）----
-// 上一个 PR 修了 deny_read_globs / permissions / sandbox；这里补齐月度上限、
+// 上一个 PR 修了 deny_read_globs / permissions / sandbox；这里补齐每任务硬顶、
 // 校验命令、工具裁剪——它们原先也直接读 config.json 顶层。
 
-test("锁定 monthly_cost_limit_usd 时，改 config 或加 CLI 参数都放宽不了", () => {
-  expect(resolveMonthlyLimit({ monthly_cost_limit_usd: 100, enforced: { monthly_cost_limit_usd: 10 } })).toBe(10);
-  expect(resolveMonthlyLimit({ monthly_cost_limit_usd: 100, enforced: { monthly_cost_limit_usd: 10 } }, 500)).toBe(10);
+test("锁定 max_cost_usd 时，改 config 也放宽不了（月度上限已移除，锁的是每任务硬顶）", () => {
+  expect(effectiveValue({ max_cost_usd: 100, enforced: { max_cost_usd: 10 } }, "max_cost_usd")).toBe(10);
+  expect(effectiveValue({ max_cost_usd: null, enforced: { max_cost_usd: 10 } }, "max_cost_usd")).toBe(10);
 });
 
-test("未锁 monthly_cost_limit_usd 时仍按 CLI > config（锁不影响正常优先级）", () => {
-  expect(resolveMonthlyLimit({ monthly_cost_limit_usd: 100 }, 50)).toBe(50);
-  expect(resolveMonthlyLimit({ monthly_cost_limit_usd: 100 })).toBe(100);
+test("未锁 max_cost_usd 时仍按顶层走（锁不影响正常优先级）", () => {
+  expect(effectiveValue({ max_cost_usd: 100 }, "max_cost_usd")).toBe(100);
+  expect(effectiveValue({ max_cost_usd: null }, "max_cost_usd")).toBeNull();
 });
 
 test("锁定 verify_command 时，config 里的校验命令被顶掉", () => {
@@ -98,6 +97,8 @@ test("锁定 disabled_tools 时生效（否则「禁用某工具」可被改 con
 });
 
 test("enforcedOnly 只在被锁时给值（防优先级判断失效——这个坑真踩过）", () => {
-  expect(enforcedOnly({ monthly_cost_limit_usd: 100 }, "monthly_cost_limit_usd")).toBeUndefined();
-  expect(enforcedOnly({ enforced: { monthly_cost_limit_usd: 10 } }, "monthly_cost_limit_usd")).toBe(10);
+  expect(enforcedOnly({ max_cost_usd: 100 }, "max_cost_usd")).toBeUndefined();
+  expect(enforcedOnly({ enforced: { max_cost_usd: 10 } }, "max_cost_usd")).toBe(10);
+  // 月度上限已移除：它不再是可锁键，锁了也不生效。
+  expect(enforcedOnly({ enforced: { monthly_cost_limit_usd: 10 } }, "monthly_cost_limit_usd")).toBeUndefined();
 });
