@@ -3,7 +3,7 @@
 // 主链路（Phase 3）：
 //   验签与解析（适配器）→ 幂等去重 → 角色路由（router：owner/admin/member/
 //   guest）→ 确定性指令优先（/approve、/reject 接真逻辑）→ 群聊 @ 过滤 →
-//   配额（用户/天、群聊/分钟、当天预算）→ 月度硬顶预检 → 附件处理
+//   配额（用户/天、群聊/分钟、当天预算）→ 附件处理
 //   （文本文档提取进上下文，图片只记元信息）→ 会话排队 → 占位
 //   “处理中…” → Agent 执行（画像定 mode：guest/member 只读，owner/
 //   admin 的写操作逐次走 approvalBridge 聊天内审批）→ 分片回发。
@@ -21,8 +21,7 @@
 // router.ts）；白名单两道门（Agent 的 disabledTools 不让工具进模型，
 // approveFn 里再查一次 isToolAllowed）；审批默认关闭——owner/admin
 // 都没配时谁也批不了，写操作一律拒绝。模型兜底链不进 Bot（单 provider，
-// 绝不自动换模型）；月度硬顶与单次硬顶走 Agent 自带的 checkCost，另加
-// 一道执行前预检（本月已花 ≥ 上限时直接回绝、不进模型）。
+// 绝不自动换模型）；单次硬顶走 Agent 自带的 checkCost。
 //
 // 证据：每条处理过的消息写一行 `~/.nyra/bot-audit.jsonl`（只记 channel、
 // sessionKey、messageId、结论、字数、花费、错误原因，不记用户原文与
@@ -53,8 +52,7 @@ import { loadConfig, resolveHome, resolveProvider, resolveSandbox } from "../con
 import { resolveEnforced } from "../enforcedConfig.ts";
 import { getFileKey, maskKey } from "../keystore.ts";
 import { getCredential } from "../vault.ts";
-import { resolvePricing, resolveMonthlyLimit } from "../cost.ts";
-import { McpCostTracker } from "../mcpCost.ts";
+import { resolvePricing } from "../cost.ts";
 import { loadSession, resolveNyraHome, saveSession, sessionPath } from "../memory.ts";
 import { buildProviderChain } from "../providers.ts";
 import { resolveReviewerModel } from "../reviewer.ts";
@@ -173,7 +171,6 @@ export interface BotStatus {
   todaySpentUsd: number;
   dedupSize: number;
   monthlySpentUsd: number | null;
-  monthlyLimitUsd: number | null;
   /** 当前挂起的审批数（/status 里能看到有没有等着批的）。 */
   pendingApprovals: number;
 }
@@ -266,7 +263,6 @@ export class BotRunner {
   /** 每会话上次 flush 的用量快照（delta 制记账，与 CLI 的 makeUsageFlusher 同口径）。 */
   private lastSnap = new Map<string, UsageSnapshot>();
   private lastSpent = new Map<string, number | null>();
-  private flushedUsd = 0;
   private ledger: UsageLedger;
   /** 取消过的会话（后台调用结束后的恢复守门：epoch 变了说明已有新任务，不恢复）。 */
   private abortEpochs = new Map<string, number>();
@@ -373,10 +369,7 @@ export class BotRunner {
         });
       },
       state: () => {
-        const monthly = this.monthSpentBeforeUsd();
         return {
-          monthlySpentUsd: monthly !== null ? monthly.spentUsd : null,
-          monthlyLimitUsd: resolveMonthlyLimit(this.config),
           dailySpentUsd: this.quota.dailySpentUsd(),
           dailyBudgetUsd: this.policy.dailyTokenBudgetUsd,
           pendingApprovals: this.bridge.pendingCount(),
@@ -396,22 +389,11 @@ export class BotRunner {
 
   // -- Agent 执行（复用 agent.ts / tools.ts 的执行路径，不另起执行器） ----
 
-  /** 本月已花（用量账本 LLM + MCP − 本进程已 flush 的，避免重复算；算不出返回 null，不挡人）。 */
-  private monthSpentBeforeUsd(): { spentUsd: number; incomplete: boolean } | null {
-    try {
-      const llm = this.ledger.monthTotal(monthKeyString());
-      const mcp = new McpCostTracker(this.home).monthTotalUsd(monthKeyString());
-      return { spentUsd: llm.spentUsd + mcp - this.flushedUsd, incomplete: llm.incomplete };
-    } catch {
-      return null;
-    }
-  }
-
   /**
    * Agent 的审批回调（checkApproval 经 approveFn 调到这里）：
    * 白名单外的工具直接拒绝、不建审批（第二道门）；白名单内的写操作建挂
    * 起审批、等聊天里的决定。放行只决定这一次调用能不能跑——花费照常
-   * 进账本、月度/单次硬顶照常由 checkCost 在轮次里执行，审批绕不过配额。
+   * 进账本、单次硬顶照常由 checkCost 在轮次里执行，审批绕不过配额。
    */
   private approveViaBridge(sessionKey: string, profile: BotProfile): ApproveFn {
     return async (tool, summary, details) => {
@@ -470,8 +452,6 @@ export class BotRunner {
     // 最高，见 resolveSandbox；没绑定档位时行为与以前一致）。
     const agentConfig = this.sandboxOverride ? configWithSandboxTier(this.config, this.sandboxOverride) : this.config;
     const sandbox = resolveSandbox(agentConfig);
-    const monthlyLimit = resolveMonthlyLimit(this.config);
-    const monthlySpentBeforeUsd = monthlyLimit === null ? null : () => this.monthSpentBeforeUsd();
     // 缺口 43 第三批：分层成本上限——Bot 的 agent id 就是 this.agent（BotRunner
     // 构造时定死），回调收本次运行进行中的花费、超了先建暂停记录再抛错中止。
     // 暂停记录没运行 id 时不带 taskId（Bot 任务不在任务板上时没有 taskId）。
@@ -499,9 +479,7 @@ export class BotRunner {
         return typeof this.config.max_cost_usd === "number" ? (this.config.max_cost_usd as number) : null;
       })(),
       pricing: resolvePricing(this.config.pricing, primaryCfg.model),
-      monthlyCostLimitUsd: monthlyLimit,
-      monthlySpentBeforeUsd,
-      // 缺口 43 第三批：分层成本上限（与月度硬顶同级硬停）。
+      // 缺口 43 第三批：分层成本上限（与单次硬顶同级硬停）。
       tieredCapCheck,
       // GROK-1：团队模式（config bot.team 配了时）——Bot 跑参谋长/成员的 Soul，
       // 团队审批门（GROK-3）按 teamId 判定；没配团队时不传，行为与以前一致。
@@ -523,8 +501,7 @@ export class BotRunner {
     try {
       const snap = agent.usage.snapshot();
       const spent = agent.lastCost?.status === "priced" ? agent.lastCost.spentUsd : null;
-      const rec = this.ledger.recordDelta(snap, this.lastSnap.get(sessionKey) ?? null, spent, this.lastSpent.get(sessionKey) ?? null, agent.provider.model, undefined, this.agent);
-      if (rec && rec.spent_usd !== null) this.flushedUsd += rec.spent_usd;
+      this.ledger.recordDelta(snap, this.lastSnap.get(sessionKey) ?? null, spent, this.lastSpent.get(sessionKey) ?? null, agent.provider.model, undefined, this.agent);
       this.lastSnap.set(sessionKey, snap);
       this.lastSpent.set(sessionKey, spent);
     } catch { /* 账本写失败不破坏回复 */ }
@@ -726,7 +703,7 @@ export class BotRunner {
       `模型：${st.model ?? "未配置"}`,
       `队列深度：共 ${st.queueDepth}（进行中会话：${st.activeSessions.length ? st.activeSessions.join("、") : "无"}）`,
       `今日 token 花费：${st.todaySpentUsd > 0 ? `$${st.todaySpentUsd.toFixed(4)}` : "无"}`,
-      `本月已花：${st.monthlySpentUsd !== null ? `$${st.monthlySpentUsd.toFixed(4)}` : "未知（未计价）"}${st.monthlyLimitUsd !== null ? ` / 上限 $${st.monthlyLimitUsd.toFixed(2)}` : "（未设上限）"}`,
+      `本月已花：${st.monthlySpentUsd !== null ? `$${st.monthlySpentUsd.toFixed(4)}` : "未知（未计价）"}（仅记账，无月度上限）`,
       `挂起审批：${st.pendingApprovals} 条`,
       `去重记录：${st.dedupSize} 条`,
     ];
@@ -981,7 +958,6 @@ export class BotRunner {
       todaySpentUsd: this.quota.dailySpentUsd(),
       dedupSize: this.dedup.size(),
       monthlySpentUsd: monthlySpent,
-      monthlyLimitUsd: resolveMonthlyLimit(this.config),
       pendingApprovals: this.bridge.pendingCount(),
     };
   }
@@ -1033,17 +1009,7 @@ export class BotRunner {
       audit("blocked:quota-budget");
       return;
     }
-    // 月度硬顶预检：本月已花 ≥ 上限时直接回绝、不进模型（轮次里的 checkCost 是第二道门；审批放行绕不过这两道）。
-    const monthlyLimit = resolveMonthlyLimit(this.config);
-    if (monthlyLimit !== null) {
-      const spent = this.monthSpentBeforeUsd();
-      if (spent !== null && spent.spentUsd >= monthlyLimit) {
-        await this.adapter.sendText({ chatId: msg.chatId, threadId: msg.threadId, text: `本月预算已用完（已花 $${spent.spentUsd.toFixed(4)} / 上限 $${monthlyLimit.toFixed(2)}），本月不再执行新任务。` });
-        audit("blocked:monthly-budget");
-        return;
-      }
-    }
-    // Phase 3：附件处理（配额与月度预检之后——附件下载也要受配额约束，
+    // Phase 3：附件处理（配额之后——附件下载也要受配额约束，
     // 否则光发附件就能绕过限额刷下载）。文本文档提取进上下文，图片只
     // 记元信息；没正文、又没提取出可用内容时只回说明，不进模型。
     // 语音附件不进 processAttachments（它是“语音指挥”入口，见下）。

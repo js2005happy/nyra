@@ -28,10 +28,6 @@ import type { BotNotifierPolicy } from "./types.ts";
 export const BOT_NOTIFY_STATE_FILE = "bot-notify-state.json";
 
 export interface NotifierState {
-  /** 本月已花（null = 算不出，不告警）。 */
-  monthlySpentUsd: number | null;
-  /** 月度上限（null = 没配，不告警）。 */
-  monthlyLimitUsd: number | null;
   /** 今日 token 花费。 */
   dailySpentUsd: number;
   /** 当天预算（null = 没配，不告警）。 */
@@ -70,7 +66,7 @@ interface NotifyStateFile {
   version: number;
   /** 每条件上次推送时间（毫秒时间戳）。 */
   lastNotifiedAt: Record<string, number>;
-  /** 每条件上次推送时的值（月度告警记比例档，watch 记哈希）：值没变就不重推。 */
+  /** 每条件上次推送时的值（watch 记哈希）：值没变就不重推。 */
   lastValue: Record<string, string>;
   /** watch 上次见到的文件哈希（"missing" = 文件不存在）。 */
   watchHash: Record<string, string>;
@@ -140,8 +136,7 @@ export class BotNotifier {
 
   /**
    * 同一条件在冷却期内只推一次：值没变且没过冷却就跳过；否则记下这次
-   * 推送的时间与值，返回 true。值变了（如月度比例从 0.8 档升到 1.0 档）
-   * 立刻再推，不用等冷却过。
+   * 推送的时间与值，返回 true。值变了立刻再推，不用等冷却过。
    */
   private shouldNotify(key: string, value: string): boolean {
     const now = this.nowFn();
@@ -198,17 +193,6 @@ export class BotNotifier {
     const pushed: string[] = [];
     const st = this.stateFn ? this.stateFn() : null;
     if (st) {
-      // 月度花费：比例档 0.8/1.0，档变了才再推。
-      if (st.monthlyLimitUsd !== null && st.monthlySpentUsd !== null && st.monthlyLimitUsd > 0) {
-        const ratio = st.monthlySpentUsd / st.monthlyLimitUsd;
-        if (ratio >= 1 && this.shouldNotify("monthly-spend", "1.0")) {
-          const text = `本月预算已用完（已花 $${st.monthlySpentUsd.toFixed(2)} / 上限 $${st.monthlyLimitUsd.toFixed(2)}），新任务会被直接拒绝。`;
-          if (await this.push("heartbeat", text)) pushed.push(text);
-        } else if (ratio >= this.policy.monthlySpendWarnRatio && this.shouldNotify("monthly-spend", "warn")) {
-          const text = `本月花费已达上限的 ${Math.round(ratio * 100)}%（$${st.monthlySpentUsd.toFixed(2)} / $${st.monthlyLimitUsd.toFixed(2)}），注意预算。`;
-          if (await this.push("heartbeat", text)) pushed.push(text);
-        }
-      }
       // 当天预算用完。
       if (st.dailyBudgetUsd !== null && st.dailySpentUsd >= st.dailyBudgetUsd && this.shouldNotify("daily-budget", "over")) {
         const text = `今天的 token 预算已用完（已花 $${st.dailySpentUsd.toFixed(4)}），今天不再进模型。`;

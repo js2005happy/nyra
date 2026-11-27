@@ -42,8 +42,6 @@ export interface BotNotifierPolicy {
   notifyCooldownMs: number;
   /** 定时/队列任务完成时推什么：failures（只推失败，默认）/ all（成功也推）/ none。 */
   notifyTasks: "failures" | "all" | "none";
-  /** 月度花费达到上限的这个比例就告警一次（默认 0.8，夹在 0.1 到 1 之间）。 */
-  monthlySpendWarnRatio: number;
   /** 会话队列深度超过这个数就告警（默认 5）。 */
   queueDepthWarn: number;
   /** 有挂起审批超过这么多分钟没人批就提醒一次（默认 10）。 */
@@ -58,7 +56,6 @@ export const DEFAULT_NOTIFIER_POLICY: BotNotifierPolicy = {
   heartbeatIntervalMs: 300000,
   notifyCooldownMs: 3600000,
   notifyTasks: "failures",
-  monthlySpendWarnRatio: 0.8,
   queueDepthWarn: 5,
   pendingApprovalWarnMinutes: 10,
   watches: [],
@@ -256,9 +253,6 @@ export function botPolicyFromConfig(config: Record<string, unknown>): BotPolicy 
     notifier.heartbeatIntervalMs = Math.min(3600000, Math.max(60000, asPosInt(n.heartbeat_interval_ms, DEFAULT_NOTIFIER_POLICY.heartbeatIntervalMs)));
     notifier.notifyCooldownMs = Math.min(86400000, Math.max(60000, asPosInt(n.notify_cooldown_ms, DEFAULT_NOTIFIER_POLICY.notifyCooldownMs)));
     if (n.notify_tasks === "all" || n.notify_tasks === "none") notifier.notifyTasks = n.notify_tasks;
-    if (typeof n.monthly_spend_warn_ratio === "number" && Number.isFinite(n.monthly_spend_warn_ratio)) {
-      notifier.monthlySpendWarnRatio = Math.min(1, Math.max(0.1, n.monthly_spend_warn_ratio));
-    }
     notifier.queueDepthWarn = asNonNegInt(n.queue_depth_warn, DEFAULT_NOTIFIER_POLICY.queueDepthWarn);
     notifier.pendingApprovalWarnMinutes = asNonNegInt(n.pending_approval_warn_minutes, DEFAULT_NOTIFIER_POLICY.pendingApprovalWarnMinutes);
     if (Array.isArray(n.watches)) {

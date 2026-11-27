@@ -9,7 +9,7 @@
 //   - 单用户/天：防单个用户把 Bot 当免费 API 刷；
 //   - 单群聊/分钟：防群聊洪峰（Webhook/轮询抖动、群友接力刷屏）；
 //   - 每天 token 花费：与用量账本同口径（provider 实报 + 已配单价才算钱，
-//     算不出时不挡人——与月度硬顶同一诚实边界）。
+//     算不出时不挡人——与单次硬顶同一诚实边界）。
 // 确定性指令（/help、/status、/new、/stop、/model）不走模型、不扣 token，
 // 也不计入这三档配额——拦它们只会让用户连“停下”都喊不出来。
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
