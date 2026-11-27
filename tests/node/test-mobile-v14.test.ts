@@ -93,11 +93,18 @@ test("不同 agent 用不同丸子：默认助手是 Nyra、chief 是总指挥�
   expect(new Set(Object.values(keys)).size).toBe(ids.length);
 });
 
-test("页面：底栏 4 个（对话 / 待你决定 / 自动化 / 设置），技能收进设置；总指挥入口、方案卡、群聊页都在", () => {
+test("页面：底栏 6 个（对话 / 待你决定 / 探索 / 自动化 / 我的 / 设置），技能收进设置；总指挥入口、方案卡、群聊页都在", () => {
   const tabs = [...MOBILE_V2_HTML.matchAll(/<button data-tab="(\w+)">/g)].map((x) => x[1]);
-  expect(tabs).toEqual(["threads", "inbox", "automations", "settings"]);
+  expect(tabs).toEqual(["threads", "inbox", "explore", "automations", "profile", "settings"]);
   expect(MOBILE_V2_HTML).toContain('id="open-skills"');
   expect(MOBILE_V2_HTML).toContain('id="skills-view"');
+  // Cue B 批：探索页与个人页、Bot Mode 开关都在。
+  for (const id of ["explore-view", "explore-list", "profile-view", "profile-body", "invite-box", "botmode-row", "botmode-switch", "botmode-state"]) {
+    expect(MOBILE_V2_HTML).toContain(`id="${id}"`);
+  }
+  for (const fn of ["function loadExplore(", "function loadProfile(", "function loadInvites(", "function loadBotMode(", "function toggleBotMode(", "function runTemplate("]) {
+    expect(MOBILE_V2_HTML).toContain(fn);
+  }
   for (const id of ["chief-card", "chief-view", "chief-feed", "group-view", "group-prog", "group-feed", "group-at", "group-input", "pair-lost", "offline"]) {
     expect(MOBILE_V2_HTML).toContain(`id="${id}"`);
   }
