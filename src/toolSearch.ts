@@ -7,7 +7,8 @@
 //   1. **选择器**：给定当前任务文本，挑出最相关的 K 个工具 + 常驻核心工具（本文件）
 //   2. **检索工具**：`search_tools` 元工具（SEARCH_TOOLS_SCHEMA + searchDeferredTools +
 //      formatSearchResults，本文件）+ Agent 里的延迟加载接线（src/agent.ts）：MCP 工具
-//      超过 8 个时只发最相关的前 8 个，其余进 deferredTools，模型调 search_tools
+//      超过 8 个时只发最相关的前 8 个，内置工具超过 18 个（含核心集 10 个）时只发
+//      核心集 + 按关键词召回的最多 8 个，其余进 deferredTools，模型调 search_tools
 //      拉回来；命中工具的完整定义以 JSON 返回并追加进本轮 schemas。
 //
 // 本文件是纯函数：不读文件、不 spawn、不改状态。排序必须可解释——每个入选/落选都要
@@ -148,11 +149,45 @@ export function selectTools(
   return { kept, dropped, scores: scored.sort((a, b) => b.score - a.score), suggestions };
 }
 
+/**
+ * 内置工具的常驻核心集（工具检索批：把 MCP 懒加载扩展到内置工具）。
+ *
+ * 定法（有依据，不是拍脑袋）：46 题评测集（~/workspace/nyra-eval-set，
+ * cases/*.jsonl 的 expect.calls）里期望调用的分布——read_file 10 次、
+ * list_dir / edit_file 各 5 次、shell 4 次、grep_search / web_search /
+ * memory_search / write_file 各 3 次、git_status 2 次；其余 38 个内置
+ * 工具在评测任务里一次都没被期望调用。核心集 = 高频 9 个 + plan：
+ * plan 是“先写计划再执行”的 house 做法，多步任务动手前要它在场。
+ * 核心集之外的内置工具按任务关键词召回（selectTools），无命中时只剩
+ * 核心集 + search_tools（不全量回退——核心集就是安全底线；空任务时
+ * agent.ts 另行全量发送，见 toolSchemas）。
+ */
+export const CORE_BUILTIN_TOOLS: readonly string[] = [
+  "read_file",
+  "list_dir",
+  "grep_search",
+  "shell",
+  "write_file",
+  "edit_file",
+  "web_search",
+  "memory_search",
+  "git_status",
+  "plan",
+];
+
+/**
+ * 内置工具懒加载的上限（含核心集）：每轮最多发这么多个内置工具
+ * schema（核心集 10 个 + 按关键词召回最多 8 个）。内置工具 53 个，
+ * 远超上限，所以任务非空时内置懒加载总是开着；NYRA_LAZY_TOOLS=0
+ * 或任务为空时全量发送（逃生口与兼容）。
+ */
+export const BUILTIN_LAZY_LOAD_THRESHOLD = 18;
+
 /** 给 `search_tools` 元工具用的一句话说明（告诉模型有哪些工具没发出去、怎么拿回来）。 */
-export function describeDeferred(selection: ToolSelection, total: number): string {
+export function describeDeferred(selection: ToolSelection, total: number, label = "个工具"): string {
   if (!selection.dropped.length) return "";
   const sample = selection.dropped.slice(0, 10).join("、");
-  return `本轮未发送 ${selection.dropped.length}/${total} 个工具（${sample}${selection.dropped.length > 10 ? "…" : ""}）。需要时调用 search_tools 检索后使用。`;
+  return `本轮未发送 ${selection.dropped.length}/${total} ${label}（${sample}${selection.dropped.length > 10 ? "…" : ""}）。需要时调用 search_tools 检索后使用。`;
 }
 
 /** 人类可读的排序解释（doctor / 排障用）。 */
@@ -173,7 +208,7 @@ export const SEARCH_TOOLS_SCHEMA: Record<string, unknown> = {
   type: "function",
   function: {
     name: "search_tools",
-    description: "检索工具。当前只发送了核心工具；需要其他能力（MCP、生图、浏览器等）时先用它按关键词检索，命中的工具会在下一轮可用。",
+    description: "检索工具。当前只发送了核心工具；需要其他能力（更多内置工具、MCP、生图、浏览器等）时先用它按关键词检索，命中的工具会在下一轮可用。",
     parameters: {
       type: "object",
       properties: {
