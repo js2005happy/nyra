@@ -3,14 +3,18 @@
 //
 // 发现 ≠ 加好友：
 // - 发现只是“在网上找到一张名片”——拉对方的 well-known 端点、验
-//   格式、验签名（有签名时）、记进发现账本；发现本身不建好友关系、
-//   不发任何请求、不耗对方的 grant；
+//   格式、验签名（A2A v1.0 起，没签名、签名对不上、过期签名一律
+//   拒绝进账），记进发现账本；发现本身不建好友关系、不发任何请
+//   求、不耗对方的 grant；
 // - 加好友仍走双向批准：发现后调 `nyra peer discover-add <地址>
 //   <名字>`，内部复用 addFriendRequest（不带好友码——码是线下人工
 //   比对的路子，发现走的是“名片本身就是公开信息”的路子）；发完请
 //   求后对方仍须在自己那边 accept，另一边同样走一遍，不绕过批准；
-// - 验签是“更可信”不是准入：名片没签名照样能发现（标 absent），
-//   签名对不上标 invalid 并拒绝记入账本（伪造名片不进发现列表）；
+// - 验签是准入门槛（A2A v1.0 起）：名片没签名（absent）、签名对不
+//   上（invalid）、过期签名一律拒绝，不记入账本，并记一条
+//   peer_discovery_rejected 事件（只记地址与原因，不记名片全文）。
+//   对方没跑过 nyra peer card keygen + nyra peer card sign on
+//   时名片没签名，发现不了——先让对方把签名开起来。
 //   TOFU 钉住的钥匙变了（mismatch）同样拒绝，并报出原因。
 // - 种子地址是机主给的（CLI 参数或配置文件）：本批不做局域网 mDNS
 //   扫描、不做公开爬取——发现范围由机主点名，不静默扫网。
@@ -19,7 +23,7 @@ import { dirname, join } from "node:path";
 import { resolveNyraHome } from "./memory.ts";
 import { RunStore } from "./runs.ts";
 import { addFriendRequest, fetchAgentCard, parseAgentCard, type AgentCard, type CardFetchDeps, type FriendEntry } from "./peerCard.ts";
-import { verifySignedCard, cardKeyStatus, type CardSignatureStatus } from "./cardSignature.ts";
+import { cardKeyStatus, type CardSignatureStatus } from "./cardSignature.ts";
 
 export const PEER_DISCOVERY_FILE = "peer-discovery.json";
 
@@ -108,8 +112,9 @@ export interface DiscoverDeps {
 
 /**
  * 发现一台别人的机器人：拉它的 well-known 名片、验格式、验签名，
- * 记进发现账本。签名对不上或 TOFU 钉住的钥匙变了时拒绝，不记账。
- * 名片没签名不拒绝（标 absent）。同一地址重复发现只更新 last_seen。
+ * 记进发现账本。A2A v1.0 起，签名是准入门槛：没签名、签名对不上、
+ * 过期签名一律拒绝，不记账，并记 peer_discovery_rejected 事件。
+ * TOFU 钉住的钥匙变了同样拒绝。同一地址重复发现只更新 last_seen。
  */
 export async function discoverPeer(home: string, url: string, deps?: DiscoverDeps): Promise<DiscoveredPeer> {
   const origin = (() => {
@@ -119,15 +124,13 @@ export async function discoverPeer(home: string, url: string, deps?: DiscoverDep
       throw new PeerDiscoveryError(`发现地址无效：${url}`);
     }
   })();
-  const { card, hash } = await fetchAgentCard(origin, deps?.fetchDeps, deps?.authToken);
-  // 验签用解析后的卡片对象重建原文哈希：JSON.parse 保留键顺序，
-  // 服务端 buildAgentCard 的键顺序固定，删掉 signature/public_key
-  // 后再 stringify，哈希与签发时算的能对上；中间有人重排过键就
-  // 验不过（fail-closed，不认这张卡）。
-  const rawCard = card as unknown as Record<string, unknown>;
-  const verified = verifySignedCard(rawCard);
-  if (verified.status === "invalid") {
-    throw new PeerDiscoveryError(`对方名片签名验不过（${verified.reason}）：伪造嫌疑，不记入发现账本`);
+  const { card, hash, verified } = await fetchAgentCard(origin, deps?.fetchDeps, deps?.authToken);
+  if (verified.status !== "verified") {
+    const reason = verified.status === "absent"
+      ? "对方名片没签名（对方须先跑 nyra peer card keygen 再开 nyra peer card sign on）"
+      : `对方名片签名验不过（${verified.reason}）`;
+    recordDiscoveryEvent(home, "peer_discovery_rejected", { url: origin, reason });
+    throw new PeerDiscoveryError(`${reason}：伪造或无签名名片不进发现账本`);
   }
   const store = loadPeerDiscovery(home);
   const now = nowIso();

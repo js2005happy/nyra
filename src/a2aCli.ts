@@ -28,7 +28,7 @@ const A2A_USAGE = [
   "  serve token revoke <token-id>              吊销一条 token（立即失效）",
   "  serve grant <token-id> --yes                给某 token 写提议权（模型才能提议写操作）",
   "  serve revoke-grant <token-id>              撤销某 token 的写提议权",
-  "  card                                       打印本机的 A2A 名片（JSON，协议 v0.3）",
+  "  card                                       打印本机的 A2A 名片（JSON，协议 v1.0）",
   "写提议不等于执行：模型提议的写操作进 peer 提议门，机主须逐条批",
   "（nyra peer proposal accept <提议 id> --yes）才执行。详见 docs/a2a.md。",
 ].join("\n");
@@ -99,7 +99,7 @@ export async function handleA2a(args: string[], home: string): Promise<number> {
       const host = flagValue("--host");
       const handle = await startA2aServer(home, { host, port });
       process.stdout.write(`A2A 服务端已启动：http://${handle.host}:${handle.port}（A2A JSON-RPC endpoint）\n`);
-      process.stdout.write(`名片：GET http://${handle.host}:${handle.port}/.well-known/agent.json（公开）；调用：POST / 带 Authorization: Bearer <token>。\n`);
+      process.stdout.write(`名片：GET http://${handle.host}:${handle.port}/.well-known/agent-card.json（公开；/.well-known/agent.json 是老路径，同内容）；调用：POST / 带 Authorization: Bearer <token>。\n`);
       if (handle.host !== A2A_SERVER_DEFAULT_HOST) {
         process.stdout.write("警告：你绑的不是回环地址，局域网里的人都能连上这个端点（token 是唯一一道门）。\n");
       }

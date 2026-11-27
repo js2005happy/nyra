@@ -1,6 +1,9 @@
 // src/peerCard.ts — 缺口 38：Agent 名片与加好友握手（扩展缺口 12）。
 //
-// 名片是 A2A 风格的 Agent Card：名字、描述、技能、端点、鉴权方式。
+// 名片是 A2A v1.0 的 Agent Card（supportedInterfaces +
+// securitySchemes + signatures[]）：名字、描述、技能、鉴权方式。
+// 老版 v0.3 的卡（顶层 url / protocolVersion / authentication /
+// endpoints）拉回来也认，折进 v1.0 的形状再用。
 // 名片内容由 Soul（缺口 28）与对外 MCP 服务的工具清单如实生成，不编造
 // 没有的能力；对外 MCP 服务的写工具只在 allow_writes 开启时才出现在
 // 名片里（NyraMcpServer.tools() 本来就这么过滤）。
@@ -36,7 +39,7 @@ import { appendPeerAudit, handoffPeer, peerConfig, PEER_NAME_RE, HANDOFF_DEFAULT
 import { RunStore} from "./runs.ts";
 import { loadSoul, resolveSoulAgentId} from "./soul.ts";
 // 第 3 批 G-P1-7：名片签名（cardSignature 不静态 import peerCard，无循环）。
-import { loadSigningKey, signAgentCard, generateSigningKeypair, saveSigningKey, jwkThumbprint, pinCardKey, cardKeyStatus } from "./cardSignature.ts";
+import { loadSigningKey, signAgentCard, signAgentCardV1, generateSigningKeypair, saveSigningKey, jwkThumbprint, pinCardKey, cardKeyStatus, verifySignedCard, type VerifiedCard } from "./cardSignature.ts";
 // G-P2-2：准入账本（admission.ts 是叶模块，只引 node 内置，无循环）。
 import { recordAdmission } from "./admission.ts";
 
@@ -72,28 +75,50 @@ export interface AgentCardSkill {
   id: string;
   name: string;
   description: string;
+  tags: string[];
+  examples: string[];
+  inputModes: string[];
+  outputModes: string[];
+}
+
+/** A2A v1.0 的 AgentInterface：地址 + 协议绑定 + 协议版本。 */
+export interface AgentInterface {
+  url: string | null;
+  protocolBinding: string;
+  protocolVersion: string;
+}
+
+/** A2A v1.0 的 AgentCardSignature：JWS JSON 序列化的一条签名。 */
+export interface AgentCardSignature {
+  protected: string;
+  signature: string;
+  header?: Record<string, unknown>;
 }
 
 export interface AgentCard {
   name: string;
   description: string;
-  url: string | null;
   version: string;
-  skills: AgentCardSkill[];
-  authentication: { schemes: string[] };
-  capabilities: { streaming: boolean; pushNotifications: boolean };
+  agentId: string;
+  supportedInterfaces: AgentInterface[];
+  capabilities: { streaming: boolean; pushNotifications: boolean; stateTransitionHistory: boolean; extendedAgentCard: boolean };
   defaultInputModes: string[];
   defaultOutputModes: string[];
-  endpoints: { mcp: string | null };
-  /** 第 3 批 G-P1-7：JWS 签名（紧凑序列化）与签名公钥 JWK，没开签名时没有这两个字段。 */
+  skills: AgentCardSkill[];
+  securitySchemes: { bearer: { type: string; scheme: string } };
+  security: { bearer: string[] }[];
+  /** A2A v1.0：JWS 分离式签名数组（signAgentCardV1 签的，签规范化名片）。 */
+  signatures?: AgentCardSignature[];
+  /** 老版紧凑 JWS（供还没升到 v1.0 的老对方认；与 signatures[] 同一次签发）。 */
   signature?: string;
+  /** 签名公钥 JWK（随名片一起发，供对方验签）。 */
   public_key?: Record<string, unknown>;
 }
 
 export interface PeerCardConfig {
   /** 名片发布开关：默认关；关时网关的 well-known 路径当不存在（404）。 */
   publish: boolean;
-  /** 对外公开的网关根地址（如 https://nyra.example.com）；不配时名片里 url 为 null。 */
+  /** 对外公开的网关根地址（如 https://nyra.example.com）；不配时名片里 supportedInterfaces[0].url 为 null。 */
   publicUrl: string | null;
   /**
    * 第 2 批 G-P1-5：名片 per-circle 可见性——配了时，只有这些圈的好友
@@ -157,24 +182,34 @@ export function buildAgentCard(home: string, config: Record<string, unknown>, ag
     id: t.name,
     name: t.name,
     description: t.description,
+    tags: [],
+    examples: [],
+    inputModes: ["text"],
+    outputModes: ["text"],
   }));
   const card: AgentCard = {
     name,
     description,
-    url: cardCfg.publicUrl,
     version: VERSION,
-    skills,
-    authentication: { schemes: ["bearer"] },
-    capabilities: { streaming: false, pushNotifications: false },
+    agentId,
+    supportedInterfaces: [{ url: cardCfg.publicUrl, protocolBinding: "JSONRPC", protocolVersion: "1.0" }],
+    capabilities: { streaming: false, pushNotifications: false, stateTransitionHistory: false, extendedAgentCard: false },
     defaultInputModes: ["text"],
     defaultOutputModes: ["text"],
-    endpoints: { mcp: cardCfg.publicUrl ? `${cardCfg.publicUrl}/mcp` : null },
+    skills,
+    securitySchemes: { bearer: { type: "http", scheme: "bearer" } },
+    security: [{ bearer: [] }],
   };
-  // 第 3 批 G-P1-7：开了签名且密码箱里有钥匙时，名片带上 JWS 签名
-  // 与公钥 JWK；没钥匙（网关没密码时）发素名片，不报错、不假装签过。
+  // A2A v1.0：开了签名且密码箱里有钥匙时，名片同时带 v1.0 的
+  // signatures[]（JWS 分离式，签规范化名片）与老版紧凑 JWS
+  // signature + public_key（老对方还能认）；两份签的是同一张素
+  // 名片，互不干扰。没钥匙（网关没密码时）发素名片，不报错、
+  // 不假装签过。
   if (cardCfg.signing) {
     const keypair = loadSigningKey(home);
     if (keypair) {
+      const v1 = signAgentCardV1(card as unknown as Record<string, unknown>, keypair);
+      card.signatures = [{ protected: v1.protected, signature: v1.signature, header: v1.header }];
       const sig = signAgentCard(card as unknown as Record<string, unknown>, keypair);
       card.signature = sig.jws;
       card.public_key = sig.publicKey;
@@ -203,25 +238,73 @@ function strField(o: Record<string, unknown>, key: string, max: number, required
   return v;
 }
 
-/** 严格校验一张对方名片（不可信输入）：类型、长度、上限逐项验，不过直接拒绝。 */
+function strArrayField(o: Record<string, unknown>, key: string, maxItems: number, maxLen: number): string[] | null {
+  const v = o[key];
+  if (v === undefined || v === null) return null;
+  if (!Array.isArray(v)) throw new PeerCardError(`名片字段 ${key} 必须是字符串列表`);
+  if (v.length > maxItems) throw new PeerCardError(`名片字段 ${key} 最多 ${maxItems} 项`);
+  const out: string[] = [];
+  for (const s of v) {
+    if (typeof s !== "string" || s.length > maxLen) throw new PeerCardError(`名片字段 ${key} 只能是短字符串`);
+    out.push(s);
+  }
+  return out;
+}
+
+function parseCardUrl(v: unknown, field: string): string | null {
+  if (v === undefined || v === null) return null;
+  if (typeof v !== "string") throw new PeerCardError(`名片的 ${field} 必须是字符串或 null`);
+  if (v.length > 500) throw new PeerCardError(`名片的 ${field} 太长`);
+  try {
+    const u = new URL(v);
+    if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error("只支持 http/https");
+  } catch {
+    throw new PeerCardError(`名片的 ${field} 必须是 http:// 或 https:// 开头的地址`);
+  }
+  return v;
+}
+
+/**
+ * 严格校验一张对方名片（不可信输入）：类型、长度、上限逐项验，不过直接拒绝。
+ * 按 A2A v1.0 认 supportedInterfaces / securitySchemes / signatures[]；
+ * 老版 v0.3 的卡（顶层 url / protocolVersion / authentication /
+ * endpoints）也认：顶层 url 折进 supportedInterfaces[0]（协议如实
+ * 标 "0.3"，不冒充 1.0），authentication / endpoints 只验形态、不进
+ * 返回的卡；签名三字段（signatures / signature / public_key）原样
+ * 带回，供验签用。只做格式校验，不验签名——验签是 fetchAgentCard
+ * 与调用方的事。
+ */
 export function parseAgentCard(raw: unknown): AgentCard {
   if (!isPlainObject(raw)) throw new PeerCardError("名片必须是 JSON 对象");
   const name = strField(raw, "name", 64, true);
   if (!name || !name.trim()) throw new PeerCardError("名片的 name 不能为空");
   const description = strField(raw, "description", 500, true) ?? "";
   const version = strField(raw, "version", 32, false) ?? "";
-  const urlRaw = raw.url;
-  let url: string | null = null;
-  if (urlRaw !== undefined && urlRaw !== null) {
-    if (typeof urlRaw !== "string") throw new PeerCardError("名片的 url 必须是字符串或 null");
-    if (urlRaw.length > 500) throw new PeerCardError("名片的 url 太长");
-    try {
-      const u = new URL(urlRaw);
-      if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error("只支持 http/https");
-    } catch {
-      throw new PeerCardError("名片的 url 必须是 http:// 或 https:// 开头的地址");
+  const agentId = strField(raw, "agentId", 64, false) ?? "";
+  let supportedInterfaces: AgentInterface[];
+  const ifRaw = raw.supportedInterfaces;
+  if (ifRaw !== undefined && ifRaw !== null) {
+    if (!Array.isArray(ifRaw) || ifRaw.length === 0 || ifRaw.length > 5) {
+      throw new PeerCardError("名片的 supportedInterfaces 须是 1–5 项的列表");
     }
-    url = urlRaw;
+    supportedInterfaces = [];
+    for (const entry of ifRaw) {
+      if (!isPlainObject(entry)) throw new PeerCardError("名片的 supportedInterfaces 每项须是对象");
+      const url = parseCardUrl(entry.url, "supportedInterfaces[].url");
+      const binding = strField(entry, "protocolBinding", 32, false) ?? "JSONRPC";
+      const pv = strField(entry, "protocolVersion", 32, false) ?? "1.0";
+      if (pv !== "1.0" && pv !== "0.3") throw new PeerCardError(`名片的 supportedInterfaces 只认 protocolVersion "1.0" 或 "0.3"，当前是 ${pv}`);
+      supportedInterfaces.push({ url, protocolBinding: binding, protocolVersion: pv });
+    }
+  } else {
+    const url = parseCardUrl(raw.url, "url");
+    supportedInterfaces = [{ url, protocolBinding: "JSONRPC", protocolVersion: "0.3" }];
+  }
+  const topPv = raw.protocolVersion;
+  if (topPv !== undefined && topPv !== null) {
+    if (typeof topPv !== "string" || (topPv !== "0.3" && topPv !== "1.0")) {
+      throw new PeerCardError(`名片的 protocolVersion 不认：${String(topPv)}`);
+    }
   }
   const skillsRaw = raw.skills;
   if (!Array.isArray(skillsRaw)) throw new PeerCardError("名片的 skills 必须是列表");
@@ -233,55 +316,114 @@ export function parseAgentCard(raw: unknown): AgentCard {
     const sname = strField(s, "name", 64, true);
     const desc = strField(s, "description", 500, false) ?? "";
     if (!id || !sname) throw new PeerCardError("名片的 skill 缺 id 或 name");
-    skills.push({ id, name: sname, description: desc });
+    skills.push({
+      id,
+      name: sname,
+      description: desc,
+      tags: strArrayField(s, "tags", 20, 32) ?? [],
+      examples: strArrayField(s, "examples", 10, 500) ?? [],
+      inputModes: strArrayField(s, "inputModes", 20, 32) ?? ["text"],
+      outputModes: strArrayField(s, "outputModes", 20, 32) ?? ["text"],
+    });
   }
   const authRaw = raw.authentication;
-  let schemes: string[] = ["bearer"];
   if (authRaw !== undefined && authRaw !== null) {
     if (!isPlainObject(authRaw) || !Array.isArray(authRaw.schemes)) {
       throw new PeerCardError("名片的 authentication.schemes 必须是字符串列表");
     }
-    schemes = [];
+    if (!authRaw.schemes.length) throw new PeerCardError("名片的 authentication.schemes 不能为空");
     for (const s of authRaw.schemes) {
       if (typeof s !== "string" || !s.trim() || s.length > 32) {
         throw new PeerCardError("名片的 authentication.schemes 只能是非空短字符串");
       }
-      schemes.push(s);
     }
-    if (!schemes.length) throw new PeerCardError("名片的 authentication.schemes 不能为空");
   }
   const endpointsRaw = raw.endpoints;
-  let mcp: string | null = null;
   if (endpointsRaw !== undefined && endpointsRaw !== null) {
     if (!isPlainObject(endpointsRaw)) throw new PeerCardError("名片的 endpoints 必须是对象");
     if (endpointsRaw.mcp !== undefined && endpointsRaw.mcp !== null) {
       if (typeof endpointsRaw.mcp !== "string" || endpointsRaw.mcp.length > 500) {
         throw new PeerCardError("名片的 endpoints.mcp 必须是字符串或 null");
       }
-      mcp = endpointsRaw.mcp;
     }
   }
-  return {
+  const capsRaw = raw.capabilities;
+  const capabilities = { streaming: false, pushNotifications: false, stateTransitionHistory: false, extendedAgentCard: false };
+  if (capsRaw !== undefined && capsRaw !== null) {
+    if (!isPlainObject(capsRaw)) throw new PeerCardError("名片的 capabilities 必须是对象");
+    for (const k of ["streaming", "pushNotifications", "stateTransitionHistory", "extendedAgentCard"] as const) {
+      const v = capsRaw[k];
+      if (v !== undefined && v !== null) {
+        if (typeof v !== "boolean") throw new PeerCardError(`名片的 capabilities.${k} 必须是布尔值`);
+        capabilities[k] = v;
+      }
+    }
+  }
+  if (raw.securitySchemes !== undefined && raw.securitySchemes !== null && !isPlainObject(raw.securitySchemes)) {
+    throw new PeerCardError("名片的 securitySchemes 必须是对象");
+  }
+  if (raw.security !== undefined && raw.security !== null && !Array.isArray(raw.security)) {
+    throw new PeerCardError("名片的 security 必须是列表");
+  }
+  const signaturesRaw = raw.signatures;
+  let signatures: AgentCardSignature[] | undefined;
+  if (signaturesRaw !== undefined && signaturesRaw !== null) {
+    if (!Array.isArray(signaturesRaw) || signaturesRaw.length > 5) {
+      throw new PeerCardError("名片的 signatures 须是最多 5 项的列表");
+    }
+    signatures = [];
+    for (const entry of signaturesRaw) {
+      if (!isPlainObject(entry) || typeof entry.protected !== "string" || typeof entry.signature !== "string") {
+        throw new PeerCardError("名片的 signatures 每项须带 protected 与 signature 字符串");
+      }
+      const sig: AgentCardSignature = { protected: entry.protected, signature: entry.signature };
+      if (entry.header !== undefined && entry.header !== null) {
+        if (!isPlainObject(entry.header)) throw new PeerCardError("名片的 signatures[].header 必须是对象");
+        sig.header = entry.header;
+      }
+      signatures.push(sig);
+    }
+  }
+  const card: AgentCard = {
     name: name.trim(),
     description,
-    url,
     version,
+    agentId,
+    supportedInterfaces,
+    capabilities,
+    defaultInputModes: strArrayField(raw, "defaultInputModes", 20, 32) ?? ["text"],
+    defaultOutputModes: strArrayField(raw, "defaultOutputModes", 20, 32) ?? ["text"],
     skills,
-    authentication: { schemes },
-    capabilities: { streaming: false, pushNotifications: false },
-    defaultInputModes: ["text"],
-    defaultOutputModes: ["text"],
-    endpoints: { mcp },
+    securitySchemes: { bearer: { type: "http", scheme: "bearer" } },
+    security: [{ bearer: [] }],
   };
+  if (signatures) card.signatures = signatures;
+  if (typeof raw.signature === "string") card.signature = raw.signature;
+  if (raw.public_key && typeof raw.public_key === "object" && !Array.isArray(raw.public_key)) {
+    card.public_key = raw.public_key as Record<string, unknown>;
+  }
+  return card;
 }
 
 export interface CardFetchDeps {
   fetchFn?: (url: string, init?: Record<string, unknown>) => Promise<{ ok: boolean; status: number; text: () => Promise<string> }>;
 }
 
+export interface CardFetchOpts {
+  /**
+   * A2A v1.0 起：收卡必须验过才算数。开时，没签名、篡改过、过期签
+   * 名一律直接拒绝（PeerCardError）。默认关——只拉格式、不收进
+   * 好友关系的路子（群聊邀请、per-peer token 拉卡）还走旧口径，
+   * 验签结论照常回给调用方。
+   */
+  requireSignature?: boolean;
+}
+
 /** 从对方网关拉名片：GET <源站>/.well-known/agent-card.json（10 秒超时，64KB 上限）。
- *  第 3 批 G-P1-4：给了 authToken 时带 Bearer 调（对方按圈放行要求 grant 时用）。 */
-export async function fetchAgentCard(url: string, deps?: CardFetchDeps, authToken?: string): Promise<{ card: AgentCard; hash: string }> {
+ *  第 3 批 G-P1-4：给了 authToken 时带 Bearer 调（对方按圈放行要求 grant 时用）。
+ *  验签用拉回来的原始 JSON（重算规范化哈希，字段一个不能少——按
+ *  解析后的卡验会丢老版字段，哈希就对不上）。 */
+export async function fetchAgentCard(url: string, deps?: CardFetchDeps, authToken?: string, opts?: CardFetchOpts): Promise<{ card: AgentCard; hash: string; verified: VerifiedCard }> {
   let origin: string;
   try {
     origin = new URL(url).origin;
@@ -313,16 +455,11 @@ export async function fetchAgentCard(url: string, deps?: CardFetchDeps, authToke
     throw new PeerCardError("对方名片不是合法 JSON");
   }
   const card = parseAgentCard(parsed);
-  // 第 3 批 G-P1-7：签名与公钥不在 parseAgentCard 的重建字段里——
-  // 这里贴回去（只认 string/object 形态，脏的直接丢掉，不让脏字段
-  // 混进名片）。不贴的话发现流程永远验不到签名（verifySignedCard
-  // 只能看到没签名的卡，签了也标 absent）。
-  const rawObj = parsed as Record<string, unknown>;
-  if (typeof rawObj.signature === "string") card.signature = rawObj.signature;
-  if (rawObj.public_key && typeof rawObj.public_key === "object" && !Array.isArray(rawObj.public_key)) {
-    card.public_key = rawObj.public_key as Record<string, unknown>;
+  const verified = verifySignedCard(parsed);
+  if (opts?.requireSignature && verified.status !== "verified") {
+    throw new PeerCardError(`对方名片签名验不过（${verified.reason}）：没签名、篡改过或过期的名片不收——对方须先跑 nyra peer card keygen 再开 nyra peer card sign on`);
   }
-  return { card, hash: cardHash(text) };
+  return { card, hash: cardHash(text), verified };
 }
 
 // ---------------------------------------------------------------------------
@@ -547,7 +684,7 @@ export async function addFriendRequest(home: string, config: Record<string, unkn
     if (!FRIEND_CODE_RE.test(opts.code.trim())) throw new PeerCardError("好友码格式不对（应为 NYR-XXXX-XXXX）");
     codeHash = cardHash(opts.code.trim());
   }
-  const { card, hash } = await fetchAgentCard(url, opts.fetchDeps);
+  const { card, hash } = await fetchAgentCard(url, opts.fetchDeps, undefined, { requireSignature: true });
   const book = loadFriendBook(home);
   let entry = findFriend(book, opts.name);
   if (entry && entry.blocked) throw new PeerCardError(`${opts.name} 已拉黑：先取消拉黑再发请求（nyra peer unblock ${opts.name}）`);
@@ -591,7 +728,7 @@ export async function recordInboundRequest(home: string, config: Record<string, 
     throw new PeerCardError("好友码对不上：请与对方核对码是否一致（码是双方人工比对的共享口令，错码不认）");
   }
   const codeHash = cardHash(code);
-  const { card, hash } = await fetchAgentCard(url, opts.fetchDeps);
+  const { card, hash } = await fetchAgentCard(url, opts.fetchDeps, undefined, { requireSignature: true });
   const book = loadFriendBook(home);
   let entry = findFriend(book, opts.name);
   if (entry && entry.blocked) throw new PeerCardError(`${opts.name} 已拉黑：先取消拉黑再登记请求（nyra peer unblock ${opts.name}）`);
@@ -987,7 +1124,7 @@ export async function handlePeerFriends(argv: string[], home: string, input?: Pe
       process.stdout.write(JSON.stringify(card, null, 2) + "\n");
       const cfg = peerCardConfig(config);
       process.stdout.write(`名片发布：${cfg.publish ? "已开启" : "未开启（默认关闭；开：nyra peer card publish on）"}\n`);
-      if (!cfg.publicUrl) process.stdout.write("公开地址未配：名片里 url 为 null；配：config.json 的 peer_card.public_url（网关根地址）\n");
+      if (!cfg.publicUrl) process.stdout.write("公开地址未配：名片里 supportedInterfaces[0].url 为 null；配：config.json 的 peer_card.public_url（网关根地址）\n");
       return 0;
     }
     if (cmd === "code") {

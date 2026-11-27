@@ -643,8 +643,10 @@ meeting_joined: ["meeting", "provider"],
 meeting_reconnected: ["meeting", "epoch"],
 meeting_minutes_built: ["meeting", "turns", "decisions", "actions"],
 // 第 3 批 G-P1-4 公开发现进证据链——地址、名字、签名结论。只记
-// 结论，不记名片全文。
+// 结论，不记名片全文。A2A v1.0 起拒收的发现也记一条
+// peer_discovery_rejected（只记地址与原因）。
 peer_discovered: ["url", "name", "signature"],
+peer_discovery_rejected: ["url", "reason"],
 // 第 3 批 per-peer token 进证据链——只记给谁，不记 token 原文。
 peer_token_set: ["peer"],
 peer_token_revoked: ["peer"],
