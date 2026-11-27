@@ -2,7 +2,7 @@
 // Agent Card 公开发现（well-known + 验签 + TOFU）与 per-peer token。
 // 全部用临时 home + 假 fetch，不起真服务器、不联网。
 import { test, expect } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Vault } from "../../src/vault.ts";
@@ -15,7 +15,7 @@ function tmpHome(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
 }
 
-/** 假 peer 的名片（字段顺序与 buildAgentCard 一致，验签才对得上）。 */
+/** 假 peer 的名片（老版 v0.3 形状；v1.0 的验签按 RFC 8785 规范化算，键顺序不影响结果）。 */
 function fakeCard(name: string): Record<string, unknown> {
   return {
     name,
@@ -54,23 +54,32 @@ function initVault(home: string, password: string): void {
   vault.init(password);
 }
 
-test("PeerDiscoveryBatch3.test_discover_unsigned_card_absent", async () => {
+function readAllRunEvents(home: string): Record<string, unknown>[] {
+  const out: Record<string, unknown>[] = [];
+  const base = join(home, "runs");
+  if (!existsSync(base)) return out;
+  for (const runId of readdirSync(base)) {
+    const p = join(base, runId, "events.jsonl");
+    if (!existsSync(p)) continue;
+    for (const line of readFileSync(p, "utf-8").split("\n")) {
+      if (!line.trim()) continue;
+      try { out.push(JSON.parse(line) as Record<string, unknown>); } catch { /* ignore */ }
+    }
+  }
+  return out;
+}
+
+test("PeerDiscoveryBatch3.test_discover_unsigned_card_rejected", async () => {
   const home = tmpHome("nyra-discover-");
   try {
-    const d = await discoverPeer(home, "https://other.example.com", {
+    // A2A v1.0 起：没签名的名片发现不了（以前标 absent 还能进账，现在直接拒绝）。
+    await expect(discoverPeer(home, "https://other.example.com", {
       fetchDeps: fetchDepsFor(JSON.stringify(fakeCard("OtherBot"))),
-    });
-    expect(d.name).toBe("OtherBot");
-    expect(d.url).toBe("https://other.example.com");
-    expect(d.signature).toBe("absent");
-    expect(d.key_fp).toBeNull();
-    expect(listDiscoveredPeers(home)).toHaveLength(1);
-    // 再发现一次：更新 last_seen，不重复记
-    const d2 = await discoverPeer(home, "https://other.example.com/", {
-      fetchDeps: fetchDepsFor(JSON.stringify(fakeCard("OtherBot"))),
-    });
-    expect(d2.url).toBe("https://other.example.com");
-    expect(listDiscoveredPeers(home)).toHaveLength(1);
+    })).rejects.toThrow("没签名");
+    expect(listDiscoveredPeers(home)).toHaveLength(0);
+    // 拒收记进证据链（只记地址与原因）。
+    const types = readAllRunEvents(home).map((e) => String(e.type));
+    expect(types).toContain("peer_discovery_rejected");
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
 

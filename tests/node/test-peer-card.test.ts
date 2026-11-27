@@ -5,6 +5,7 @@ import { test, expect} from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync} from "node:fs";
 import { tmpdir} from "node:os";
 import { join} from "node:path";
+import { generateSigningKeypair, signAgentCard } from "../../src/cardSignature.ts";
 import { saveConfig} from "../../src/config.ts";
 import { saveCircleBook } from "../../src/circles.ts";
 import { Gateway} from "../../src/gateway.ts";
@@ -68,19 +69,28 @@ const GOOD_CARD = {
   endpoints: { mcp: "http://127.0.0.1:18080/mcp" },
 };
 
-/** 假对端网关：只回名片（/.well-known/agent-card.json），别的路径 404。 */
-function startFakeCardServer(card: unknown, status = 200): { base: string; stop: () => void } {
+/** 把一张卡签上名（v1.0 起加好友须验过签名，假对端也得带签名的卡）。 */
+function signedCardText(card: Record<string, unknown>): string {
+  const kp = generateSigningKeypair();
+  const sig = signAgentCard(card, kp);
+  return JSON.stringify({ ...card, signature: sig.jws, public_key: sig.publicKey });
+}
+
+/** 假对端网关：只回名片（/.well-known/agent-card.json），别的路径 404。
+ *  对象卡默认带签名（v1.0 起加好友须验过签名）；字符串原样发（坏 JSON 测试用）。 */
+function startFakeCardServer(card: unknown, status = 200): { base: string; text: string; stop: () => void } {
+  const text = typeof card === "string" ? card : signedCardText(card as Record<string, unknown>);
   const server = Bun.serve({
     port: 0,
     fetch(req) {
       const url = new URL(req.url);
       if (url.pathname === PEER_CARD_PATH) {
-        return new Response(typeof card === "string" ? card : JSON.stringify(card), { status });
+        return new Response(text, { status });
       }
       return new Response("not found", { status: 404 });
     },
   });
-  return { base: `http://127.0.0.1:${server.port}`, stop: () => server.stop() };
+  return { base: `http://127.0.0.1:${server.port}`, text, stop: () => server.stop() };
 }
 
 /** 假对端 MCP 服务器：initialize + dispatch_task 回 run_id（share 测试用）。 */
@@ -89,9 +99,9 @@ function startFakeMcpServer(): { url: string; stop: () => void } {
     port: 0,
     async fetch(req) {
       const url = new URL(req.url);
-      // 同一个假对端也回名片：share 测试里好友地址就是这台服务器。
+      // 同一个假对端也回名片：share 测试里好友地址就是这台服务器（带签名，v1.0 起加好友须验过）。
       if (url.pathname === PEER_CARD_PATH) {
-        return new Response(JSON.stringify(GOOD_CARD), { status: 200 });
+        return new Response(signedCardText(GOOD_CARD as unknown as Record<string, unknown>), { status: 200 });
       }
       let body: Record<string, unknown> = {};
       try { body = (await req.json()) as Record<string, unknown>; } catch { return new Response("bad json", { status: 400 }); }
@@ -139,20 +149,24 @@ test("PeerCardTest.test_card_built_from_soul_and_mcp_tools", () => {
   expect(card.description).toContain("说话直接");
   expect(card.description).toContain("重复工作自动化");
   expect(card.version).toBe("0.5.15");
-  expect(card.url).toBeNull();
-  expect(card.endpoints.mcp).toBeNull();
-  expect(card.authentication.schemes).toEqual(["bearer"]);
+  expect(card.supportedInterfaces).toHaveLength(1);
+  expect(card.supportedInterfaces[0].url).toBeNull();
+  expect(card.supportedInterfaces[0].protocolBinding).toBe("JSONRPC");
+  expect(card.supportedInterfaces[0].protocolVersion).toBe("1.0");
+  expect(card.securitySchemes.bearer.scheme).toBe("bearer");
   expect(card.capabilities.streaming).toBe(false);
+  expect(card.capabilities.extendedAgentCard).toBe(false);
   expect(card.skills.map((s) => s.id)).toContain("answer_question");
   expect(card.skills.map((s) => s.id)).toContain("dispatch_task");
   expect(card.skills.length).toBeGreaterThan(0);
-  // 配了公开地址才出现 url 与 mcp 端点。
+  expect(card.skills[0].tags).toEqual([]);
+  expect(card.skills[0].inputModes).toEqual(["text"]);
+  // 配了公开地址才出现 url。
   const withUrl = buildAgentCard(home, { peer_card: { public_url: "https://nyra.example.com/" } });
-  expect(withUrl.url).toBe("https://nyra.example.com");
-  expect(withUrl.endpoints.mcp).toBe("https://nyra.example.com/mcp");
+  expect(withUrl.supportedInterfaces[0].url).toBe("https://nyra.example.com");
   // 非法公开地址被忽略（不抛错、不写进名片）。
   const badUrl = buildAgentCard(home, { peer_card: { public_url: "ftp://x.example.com" } });
-  expect(badUrl.url).toBeNull();
+  expect(badUrl.supportedInterfaces[0].url).toBeNull();
 });
 
 test("PeerCardTest.test_card_validation_rejects_bad_shapes", () => {
@@ -164,18 +178,36 @@ test("PeerCardTest.test_card_validation_rejects_bad_shapes", () => {
   expect(() => parseAgentCard({ name: "A", description: "x", skills: [], url: "ftp://x" })).toThrow("url 必须是 http");
   expect(() => parseAgentCard({ name: "A", description: "x", skills: [], authentication: { schemes: [] } })).toThrow("schemes 不能为空");
   expect(() => parseAgentCard({ name: "A", description: "x".repeat(501), skills: [] })).toThrow("太长");
-  // 合法名片原样通过（多余字段忽略，不拦未来扩展）。
-  const card = parseAgentCard({ ...GOOD_CARD, future_field: { a: 1 } });
-  expect(card.name).toBe("Pilot");
-  expect(card.skills).toHaveLength(1);
+  // v1.0 的卡：supportedInterfaces 原样过，protocolVersion 乱写拒绝。
+  const v1 = parseAgentCard({
+    name: "V1", description: "v1 卡", version: "1.0", agentId: "v1-agent",
+    supportedInterfaces: [{ url: "https://v1.example.com", protocolBinding: "JSONRPC", protocolVersion: "1.0" }],
+    capabilities: { streaming: true, pushNotifications: false, stateTransitionHistory: true, extendedAgentCard: false },
+    skills: [{ id: "s1", name: "s1", description: "d", tags: ["t"], examples: [], inputModes: ["text"], outputModes: ["text"] }],
+  });
+  expect(v1.supportedInterfaces[0].url).toBe("https://v1.example.com");
+  expect(v1.capabilities.streaming).toBe(true);
+  expect(v1.skills[0].tags).toEqual(["t"]);
+  expect(() => parseAgentCard({
+    name: "V1", description: "x",
+    supportedInterfaces: [{ url: "https://v1.example.com", protocolBinding: "JSONRPC", protocolVersion: "9.9" }],
+    skills: [],
+  })).toThrow("只认 protocolVersion");
+  // 老版 v0.3 的卡：顶层 url 折进 supportedInterfaces[0]，协议标 0.3。
+  const legacy = parseAgentCard({ ...GOOD_CARD, future_field: { a: 1 } });
+  expect(legacy.name).toBe("Pilot");
+  expect(legacy.supportedInterfaces[0].url).toBe("http://127.0.0.1:18080/mcp");
+  expect(legacy.supportedInterfaces[0].protocolVersion).toBe("0.3");
+  expect(legacy.skills).toHaveLength(1);
 });
 
 test("PeerCardTest.test_fetch_card_from_fake_gateway", async () => {
   const fake = startFakeCardServer(GOOD_CARD);
   try {
-    const { card, hash } = await fetchAgentCard(`${fake.base}/mcp`);
+    const { card, hash, verified } = await fetchAgentCard(`${fake.base}/mcp`);
     expect(card.name).toBe("Pilot");
-    expect(hash).toBe(cardHash(JSON.stringify(GOOD_CARD)));
+    expect(hash).toBe(cardHash(fake.text));
+    expect(verified.status).toBe("verified");
     // 对方没开名片发布（404）时报错指路。
     const closed = startFakeCardServer(GOOD_CARD, 404);
     try {
@@ -462,9 +494,9 @@ test("PeerCardTest.test_gateway_serves_card_only_when_published", async () => {
     const base = `http://127.0.0.1:${info2.port}`;
     const res = await fetch(`${base}${PEER_CARD_PATH}`);
     expect(res.status).toBe(200);
-    const card = await res.json() as { name: string; url: string; skills: { id: string }[] };
+    const card = await res.json() as { name: string; supportedInterfaces: { url: string }[]; skills: { id: string }[] };
     expect(card.name).toBe("Kite");
-    expect(card.url).toBe("https://nyra.example.com");
+    expect(card.supportedInterfaces[0].url).toBe("https://nyra.example.com");
     expect(card.skills.map((s) => s.id)).toContain("answer_question");
   } finally { await gw2.stop(); }
 });

@@ -7,6 +7,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Vault } from "../../src/vault.ts";
+import { generateSigningKeypair, signAgentCardV1 } from "../../src/cardSignature.ts";
 
 const CLI = join(import.meta.dir, "..", "..", "src", "cli.ts");
 
@@ -160,25 +161,34 @@ test("CliBatch3.test_rendezvous_and_queue_commands", async () => {
 
 test("CliBatch3.test_peer_discover_fake_peer_and_card_signing", async () => {
   const { home, workdir } = fresh();
-  // 假 peer：本机 Bun.serve，只回一张素名片
-  const card = {
+  // 假 peer：本机 Bun.serve，只回一张签过名的 v1.0 名片。A2A v1.0 起
+  // 没签名的名片发现不了（拒收），所以假 peer 须带有效签名。
+  const card: Record<string, unknown> = {
     name: "FakeBot",
     description: "fake peer agent",
-    url: "http://127.0.0.1:0",
+    agentId: "fake-bot",
     version: "0.5.6",
+    supportedInterfaces: [{ url: "http://127.0.0.1:0", protocolBinding: "JSONRPC", protocolVersion: "1.0" }],
+    capabilities: { streaming: false, pushNotifications: false, stateTransitionHistory: false, extendedAgentCard: false },
     skills: [],
-    authentication: { schemes: ["bearer"] },
-    capabilities: { streaming: false, pushNotifications: false },
+    securitySchemes: { bearer: { type: "http", scheme: "bearer" } },
+    security: [{ bearer: [] }],
     defaultInputModes: ["text"],
     defaultOutputModes: ["text"],
-    endpoints: { mcp: null },
+  };
+  const kp = generateSigningKeypair();
+  const sig = signAgentCardV1(card, kp);
+  const signedCard = {
+    ...card,
+    signatures: [{ protected: sig.protected, signature: sig.signature, header: sig.header }],
+    public_key: kp.publicJwk,
   };
   const server = Bun.serve({
     port: 0,
     fetch(req) {
       const url = new URL(req.url);
       if (url.pathname === "/.well-known/agent-card.json") {
-        return new Response(JSON.stringify(card), { headers: { "content-type": "application/json" } });
+        return new Response(JSON.stringify(signedCard), { headers: { "content-type": "application/json" } });
       }
       return new Response("not found", { status: 404 });
     },
@@ -188,7 +198,7 @@ test("CliBatch3.test_peer_discover_fake_peer_and_card_signing", async () => {
     const disc = await runCli(["peer", "discover", origin], home, workdir);
     expect(disc.code).toBe(0);
     expect(disc.stdout).toContain("已发现 FakeBot");
-    expect(disc.stdout).toContain("名片签名：无");
+    expect(disc.stdout).toContain("名片签名：已验证");
     const list = await runCli(["peer", "discover", "list"], home, workdir);
     expect(list.code).toBe(0);
     expect(list.stdout).toContain("FakeBot");

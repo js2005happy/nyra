@@ -7,6 +7,7 @@ import {
   verifySignedCard,
   jwkThumbprint,
   cardHash,
+  canonicalizeJson,
   CARD_SIGNATURE_TTL_S,
 } from "../../src/cardSignature.ts";
 
@@ -84,7 +85,8 @@ test("CardSignatureBatch3.test_card_hash_matches_signed_payload", () => {
   const payload = JSON.parse(Buffer.from(payloadB64.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf-8")) as Record<string, unknown>;
   expect(payload.iss).toBe("nyra");
   expect(typeof payload.card_hash).toBe("string");
-  // payload 里是完整 SHA-256，cardHash 是它的前 12 位
+  // payload 里是完整 SHA-256，cardHash 是它的前 12 位；哈希按 RFC 8785
+  // 规范化算（键顺序不影响结果），不是 JSON.stringify 的哈希。
   expect((payload.card_hash as string)).toHaveLength(64);
-  expect((payload.card_hash as string).slice(0, 12)).toBe(cardHash(JSON.stringify(card)));
+  expect((payload.card_hash as string).slice(0, 12)).toBe(cardHash(canonicalizeJson(card)));
 });

@@ -525,7 +525,10 @@ enableRule(home, rwId);
 const ok = await a2aSend(home, record, "这是秘密任务", deps);
 expect(ok.error).toBeUndefined();
 expect(ran).toBe(1);
-expect(seenTask).toBe("这是公开任务");
+// 改写先生效（“秘密”→“公开”），再打不可信标记才进 runner：runner
+// 收到的是框好的文本，原文在框里。
+expect(seenTask).toContain("这是公开任务");
+expect(seenTask).toContain('[untrusted-content kind="peer"');
 expect(readAllRunEvents(home).map((e) => String(e.type))).toContain("bus_message_dropped");
 } finally {
 cleanup(home);
