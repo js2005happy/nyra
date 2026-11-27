@@ -35,6 +35,7 @@ import {
   validateMode,
 } from "./config.ts";
 import { resolvePresetFallbackChain } from "./modelPresets.ts";
+import { BOT_MODE_OFF_MESSAGE, isBotModeEnabled } from "./groupBotMode.ts";
 import {
   applyInterventions,
   newBusMessageId,
@@ -1272,6 +1273,8 @@ export class GroupStore {
       emit?: (type: string, fields: Record<string, unknown>) => void;
     } = {},
   ): Promise<SendResult> {
+    // Bot Mode 开关（Hermes 缺口 7，默认开）：关了群聊不跑 Bot 轮次。
+    if (!isBotModeEnabled(this.home)) throw new GroupError(BOT_MODE_OFF_MESSAGE);
     const text = validateText(message, "群消息", MAX_INPUT_CHARS);
     if (
       typeof rounds !== "number" ||

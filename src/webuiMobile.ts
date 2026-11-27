@@ -172,10 +172,12 @@ const P: Record<string, string> = {
   plus: '<path d="M12 5v14M5 12h14"/>',
   minus: '<path d="M5 12h14"/>',
   at: '<circle cx="12" cy="12" r="3.6"/><path d="M15.6 12v1.3a2.6 2.6 0 0 0 5.2 0V12a8.8 8.8 0 1 0-3.4 6.9"/>',
+  tag: '<path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5" class="f"/>',
+  ticket: '<path d="M3 9V7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2.5 2.5 0 0 0 0 5v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2.5 2.5 0 0 0 0-5z"/><path d="M14 5v2M14 11v2M14 17v2"/>',
 };
 const IC: Record<string, string> = Object.fromEntries(Object.entries(P).map(([k, v]) => [k, SVG(v)]));
 IC.mark = MARK_INLINE;
-const NAV = ([["threads", "chat"], ["inbox", "inbox"], ["automations", "clock"], ["settings", "gear"]] as const)
+const NAV = ([["threads", "chat"], ["inbox", "inbox"], ["explore", "search"], ["automations", "clock"], ["profile", "users"], ["settings", "gear"]] as const)
   .map(([k, icon]) => `<button data-tab="${k}"><span class="pill">${IC[icon]}<span class="badge hidden" data-badge="${k}"></span></span><span data-i="m.tab.${k}"></span></button>`).join("");
 // 丸子：嵌入每只的拼装件（前端用与服务端同一段 composeMascot 拼）；老的头像模板 id 保留，内容换成丸子。
 const MASCOT_JSON = JSON.stringify(mascotClientData()).replace(/</g, "\\u003c");
@@ -231,9 +233,22 @@ ${head("m.tab.threads", `<button id="search-btn" class="ib" data-ia="m.search">$
 ${head("m.tab.inbox", "", "conn-inbox")}
 <div id="reviews"></div>
 </section>
+<section id="explore-view" class="view tabview hidden">
+${head("m.tab.explore", "", "conn-explore")}
+<p class="note" style="padding:4px 20px 0" data-i="m.explore.hint"></p>
+<div id="explore-list" style="padding-bottom:32px"></div>
+</section>
 <section id="automations-view" class="view tabview hidden">
 ${head("m.tab.automations", "", "conn-autos")}
 <div id="autos"></div>
+</section>
+<section id="profile-view" class="view tabview hidden">
+${head("m.tab.profile", "", "conn-profile")}
+<div id="profile-body" style="padding-bottom:8px"></div>
+<div class="sec" data-i="m.invite.title"></div>
+<div class="grp" id="invite-box"></div>
+<p class="note" data-i="m.invite.cloudNote"></p>
+<div style="height:24px"></div>
 </section>
 <section id="settings-view" class="view tabview hidden">
 ${head("m.tab.settings", "", "conn-settings")}
@@ -243,6 +258,8 @@ ${head("m.tab.settings", "", "conn-settings")}
 <div class="sec" data-i="m.set.rules"></div>
 <div class="grp" id="rules"></div>
 <p class="note" data-i="m.set.rulesHelp"></p>
+<div class="sec" data-i="m.set.group"></div>
+<div class="grp"><button class="r2" id="botmode-row"><span class="tile">${IC.users}</span><div class="k"><span data-i="m.set.botMode"></span><small data-i="m.set.botModeBody"></small></div><span class="tag ok" id="botmode-state"></span><span class="switch on" id="botmode-switch"><i></i></span></button></div>
 <div class="sec" data-i="m.set.modelSkills"></div>
 <div class="grp">
 <div class="r2"><span class="tile">${IC.chip}</span><div class="k"><span data-i="m.set.model"></span><small id="provider-line"></small></div></div>

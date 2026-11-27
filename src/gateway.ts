@@ -78,6 +78,9 @@ import {
 } from "./chiefGroup.ts";
 import { TeamError, getTeam, listTeams, prepareTeamDispatch, publicTeam } from "./team.ts";
 import { getGroupPlan, listGroupPlans } from "./groupPlan.ts";
+import { isBotModeEnabled, setBotMode } from "./groupBotMode.ts";
+import { createInvite, inviteQuota, loadInvites, revokeInvite, InviteError } from "./invites.ts";
+import { listExploreTemplates } from "./mobileExplore.ts";
 import { assignMascots } from "./mascots.ts";
 // 群聊页嵌进二进制（.txt 后缀：bun-types 只给 *.txt 声明了 string 类型；
 // 内容分别是群聊页 HTML 与 JS，原文件在 nyra/ 已随 Python 删除，改这里要同步改 .txt）。
@@ -2568,6 +2571,67 @@ export class Gateway {
       return;
     }
 
+    // ---- 手机端 Cue 式界面（B 批）：探索页模板、个人页聚合、邀请账本、Bot Mode 开关 ----
+    // 诚实边界写在响应里：钱包/电话只是入口（available: false），邮箱如实报
+    // Gmail 连接器状态（收发闭环仍 blocked，见 docs/mobile-cue.md），邀请码
+    // 现在不能兑现注册（cloudReady: false），电脑是本地网关状态、云端未部署。
+    if (method === "GET" && path === "/api/mobile/explore") {
+      this.sendJson(res, 200, { templates: listExploreTemplates() });
+      return;
+    }
+    if (method === "GET" && path === "/api/mobile/profile") {
+      const settings = this.settingsView();
+      const gmail = getGmailStatus(this.home, this.config);
+      const info = this.info();
+      let devices = 0;
+      try { devices = this.devices.listDevices().length; } catch { devices = 0; }
+      const quota = inviteQuota(this.home);
+      this.sendJson(res, 200, {
+        usage: this.budgetSummary(),
+        wallet: { available: false, note: "coming-soon" },
+        apps: {
+          mcp: (settings.mcp as Record<string, unknown> | undefined)?.servers ?? [],
+          mcp_enabled: (settings.mcp as Record<string, unknown> | undefined)?.enabled ?? false,
+          connectors: [{ id: "gmail", name: "Gmail", enabled: gmail.enabled, configured: gmail.configured }],
+        },
+        mail: {
+          ...gmail,
+          // Gmail 真实闭环仍 blocked（授权同意页转圈，2026-11-24 评审结论）：
+          // configured 只表示密码箱里有条目，不等于收发已通。
+          loop: "blocked",
+          loopNote: "Gmail 收发闭环仍在排查，未通",
+        },
+        phone: { available: false, note: "coming-soon" },
+        skills: { count: Array.isArray(info.skills) ? info.skills.length : 0 },
+        computer: {
+          version: info.version ?? null,
+          platform: info.platform ?? null,
+          mode: info.mode ?? null,
+          devices,
+          lan: Boolean(this.pairOrigin),
+          cloud: { available: false, note: "cloud-not-deployed" },
+        },
+        botMode: { enabled: isBotModeEnabled(this.home) },
+        invites: { total: quota.total, used: quota.used, remaining: quota.remaining },
+      });
+      return;
+    }
+    if (method === "GET" && path === "/api/mobile/invites") {
+      const store = loadInvites(this.home);
+      const quota = inviteQuota(this.home);
+      this.sendJson(res, 200, {
+        cloudReady: false,
+        cloudNote: "云端登录后端未部署，邀请码现在不能兑现注册",
+        total: quota.total, used: quota.used, remaining: quota.remaining,
+        invites: store.invites,
+      });
+      return;
+    }
+    if (method === "GET" && path === "/api/mobile/bot-mode") {
+      this.sendJson(res, 200, { enabled: isBotModeEnabled(this.home) });
+      return;
+    }
+
     // ---- DELETE ----
     if (method === "DELETE" && sessionGetMatch) {
       const sid = this.validSid(sessionGetMatch[1]);
@@ -2643,6 +2707,39 @@ export class Gateway {
     if (method === "POST") {
       let body: Record<string, unknown>;
       try { body = await this.readBody(req); } catch (err) { this.sendError(res, 400, `请求无效：${err instanceof Error ? err.message : String(err)}`); return; }
+      // 手机端 Cue 式界面（B 批）写接口：邀请码发放/吊销、Bot Mode 开关。
+      // 机主手机（设备 token）也能做，与群聊发消息同级；不管设备。
+      if (path === "/api/mobile/invites") {
+        try {
+          const note = typeof body.note === "string" ? body.note : "";
+          const rec = createInvite(this.home, note);
+          const quota = inviteQuota(this.home);
+          this.sendJson(res, 201, { invite: rec, total: quota.total, used: quota.used, remaining: quota.remaining, cloudReady: false });
+        } catch (err) {
+          this.sendError(res, err instanceof InviteError ? 400 : 500, err instanceof Error ? err.message : String(err));
+        }
+        return;
+      }
+      const inviteRevokeMatch = /^\/api\/mobile\/invites\/([A-Za-z0-9]{6})\/revoke$/.exec(path);
+      if (inviteRevokeMatch) {
+        try {
+          const rec = revokeInvite(this.home, inviteRevokeMatch[1]);
+          const quota = inviteQuota(this.home);
+          this.sendJson(res, 200, { invite: rec, total: quota.total, used: quota.used, remaining: quota.remaining });
+        } catch (err) {
+          this.sendError(res, err instanceof InviteError ? 400 : 500, err instanceof Error ? err.message : String(err));
+        }
+        return;
+      }
+      if (path === "/api/mobile/bot-mode") {
+        if (typeof body.enabled !== "boolean") {
+          this.sendError(res, 400, "enabled 必须是 true/false");
+          return;
+        }
+        const state = setBotMode(this.home, body.enabled);
+        this.sendJson(res, 200, { enabled: state.enabled });
+        return;
+      }
       if (path === "/api/pair/start") {
         if (!isOwner) { this.sendError(res, 403, "只能在电脑上管理已配对设备"); return; }
         try { this.sendJson(res, 200, this.startPairing()); }

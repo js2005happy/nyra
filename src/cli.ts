@@ -259,7 +259,8 @@ nyra sfu <create|rooms|status|join|leave|turn|record|close|reclaim|video>   群�
 nyra meeting <create|list|join|reconnect|transcript|minutes|record|dispatch>   进外部会议：Meet/Zoom 受控浏览器进会、听字幕出纪要；进会、录制、发言都要机主批（详见 docs/meeting.md）
 nyra rendezvous <register|nodes|route|status|remove|epoch>   Rendezvous 多节点路由：HRW 一致性哈希把任务 key 路由到节点（本机/局域网节点，详见 docs/mesh.md）
 nyra queue <enqueue|list|show|claim|complete|fail>   队列驱动底座：幂等键入队、节点认领 + 租约、纪元防旧指令重执行（详见 docs/mesh.md）
-nyra group <room|chat|plan|route|session>   群聊：房间与机器人、swarm 顺序发言（可组合终止条件）、群组计划引擎（步骤 worktree 隔离 + 独立验收）、Jev 路由干跑、群聊会话（机主是正式成员，轮次状态机 + 每 Bot 预算/审批独立 + @ 定向指派，详见 docs/group-chat.md 与 docs/group-plan.md）
+nyra group <room|chat|plan|route|session|bot-mode>   群聊：房间与机器人、swarm 顺序发言（可组合终止条件）、群组计划引擎（步骤 worktree 隔离 + 独立验收）、Jev 路由干跑、群聊会话（机主是正式成员，轮次状态机 + 每 Bot 预算/审批独立 + @ 定向指派，详见 docs/group-chat.md 与 docs/group-plan.md）；bot-mode 开关 Bot Mode（默认开，关了群聊不跑 Bot 轮次，手机设置页有同一个开关）
+nyra invite <create|list|revoke>   邀请制账本：发邀请码 / 列名额与记录 / 吊销（共 5 个名额，云端登录后端未部署、码现在不能兑现注册，详见 docs/mobile-cue.md）
 nyra call <ledger|show <通话 id>|summary>   通话成本与隐私仪表：每通电话三本账（传输 / 媒体 / token），录制默认关、须全体同意，纪要进证据链（详见 docs/call-ledger.md）
 nyra budget <list|show|reserve|settle|release|strict>   并发预算预留：模型调用前先预留额度、超上限不发请求；金额未知默认暂停等人工处理（详见 docs/budget.md）
 nyra usage [--agent <id>] [--json]   每 Bot 用量仪表：当日/当月已花多少、每 Bot 上限是多少、到 80% 了没有（详见 docs/budget.md）
@@ -430,7 +431,8 @@ nyra sfu <create|rooms|status|join|leave|turn|record|close|reclaim|video>   grou
 nyra meeting <create|list|join|reconnect|transcript|minutes|record|dispatch>   join external meetings: controlled-browser join for Meet/Zoom, listen to captions and build minutes; joining, recording and speaking all need the owner's approval (see docs/meeting.md)
 nyra rendezvous <register|nodes|route|status|remove|epoch>   Rendezvous multi-node routing: HRW consistent hashing routes a task key to a node (local/LAN nodes only, see docs/mesh.md)
 nyra queue <enqueue|list|show|claim|complete|fail>   queue-driven base: idempotent enqueue, node claim + lease, epoch guard against stale re-execution (see docs/mesh.md)
-nyra group <room|chat|plan|route|session>   group chat: rooms and bots, swarm turn-taking (composable stop conditions), group plan engine (per-step worktree isolation + independent acceptance), Jev route dry-run, group sessions (owner is a member, turn state machine + per-bot budget/approval + @ assignment, see docs/group-chat.md and docs/group-plan.md)
+nyra group <room|chat|plan|route|session|bot-mode>   group chat: rooms and bots, swarm turn-taking (composable stop conditions), group plan engine (per-step worktree isolation + independent acceptance), Jev route dry-run, group sessions (owner is a member, turn state machine + per-bot budget/approval + @ assignment, see docs/group-chat.md and docs/group-plan.md); bot-mode toggles Bot Mode (on by default; off stops bot turns in group chats, same switch lives in the mobile settings page)
+nyra invite <create|list|revoke>   invite ledger: issue invite codes / list quota and records / revoke (5 slots in total; the cloud login backend is not deployed yet, so codes cannot be redeemed, see docs/mobile-cue.md)
 nyra call <ledger|show <call id>|summary>   call cost and privacy dashboard: three books per call (transport / media / tokens), recording off by default and needs everyone's consent, minutes go into the evidence chain (see docs/call-ledger.md)
 nyra budget <list|show|reserve|settle|release|strict>   concurrent budget reservation: reserve budget before a model call, over-limit calls are not sent; unknown amounts pause by default until a human handles them (see docs/budget.md)
 nyra usage [--agent <id>] [--json]   per-Bot usage dashboard: how much each Bot spent today / this month, its caps, and whether it hit the 80% warning (see docs/budget.md)
@@ -2664,6 +2666,57 @@ async function handleQueue(argv: string[], home: string): Promise<number> {
   }
 }
 
+// ---- 子命令：invite（Cue B 批：邀请制账本，与缺口 48 每 Bot 数字身份挂钩） ----
+// 只有账本，没有注册后端：云端登录后端未部署，邀请码现在只能发、列、吊销，
+// 不能兑现注册（兑现等云端上线后启用）。名额一共 5 个，发码占 1 个，吊销释放。
+async function handleInvite(argv: string[], home: string): Promise<number> {
+  const { createInvite, inviteQuota, loadInvites, revokeInvite, InviteError } = await import("./invites.ts");
+  const action = argv[0];
+  try {
+    if (action === "create") {
+      const noteIdx = argv.indexOf("--note");
+      const note = noteIdx >= 0 ? (argv[noteIdx + 1] ?? "") : "";
+      const rec = createInvite(home, note);
+      const quota = inviteQuota(home);
+      process.stdout.write(`邀请码：${rec.code}（名额 ${quota.used}/${quota.total}，剩 ${quota.remaining} 个）\n`);
+      process.stdout.write("注意：云端登录后端未部署，这个码现在不能兑现注册，等云端上线后启用。\n");
+      return 0;
+    }
+    if (action === "list" || !action) {
+      const store = loadInvites(home);
+      const quota = inviteQuota(home);
+      process.stdout.write(`邀请名额：${quota.used}/${quota.total}，剩 ${quota.remaining} 个（云端未上线，码暂不能兑现）\n`);
+      if (!store.invites.length) {
+        process.stdout.write("还没有邀请码：nyra invite create 发一个。\n");
+        return 0;
+      }
+      for (const inv of store.invites) {
+        process.stdout.write(`${inv.code}\t${inv.status === "active" ? "有效" : "已吊销"}${inv.note ? `\t${inv.note}` : ""}\t${inv.createdAt}${inv.status === "revoked" && inv.revokedAt ? `（吊销于 ${inv.revokedAt}）` : ""}\n`);
+      }
+      return 0;
+    }
+    if (action === "revoke") {
+      const code = argv[1];
+      if (!code) {
+        process.stderr.write("错误：用法：nyra invite revoke <邀请码>\n");
+        return 2;
+      }
+      const rec = revokeInvite(home, code);
+      const quota = inviteQuota(home);
+      process.stdout.write(`已吊销 ${rec.code}（名额 ${quota.used}/${quota.total}，剩 ${quota.remaining} 个）\n`);
+      return 0;
+    }
+    process.stderr.write("错误：用法：nyra invite <create|list|revoke> [--note <备注>]\n");
+    return 2;
+  } catch (err) {
+    if (err instanceof InviteError) {
+      process.stderr.write(`错误：${err.message}\n`);
+      return 1;
+    }
+    throw err;
+  }
+}
+
 // ---- 子命令：group（第 2 批 G-P1-1 群组计划 + G-P1-2 swarm 群聊） ----
 // 房间与机器人沿用第 1 批的 GroupStore（网关同一套）；计划步骤的执行者
 // 是真实 agent（在步骤的隔离 worktree 里跑），验收走 completePlanStep
@@ -2671,7 +2724,7 @@ async function handleQueue(argv: string[], home: string): Promise<number> {
 async function handleGroupChat(argv: string[], home: string, args: CliArgs): Promise<number> {
   const action = argv[0];
   if (!action) {
-    process.stdout.write("用法：nyra group <room|chat|plan|route|session> ...（nyra group room --help / nyra group chat --help / nyra group plan --help / nyra group session --help 看细分用法；nyra group route --room <房间 id> --message <消息> 干跑 Jev 路由）\n");
+    process.stdout.write("用法：nyra group <room|chat|plan|route|session|bot-mode> ...（nyra group room --help / nyra group chat --help / nyra group plan --help / nyra group session --help 看细分用法；nyra group route --room <房间 id> --message <消息> 干跑 Jev 路由；nyra group bot-mode <on|off|status> 开关 Bot Mode）\n");
     return 2;
   }
   const get = (flag: string): string | undefined => {
@@ -2686,6 +2739,28 @@ async function handleGroupChat(argv: string[], home: string, args: CliArgs): Pro
     return out;
   };
   try {
+    // Bot Mode 开关（Hermes 缺口 7，默认开）：与手机设置页的开关共用同一份
+    // group-bot-mode.json；关了群聊会话与房间都不跑 Bot 轮次。
+    if (action === "bot-mode") {
+      const { isBotModeEnabled, setBotMode } = await import("./groupBotMode.ts");
+      const sub = argv[1];
+      if (sub === "on") {
+        setBotMode(home, true);
+        process.stdout.write("Bot Mode 已打开：群聊恢复跑 Bot 轮次。\n");
+        return 0;
+      }
+      if (sub === "off") {
+        setBotMode(home, false);
+        process.stdout.write("Bot Mode 已关闭：群聊不跑 Bot 轮次（会话与房间保留，手机设置页可再打开）。\n");
+        return 0;
+      }
+      if (sub === "status" || !sub) {
+        process.stdout.write(`Bot Mode：${isBotModeEnabled(home) ? "开" : "关"}（默认开；nyra group bot-mode <on|off> 切换，手机设置页有同一个开关）\n`);
+        return 0;
+      }
+      process.stderr.write("错误：用法：nyra group bot-mode <on|off|status>\n");
+      return 2;
+    }
     const { GroupStore } = await import("./groups.ts");
     const store = new GroupStore(join(home, "groups"), { home });
     if (action === "room") {
@@ -7734,6 +7809,7 @@ export async function main(argv: string[]): Promise<number> {
     return handlePeer(sub, home);
   }
   if (args.subcommand === "circle") return handleCircle(args.subArgs ?? [], home);
+  if (args.subcommand === "invite") return handleInvite(args.subArgs ?? [], home);
   if (args.subcommand === "org") return handleOrg(args.subArgs ?? [], home);
   if (args.subcommand === "session") return handleSession(args.subArgs ?? [], home);
   if (args.subcommand === "sfu") return handleSfu(args.subArgs ?? [], home);

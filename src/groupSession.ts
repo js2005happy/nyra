@@ -23,6 +23,7 @@ import type { Pricing } from "./cost.ts";
 import { findCircle, loadCircleBook, memberCircles, OWNER_IDENTITY } from "./circles.ts";
 import { isDesktopActive } from "./gatewayPresence.ts";
 import { handoffTarget, mentionedAll, mentionedBot } from "./groupChat.ts";
+import { BOT_MODE_OFF_MESSAGE, isBotModeEnabled } from "./groupBotMode.ts";
 import {
   GroupError,
   GroupStore,
@@ -1043,6 +1044,8 @@ export async function runSessionRound(
   opts: RunSessionRoundOptions = {},
 ): Promise<SessionRoundResult> {
   const h = resolveNyraHome(home);
+  // Bot Mode 开关（Hermes 缺口 7，默认开）：关了群聊会话不跑 Bot 轮次。
+  if (!isBotModeEnabled(h)) throw new GroupSessionError(BOT_MODE_OFF_MESSAGE);
   const store = opts.store ?? new GroupStore(join(h, "groups"), { home: h });
   const session = getGroupSession(h, sessionId);
   if (session.status !== "open") {
