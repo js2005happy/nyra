@@ -1,7 +1,7 @@
-// src/usageLedger.ts — 每日用量账本：热力图与月度硬顶的同一份事实源。
+// src/usageLedger.ts — 每日用量账本：热力图与本月花费记账的同一份事实源。
 //
 // 为什么要这个文件：用量统计（UsageTracker）以前只活在一次运行的内存里，
-// 进程一退就没了。热力图要“每日”口径、月度硬顶要“自然月累计”口径，
+// 进程一退就没了。热力图要“每日”口径、本月花费展示要“自然月累计”口径，
 // 两者都得落盘——但都不另起一套数字：账本只记 provider 实报的 token 与
 // CostGuard 已算出的金额（estimateCost 同口径），没报 usage / 没配单价
 // 的部分记 token、不记金额，并如实标“未计价”，绝不估算补齐。
@@ -36,7 +36,7 @@ export function monthKeyString(d = new Date()): string {
   return localDateString(d).slice(0, 7);
 }
 
-/** 下月 1 日（本地日期）：月度上限的重置日。 */
+/** 下月 1 日（本地日期）：本月花费展示的重置日（月度上限已移除，只用于记账展示）。 */
 export function nextMonthlyResetDate(d = new Date()): string {
   const next = new Date(d.getFullYear(), d.getMonth() + 1, 1);
   return localDateString(next);
@@ -184,8 +184,9 @@ export class UsageLedger {
 
   /**
    * 某自然月的 LLM 花费合计（已落盘部分）。
-   * spentUsd 是下界：当月有未计价记录时 incomplete=true，实际花费只会更高，
-   * 月度硬顶按这个下界判定——只会晚触发、绝不会误触发。
+   * spentUsd 是下界：当月有未计价记录时 incomplete=true，实际花费只会更高。
+   * （月度上限已移除：这个下界现在只用于记账展示与分层每日上限的参考，
+   * 不再触发任何月度判定。）
    */
   monthTotal(month: string): { spentUsd: number; incomplete: boolean; totalTokens: number; calls: number } {
     let spent = 0;
@@ -204,8 +205,8 @@ export class UsageLedger {
 
   // ---- 缺口 43 第三批：分层成本上限的按 agent 花费 ----
   // 一次读全月记录，按 agent 归属分组；没有 agent 字段的行（旧行与调用方
-  // 不知道 agent 的行）进 unattributed。分层口径的诚实边界与月度硬顶同款：
-  // 某 agent 的花费只是下界（未归属的部分分不下去），只会晚触发、不会误触发.
+  // 不知道 agent 的行）进 unattributed。分层口径的诚实边界：某 agent 的
+  // 花费只是下界（未归属的部分分不下去），只会晚触发、不会误触发。
 
   /** 某自然月按 agent 分组的花费 + 未归属部分（一次读盘）。 */
   monthSpendByAgent(month: string): { byAgent: Map<string, AgentMonthSpend>; unattributed: AgentMonthSpend } {

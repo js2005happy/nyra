@@ -39,9 +39,7 @@ import { loadConfig, resolveProvider, VERSION } from "./config.ts";
 import { Provider } from "./providers.ts";
 import { Agent } from "./agent.ts";
 import { READONLY_TOOLS, TOOL_SCHEMAS } from "./tools.ts";
-import { resolveMonthlyLimit, resolvePricing } from "./cost.ts";
-import { UsageLedger, monthKeyString } from "./usageLedger.ts";
-import { McpCostTracker } from "./mcpCost.ts";
+import { resolvePricing } from "./cost.ts";
 
 export const ACP_PROTOCOL_VERSION = 1;
 export const ACP_AGENT_NAME = "nyra";
@@ -425,7 +423,6 @@ export async function runAcpAgent(
   const localSessionId = `acp-${opts.sessionId}`;
   const mapper = createAcpEventMapper({ sessionId: opts.sessionId, sink: opts.sink });
   const pricing = resolvePricing(config.pricing, provider.model ?? null);
-  const monthlyLimit = resolveMonthlyLimit(config, null);
   const agent = new Agent(provider, {
     workdir: opts.cwd,
     mode: "auto",
@@ -439,19 +436,9 @@ export async function runAcpAgent(
     disabledTools: acpDisabledTools(opts.writeEnabled, opts.modeId),
     onEvent: mapper.onEvent,
     cancelSignal: opts.signal,
-    // 成本硬顶（AG-UI 服务端同款口径：单次上限 + 月度上限 + 已花）：超支停下，不编 0。
+    // 成本硬顶（AG-UI 服务端同款口径：单次上限）：超支停下，不编 0。
     maxCostUsd: typeof config.max_cost_usd === "number" ? (config.max_cost_usd as number) : null,
     pricing,
-    monthlyCostLimitUsd: monthlyLimit,
-    monthlySpentBeforeUsd: monthlyLimit === null ? null : (): { spentUsd: number; incomplete: boolean } | null => {
-      try {
-        const llm = new UsageLedger(home).monthTotal(monthKeyString());
-        const mcp = new McpCostTracker(home).monthTotalUsd(monthKeyString());
-        return { spentUsd: llm.spentUsd + mcp, incomplete: llm.incomplete };
-      } catch {
-        return null;
-      }
-    },
   });
   const text = await agent.run(task);
   const spent = agent.lastCost?.status === "priced" ? agent.lastCost.spentUsd : null;

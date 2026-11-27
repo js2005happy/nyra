@@ -15,7 +15,7 @@
 // CLI 是用户本人直接操作：确认与拒绝都是用户的决定；提炼本身是确定性
 // 规则抽取，不调模型。--model 是用户亲手点的额外一遍：用小模型（默认
 // provider，默认 flash 级）提炼语义事实候选，同样只进待审队列，不直接
-// 写库；没凭证或月度上限已到时如实报原因，不调模型。决定记进证据文件
+// 写库；没凭证或模型失败时如实报原因，不调模型。决定记进证据文件
 // evidence/memory/（与 `nyra memory forget` 同款），运行事件
 // memory_proposal_decided 的字段见 src/runs.ts 的 EVENT_FIELDS。
 

@@ -12,7 +12,7 @@
 //
 // 每节点继承 Nyra 现有三件套：审批（approve 节点直接复用审阅队列 review queue，
 // 批复后 `nyra workflow resume` 续跑）、成本硬顶（每节点记 token/费用，超
-// --max-cost 即停；月度硬顶在模型节点前重判）、证据链（每节点输入/输出/耗时
+// --max-cost 即停）、证据链（每节点输入/输出/耗时
 // 落盘，`nyra evidence verify` 可验；运行事件进 runs，时间线可看）。
 //
 // 两道门（Proto 的做法，Nyra 做得更硬）：工作流激活前强制“真实数据试跑 +
@@ -29,7 +29,7 @@
 //     计划步骤只是“候选”（协调者运行中决定跑不跑），协调者还能再生成新步骤，
 //     那些动作同样无法枚举。
 //   - 成本只对“报了 usage 的调用”计价；没报 usage 的调用金额记 null（未知），
-//     不编数字；月度硬顶与 --max-cost 只对已知部分生效，未知部分不假装封顶。
+//     不编数字；--max-cost 只对已知部分生效，未知部分不假装封顶。
 //     协调者每轮的决策调用也按实报 usage 计价进月度账本，同样算进 --max-cost。
 //   - 技能节点是“按技能正文带路的 delegate 子 agent 单次任务”，不是完整
 //     agent 会话；知识节点是 BM25 检索（缺口 1 的同一套），不是向量检索。
@@ -96,8 +96,8 @@ import {
 import { RunStore } from "./runs.ts";
 import { cronMinIntervalMinutes, MAX_CONSECUTIVE_FAILURES, MAX_ENABLED_ROUTINES, MIN_CRON_INTERVAL_MINUTES } from "./cronMaturity.ts";
 import { enqueueReviewItem, getReviewItem } from "./reviewQueue.ts";
-import { UsageLedger, monthKeyString } from "./usageLedger.ts";
-import { resolvePricing, computeCostUsd, resolveMonthlyLimit, checkMonthlyCap } from "./cost.ts";
+import { UsageLedger } from "./usageLedger.ts";
+import { resolvePricing, computeCostUsd } from "./cost.ts";
 import type { Pricing } from "./cost.ts";
 import type { ProviderLike, ChatMessage } from "./providers.ts";
 
@@ -1325,7 +1325,6 @@ class WorkflowRunner {
   ledger: UsageLedger;
   scope: EvalScope;
   spentKnown = 0;
-  monthlyLimit: number | null;
   config: Record<string, unknown>;
   coordState: WorkflowCoordinatorState | null;
   badDecisions = 0;
@@ -1349,7 +1348,6 @@ class WorkflowRunner {
     this.config = loadConfig(opts.home);
     this.stepCheckpointStore = opts.stepCheckpointStore ?? resolveStepCheckpointStore(opts.home, { config: this.config });
     this.stepInputOverrides = opts.stepInputOverrides ?? new Map();
-    this.monthlyLimit = resolveMonthlyLimit(this.config);
     this.scope = { inputs: inputs as ScopeValue, steps: {}, loop: {} };
     if (existingRun) {
       this.run = existingRun;
@@ -1425,16 +1423,6 @@ class WorkflowRunner {
     }
     this.providerCache = await this.providerFactory();
     return this.providerCache;
-  }
-
-  /** 模型节点前重判月度硬顶（与 Agent 同口径：按下界判定，只会晚触发、不会误触发）。 */
-  checkMonthlyCapOrThrow(): void {
-    if (this.monthlyLimit === null) return;
-    const before = this.ledger.monthTotal(monthKeyString(new Date())).spentUsd;
-    const check = checkMonthlyCap(before, this.spentKnown, this.monthlyLimit);
-    if (check.exceeded && check.monthSpentUsd !== null) {
-      throw new WorkflowError(`月度成本上限已超：本月已花 $${check.monthSpentUsd.toFixed(4)}（上限 $${this.monthlyLimit.toFixed(2)}），运行已中止`);
-    }
   }
 
   /** 每节点后重判 --max-cost（只对已知金额生效；未知金额不假装封顶）。 */
@@ -1663,7 +1651,6 @@ class WorkflowRunner {
         return result;
       }
       if (step.type === "llm") {
-        this.checkMonthlyCapOrThrow();
         const provider = await this.getProvider();
         // G-P1-41：edit 决定可改 prompt / system。
         const llmOverrides = this.stepInputOverrides.get(step.id);
@@ -1687,7 +1674,6 @@ class WorkflowRunner {
         return result;
       }
       if (step.type === "delegate" || step.type === "skill") {
-        this.checkMonthlyCapOrThrow();
         const provider = await this.getProvider();
         const { Agent } = await import("./agent.ts");
         let task: string;
@@ -2086,7 +2072,6 @@ class WorkflowRunner {
 
   /** 协调者每轮一次模型调用：决定本身也按实报 usage 计价进月度账本、算进 --max-cost。 */
   private async callCoordinator(eligible: WorkflowStep[]): Promise<{ text: string; spent: number | null }> {
-    this.checkMonthlyCapOrThrow();
     const provider = await this.getProvider();
     const { system, user } = this.coordinatorPrompt(eligible);
     const messages: ChatMessage[] = [
@@ -2597,7 +2582,7 @@ export function validateStepEditValues(step: WorkflowStep, values: Record<string
  *  决定按点位走：before 点 accept/respond 原样跑该步、ignore 记 skipped 后
  *  继续、edit 带输入覆盖跑该步；after 点 accept/ignore/respond 继续下一步、
  *  edit 改该步在 scope 里的输出再继续。审批节点与成本硬顶照常（续跑后跑到
- *  审批节点仍挂起，--max-cost / 月度硬顶重新核）。 */
+ *  审批节点仍挂起，--max-cost 重新核）。 */
 export async function resumeWorkflowFromInterrupt(home: string, runId: string, req: WorkflowRunRequest): Promise<WorkflowRun> {
   const run = getWorkflowRun(home, runId);
   if (!run) throw new WorkflowError(`没有这个运行：${runId}`);
@@ -2678,7 +2663,7 @@ export async function resumeWorkflowFromInterrupt(home: string, runId: string, r
  * （replayedFrom 记来源），节点取原运行到检查点为止的前缀——其中被
  * update_state 改过的步骤输出，先按检查点里的新值换掉——再从下一步
  * 接着跑。已跑过的步骤不重跑；审批节点重放时重新问人（不复用旧批复）；
- * 月度硬顶与 --max-cost 照常（前缀已花的钱算进新运行的 spentKnown）。
+ * --max-cost 照常（前缀已花的钱算进新运行的 spentKnown）。
  * 只有 fixed 形态能重放；后面有调模型 / 审批的步骤时，没 --yes 直接拒绝。
  */
 export interface ReplayWorkflowResult {

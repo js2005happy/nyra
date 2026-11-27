@@ -225,7 +225,7 @@ export interface SweepReport {
   suspended: string[];
   skipped: string | null;
   resumed: string[];
-  /** 缺口 43：observe 模式或月度硬顶挡下的自动续跑，只记干跑、不真干。 */
+  /** 缺口 43：observe 模式或分层上限挡下的自动续跑，只记干跑、不真干。 */
   dryRuns: string[];
 }
 
@@ -272,8 +272,8 @@ export async function sweepSubagents(
         if (!row.autoResume) continue;
         // H-3：已请求停止的行不自动续跑——停下优先于续跑，须先取消请求或确认停下。
         if (row.stopRequestedAt) continue;
-        // 缺口 43（DSH-2）：自动续跑先过接单模式与月度硬顶。observe 模式只记
-        // 干跑、不真干；月度硬顶已触顶也不续跑，同样只记干跑。
+        // 缺口 43（DSH-2）：自动续跑先过接单模式与分层上限。observe 模式只记
+        // 干跑、不真干；分层上限已触顶也不续跑，同样只记干跑。
         if (getAgentMode(home, row.agent) === "observe") {
           recordDryRun(home, {
             agent: row.agent, kind: "resume_subagent", action: "resume", target: runId,

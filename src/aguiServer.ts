@@ -26,8 +26,8 @@
 //   拿掉（disabledTools），模型连提议都提不出来；有授权时才能提议，
 //   执行仍须机主逐条批。——“写操作须机主显式接受”分两层：提议权与执行权，
 //   本批只做到提议权，执行权走现成的 peer proposal 流程。
-// - 成本硬顶照常：单次 max_cost_usd 与月度上限走网关同款口径（resolvePricing
-//   + UsageLedger），超支时运行停下、不编 0。服务端不自动换模型（只用主
+// - 成本硬顶照常：单次 max_cost_usd 走网关同款口径（resolvePricing），
+//   超支时运行停下、不编 0。服务端不自动换模型（只用主
 //   provider，不接 fallback 链；队列/定时任务里不自动换模型的规矩同样适用）。
 // - 多轮：threadId 对应本地会话（agui-server-<thread>），同 thread 的后续
 //   请求接着上轮上下文跑；state 字段本批只接受、不应用（回 STATE_SNAPSHOT
@@ -53,9 +53,8 @@ import { loadConfig, resolveProvider } from "./config.ts";
 import { Provider } from "./providers.ts";
 import { Agent } from "./agent.ts";
 import { READONLY_TOOLS, TOOL_SCHEMAS } from "./tools.ts";
-import { resolveMonthlyLimit, resolvePricing } from "./cost.ts";
+import { resolvePricing } from "./cost.ts";
 import { UsageLedger, monthKeyString } from "./usageLedger.ts";
-import { McpCostTracker } from "./mcpCost.ts";
 import { applyInterventions, newBusMessageId } from "./interventions.ts";
 
 export const AGUI_SERVER_FILE = "agui-server.json";
@@ -499,19 +498,9 @@ export async function runAguiServerAgent(
     messages: loadSession(sessionId, home),
     disabledTools: aguiServerDisabledTools(opts.writeGranted),
     onEvent: mapper.onEvent,
-    // 成本硬顶（网关同款口径：单次上限 + 月度上限 + 已花）：超支停下，不编 0。
+    // 成本硬顶（网关同款口径：单次上限）：超支停下，不编 0。
     maxCostUsd: typeof config.max_cost_usd === "number" ? (config.max_cost_usd as number) : null,
     pricing: resolvePricing(config.pricing, provider.model ?? null),
-    monthlyCostLimitUsd: resolveMonthlyLimit(config, null),
-    monthlySpentBeforeUsd: resolveMonthlyLimit(config, null) === null ? null : (): { spentUsd: number; incomplete: boolean } | null => {
-      try {
-        const llm = new UsageLedger(home).monthTotal(monthKeyString());
-        const mcp = new McpCostTracker(home).monthTotalUsd(monthKeyString());
-        return { spentUsd: llm.spentUsd + mcp, incomplete: llm.incomplete };
-      } catch {
-        return null;
-      }
-    },
   });
   const text = await agent.run(task);
   const spentUsd = agent.lastCost?.status === "priced" ? agent.lastCost.spentUsd : null;

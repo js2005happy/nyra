@@ -4,7 +4,7 @@
 //   nyra cost --show                    当前定价配置
 //
 // 输出原则：给区间 + 明写假设。不打印"精确预估"这种骗人的数字。
-import { estimateRunCost, resolvePricing, formatCost, estimateCost, adjustEstimateForRecall, resolveMonthlyLimit, type Pricing } from "./cost.ts";
+import { estimateRunCost, resolvePricing, formatCost, estimateCost, adjustEstimateForRecall, type Pricing } from "./cost.ts";
 import { BudgetLedger, resolveStrictUnknownAmount } from "./budget.ts";
 import { UsageLedger, monthKeyString, nextMonthlyResetDate } from "./usageLedger.ts";
 import { McpCostTracker } from "./mcpCost.ts";
@@ -47,21 +47,13 @@ function printPricingTable(config: Record<string, unknown>, home?: string): void
   }
   const limit = typeof config.max_cost_usd === "number" ? config.max_cost_usd : null;
   process.stdout.write(t("cost.limitLine", { limit: limit === null ? t("cost.limitUnset") : "$" + limit.toFixed(2) }) + "\n");
-  // 缺口 29：月度上限与本月已花（与 --max-cost 同口径的账本数）。
+  // 本月已花（记账展示，无月度上限；与 --max-cost 同口径的账本数）。
   if (home) {
     const month = monthKeyString();
     const llm = new UsageLedger(home).monthTotal(month);
     const mcp = new McpCostTracker(home).monthTotalUsd(month);
-    const monthly = resolveMonthlyLimit(config);
     const spent = llm.spentUsd + mcp;
-    if (monthly === null) {
-      process.stdout.write(t("cost.monthlyUnset", { spent: spent.toFixed(4), mcp: mcp.toFixed(4) }) + "\n");
-    } else {
-      process.stdout.write(t("cost.monthlyLine", {
-        limit: monthly.toFixed(2), spent: spent.toFixed(4),
-        mcp: mcp.toFixed(4), reset: nextMonthlyResetDate(),
-      }) + "\n");
-    }
+    process.stdout.write(`本月已花：$${spent.toFixed(4)}（其中 MCP $${mcp.toFixed(4)}），${nextMonthlyResetDate()} 重置（仅记账，无月度上限）\n`);
     // 备用模型切换通知：本月切过模型时，定价汇总里同样加一行切换统计。
     const switchLine = modelSwitchSummaryLine(home);
     if (switchLine) process.stdout.write(switchLine + "\n");
@@ -83,8 +75,7 @@ export function handleCost(argv: string[], config: Record<string, unknown>, mode
           const month = monthKeyString();
           const llm = new UsageLedger(opts.home!).monthTotal(month);
           const mcp = new McpCostTracker(opts.home!).monthTotalUsd(month);
-          const limit = resolveMonthlyLimit(config);
-          return { limitUsd: limit, spentUsd: llm.spentUsd + mcp, mcpUsd: mcp, month, resetAt: nextMonthlyResetDate(), modelSwitches: summarizeModelSwitches(opts.home!, month) };
+          return { spentUsd: llm.spentUsd + mcp, mcpUsd: mcp, month, resetAt: nextMonthlyResetDate(), modelSwitches: summarizeModelSwitches(opts.home!, month) };
         })()
         : null;
       process.stdout.write(JSON.stringify(buildCostJson({
@@ -172,7 +163,6 @@ export interface CostJson {
   invalid_pricing: string[];
   max_cost_usd: number | null;
   monthly: {
-    limit_usd: number | null;
     spent_usd: number;
     mcp_usd: number;
     month: string;
@@ -199,7 +189,7 @@ export function buildCostJson(input: {
     activeReservedUsd: number; strictUnknownAmount: boolean;
   } | null;
   monthly: {
-    limitUsd: number | null; spentUsd: number; mcpUsd: number; month: string; resetAt: string | null;
+    spentUsd: number; mcpUsd: number; month: string; resetAt: string | null;
     modelSwitches?: { count: number; byTrigger: Record<string, number>; last: { from: string; to: string; trigger: string; at: string } | null };
   } | null;
 }): CostJson {
@@ -220,7 +210,6 @@ export function buildCostJson(input: {
     max_cost_usd: typeof input.config.max_cost_usd === "number" ? input.config.max_cost_usd : null,
     monthly: input.monthly
       ? {
-        limit_usd: input.monthly.limitUsd,
         spent_usd: input.monthly.spentUsd,
         mcp_usd: input.monthly.mcpUsd,
         month: input.monthly.month,

@@ -9,7 +9,7 @@
 // OpenAI Live 这类咱们没有的服务不在注册表里，谁要接谁注册（见下）。
 //
 // 云端开关不归这里管：调用方（feedCallSegment）按通话配置决定给不给
-// endpoint——没开 call_cloud_enabled / 没过月度硬顶时传 null，provider
+// endpoint——没开 call_cloud_enabled 时传 null，provider
 // 只能走本地，绝不悄悄花云端钱。
 //
 // 配置：config.json 的 voice.realtime_provider（字符串，默认 "local"）。

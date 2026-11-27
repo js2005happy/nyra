@@ -9,7 +9,7 @@
 //   3. 小结——把结果写进晨间简报（“昨夜做梦小结”一节），不发新消息。
 //
 // “写小结”可以额外调一次模型润色（summarize_with_model），默认关，须用户
-// 显式开；开了也先过月度成本上限，超支就只用确定性小结，不花钱。
+// 显式开；开了直接跑（月度限额已移除，不再先过月度上限）。
 // 守护进程里跑：cli.ts 的 schedule daemon 加一个 dream poller（自己判断
 // 到没到点、开关开没开，不到就静默跳过），不走跑模型提示词的 schedule 任务。
 
@@ -34,9 +34,8 @@ import {
 } from "./memoryGate.ts";
 import { EvidenceStore } from "./evidence.ts";
 import { Provider } from "./providers.ts";
-import { estimateCost, resolveMonthlyLimit, resolvePricing } from "./cost.ts";
-import { UsageLedger, monthKeyString } from "./usageLedger.ts";
-import { McpCostTracker } from "./mcpCost.ts";
+import { estimateCost, resolvePricing } from "./cost.ts";
+import { UsageLedger } from "./usageLedger.ts";
 import { UsageTracker } from "./usage.ts";
 
 export const DREAM_STATE_FILE = "dream-state.json";
@@ -282,7 +281,7 @@ function buildDeterministicSummary(counts: DreamCounts, contradictions: string[]
 
 /**
  * 跑一次做梦代谢。默认不调模型；withModel 为 true（或配置开了
- * summarize_with_model）时才调一次模型润色小结，且先过月度成本上限。
+ * summarize_with_model）时才调一次模型润色小结。
  */
 export async function runDreamMetabolism(
   home: string,
@@ -337,8 +336,8 @@ export async function runDreamMetabolism(
     } catch {
       // 单个会话提炼失败不破坏整夜做梦。
     }
-    // 模型抽取（十年清单第 2 项）：开关开着才跑；先过月度上限，没凭证/
-    // 超支/模型失败都跳过，不破坏做梦本身。抽出的草稿同样先进待审队列。
+    // 模型抽取（十年清单第 2 项）：开关开着才跑；没凭证/
+    // 模型失败都跳过，不破坏做梦本身。抽出的草稿同样先进待审队列。
     if (sfc.enabled) {
       try {
         const fr = await runModelExtraction(home, meta.id, { now, modelRunner: opts.factRunner });
@@ -437,7 +436,7 @@ export async function runDreamMetabolism(
 
   const summary = buildDeterministicSummary(counts, contradictionSubjects, cfg.pruneStaleDays);
 
-  // 3. 可选的模型润色：默认不开；开了也先过月度成本上限，超支就跳过。
+  // 3. 可选的模型润色：默认不开；开了直接跑（月度限额已移除，不再先过月度上限）。
   let modelSummary: string | null = null;
   let modelSummarySkipped: string | undefined;
   let spentUsd: number | null = null;
@@ -445,16 +444,8 @@ export async function runDreamMetabolism(
   if (wantModel) {
     try {
       const provider = new Provider(resolveProvider({ home, config }));
-      let monthlyLimit: number | null = null;
       if (!provider.hasCredentials()) {
         modelSummarySkipped = "no-credentials";
-      } else {
-        monthlyLimit = resolveMonthlyLimit(config, null);
-        if (monthlyLimit !== null) {
-          const llm = new UsageLedger(home).monthTotal(monthKeyString(now));
-          const mcp = new McpCostTracker(home).monthTotalUsd(monthKeyString(now));
-          if (llm.spentUsd + mcp >= monthlyLimit) modelSummarySkipped = "monthly-cap-reached";
-        }
       }
       if (!modelSummarySkipped) {
         const runner = opts.modelRunner ?? defaultDreamModelRunner(provider);
@@ -469,7 +460,7 @@ export async function runDreamMetabolism(
             tracker.record({ usage: out.usage ?? null });
             const snap = tracker.snapshot();
             const pricing = resolvePricing(config.pricing, provider.model ?? null);
-            const est = estimateCost(snap, pricing, monthlyLimit);
+            const est = estimateCost(snap, pricing, null);
             if (est.status === "priced" && est.spentUsd !== null) {
               spentUsd = est.spentUsd;
               new UsageLedger(home).recordDelta(snap, null, est.spentUsd, null, provider.model ?? null, now);

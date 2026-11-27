@@ -6,7 +6,8 @@
 //     Policy 发布时通知受影响的工单（任务板上未终态的任务）。
 //   - DSH-2：observe / auto 两档 + “would accept”干跑。Bot 主动工作默认 observe，
 //     评估通过只记干跑记录不真干；人看过记录没问题再显式切 auto；切 auto 之前
-//     先套 Nyra 的月度硬顶（已触顶就不接）。
+//     先套分层每日上限（已触顶就不接）。月度限额已移除（2026-11-27），
+//     这里不再有月度硬顶门。
 //   - G-4 的治理部分：自优化环的提议账本见 src/optimizer.ts；这里只提供
 //     提议生效前的人批口径（提议须人批，见 optimizer 的 approve）与
 //     审计链（governance-audit.jsonl + 运行事件镜像）。
@@ -15,16 +16,15 @@
 //   - 账本全部原子写 0600，损坏先备份再抛错、不静默重建；
 //   - 规则写坏了直接拒绝发布（parseRules 的 warnings 非空就抛错），不静默丢规则；
 //   - 授权冲突 / 撤销 / 不存在时，续跑与恢复一律拒绝（fail-closed），不放行；
-//   - 月度硬顶没配就不挡人（checkMonthlyCap 的语义），配了就硬停；
+//   - 分层每日上限没配就不挡人，配了就硬停；
 //   - 事件里只记指纹（SHA-256 前 12 位）与 id，不记原文、不记绝对路径。
 import { closeSync, copyFileSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createHash, randomBytes } from "node:crypto";
-import { resolveHome, loadConfig } from "./config.ts";
+import { resolveHome } from "./config.ts";
 import { RunStore } from "./runs.ts";
 import { SOUL_AGENT_ID_RE } from "./soul.ts";
 import { parseRules, evaluate, type RuleSet } from "./permissionRules.ts";
-import { checkMonthlyCap, resolveMonthlyLimit } from "./cost.ts";
 import { UsageLedger, monthKeyString } from "./usageLedger.ts";
 import { McpCostTracker } from "./mcpCost.ts";
 import { businessActionForTool, resolveRedlineTier } from "./businessRedlines.ts";
@@ -723,54 +723,39 @@ export function decideDryRun(home: string, id: string, decision: "promoted" | "d
 }
 
 // ---------------------------------------------------------------------------
-// DSH-2：月度硬顶门（接单前先套）
+// DSH-2：分层每日上限门（接单前先套；月度限额已移除）
 // ---------------------------------------------------------------------------
-
 export interface AutoAllowed {
   allowed: boolean;
+  /** 本月已花（记账信息，不参与判定）。 */
   monthSpentUsd: number;
-  limitUsd: number | null;
   reason: string;
 }
 
-/** auto 接单前的月度硬顶检查：没配上限就不挡人，配了且已触顶就拒绝。 */
+/** auto 接单前的分层上限检查：没配上限就不挡人，配了且已触顶就拒绝。 */
 export function checkAutoAllowed(home: string, _agent: string): AutoAllowed {
   const month = monthKeyString();
   const llm = new UsageLedger(home).monthTotal(month);
   const mcp = new McpCostTracker(home).monthTotalUsd(month);
   const spent = llm.spentUsd + mcp;
-  const limit = resolveMonthlyLimit(loadConfig(home));
-  const check = checkMonthlyCap(spent, 0, limit);
-  if (check.exceeded) {
-    return {
-      allowed: false,
-      monthSpentUsd: spent,
-      limitUsd: limit,
-      reason: `月度硬顶已触顶（本月已花 $${spent.toFixed(2)} / 上限 $${(limit ?? 0).toFixed(2)}），不接单`,
-    };
-  }
-  // 缺口 43 第三批：同一位置再套分层上限（组织级已在上面判过，这里判
-  // team/role/agent/persona 层；role 层没账号上下文，跳过——见 costCaps）。
-  // 分层没配就不挡人，配了且已触顶同样不接单。
+  // 缺口 43 第三批：分层上限（只剩 agent 每日层）。分层没配就不挡人，
+  // 配了且已触顶同样不接单。
   try {
     const tiered = evaluateTieredCaps(home, { agent: _agent });
     if (!tiered.allowed) {
       return {
         allowed: false,
         monthSpentUsd: spent,
-        limitUsd: limit,
         reason: `分层成本上限已触顶（${tiered.bindingReason}），不接单`,
       };
     }
   } catch {
-    // 分层判定本身出问题（账本损坏等）不拦接单——月度硬顶已在上面判过，
-    // 分层是叠加的第二道门，不是第一道门的替代。
+    // 分层判定本身出问题（账本损坏等）不拦接单。
   }
   return {
     allowed: true,
     monthSpentUsd: spent,
-    limitUsd: limit,
-    reason: limit === null ? "未配月度硬顶" : `本月已花 $${spent.toFixed(2)} / 上限 $${limit.toFixed(2)}`,
+    reason: `本月已花 $${spent.toFixed(2)}（仅记账，分层每日上限未触顶）`,
   };
 }
 
@@ -780,15 +765,14 @@ export interface ProactiveVerdict {
   mode: AgentMode;
   requiresApproval: boolean;
   monthSpentUsd: number;
-  limitUsd: number | null;
 }
 
 /**
  * DSH-2 的“would accept”评估：只判定，不执行。
- *   - 月度硬顶已触顶 → would-deny；
+ *   - 分层每日上限已触顶 → would-deny；
  *   - 工具命中红线表 never → would-deny；命中 approve 档 → would-accept 但 requiresApproval；
  *   - observe 模式 → would-accept（只记干跑，不真干）；
- *   - auto 模式 → would-accept（可执行，但仍受月度硬顶与审批约束）。
+ *   - auto 模式 → would-accept（可执行，但仍受分层每日上限与审批约束）。
  */
 export function evaluateProactiveAction(
   home: string,
@@ -798,7 +782,7 @@ export function evaluateProactiveAction(
   const mode = getAgentMode(home, agent);
   const cap = checkAutoAllowed(home, agent);
   if (!cap.allowed) {
-    return { decision: "would-deny", reason: cap.reason, mode, requiresApproval: false, monthSpentUsd: cap.monthSpentUsd, limitUsd: cap.limitUsd };
+    return { decision: "would-deny", reason: cap.reason, mode, requiresApproval: false, monthSpentUsd: cap.monthSpentUsd };
   }
   let requiresApproval = false;
   if (action.tool) {
@@ -806,7 +790,7 @@ export function evaluateProactiveAction(
     if (mapped) {
       const tier = resolveRedlineTier(home, mapped.connector, mapped.action);
       if (tier === "never") {
-        return { decision: "would-deny", reason: `红线表：${mapped.connector} ${mapped.action} 永不允许`, mode, requiresApproval: false, monthSpentUsd: cap.monthSpentUsd, limitUsd: cap.limitUsd };
+        return { decision: "would-deny", reason: `红线表：${mapped.connector} ${mapped.action} 永不允许`, mode, requiresApproval: false, monthSpentUsd: cap.monthSpentUsd };
       }
       if (tier === "approve") requiresApproval = true;
     }
@@ -820,18 +804,16 @@ export function evaluateProactiveAction(
       mode,
       requiresApproval,
       monthSpentUsd: cap.monthSpentUsd,
-      limitUsd: cap.limitUsd,
     };
   }
   return {
     decision: "would-accept",
     reason: requiresApproval
       ? "auto 模式：评估通过，但该动作须人批，批了才执行"
-      : "auto 模式：评估通过，可执行（仍受月度硬顶与审批约束）",
+      : "auto 模式：评估通过，可执行（仍受分层每日上限与审批约束）",
     mode,
     requiresApproval,
     monthSpentUsd: cap.monthSpentUsd,
-    limitUsd: cap.limitUsd,
   };
 }
 
@@ -1073,7 +1055,7 @@ export function handleGovernance(args: string[], home: string): number {
       const agent = getFlag(rest, "--agent") ?? "nyra";
       const mode = getAgentMode(home, agent);
       if (json) printJson({ agent, mode });
-      else console.log(`${agent} 的接单模式：${mode}${mode === "observe" ? "（默认：只记干跑，不真干）" : "（已放行：评估通过可执行，仍受月度硬顶与审批约束）"}`);
+      else console.log(`${agent} 的接单模式：${mode}${mode === "observe" ? "（默认：只记干跑，不真干）" : "（已放行：评估通过可执行，仍受分层每日上限与审批约束）"}`);
       return 0;
     }
     if (sub === "set") {
@@ -1082,7 +1064,7 @@ export function handleGovernance(args: string[], home: string): number {
       const mode = rest.find((a) => a === "observe" || a === "auto") as AgentMode | undefined;
       if (mode !== "observe" && mode !== "auto") throw new GovernanceError("接单模式只能是 observe 或 auto");
       if (mode === "auto" && !hasFlag(rest, "--yes")) {
-        console.log("切 auto 意味着 Bot 评估通过就真干活（仍受月度硬顶与审批约束）。确认请加 --yes。");
+        console.log("切 auto 意味着 Bot 评估通过就真干活（仍受分层每日上限与审批约束）。确认请加 --yes。");
         return 2;
       }
       setAgentMode(home, agent, mode, "cli");

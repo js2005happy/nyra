@@ -199,7 +199,7 @@ export function draftFromRegressionCase(kind: RegressionKind, title: string): st
     case "verdict-failed":
       return `注意：验收“${t}”曾不通过——改完先自查验收清单（草稿标未完成、界面改动附 before 对比），再提交验收。`;
     case "llm-failed":
-      return `注意：模型调用“${t}”曾失败——先确认模型与用量（月度硬顶未触顶），失败重试上限 3 次，超了停下等用户。`;
+      return `注意：模型调用“${t}”曾失败——先确认模型与用量（单次硬顶未触顶），失败重试上限 3 次，超了停下等用户。`;
     case "run-error":
       return `注意：运行“${t}”曾出错——跑之前先看上次的失败记录，同类错误不要换个说法再跑一遍。`;
   }

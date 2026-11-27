@@ -40,8 +40,7 @@ import { EvidenceStore } from "./evidence.ts";
 import { UsageTracker } from "./usage.ts";
 import { TelemetryTracer, type TelemetrySpan } from "./telemetry.ts";
 import type { WindowSource } from "./modelCatalog.ts";
-import { estimateCost, checkMonthlyCap, estimateRunCost, type CostEstimate, type Pricing } from "./cost.ts";
-import { nextMonthlyResetDate } from "./usageLedger.ts";
+import { estimateCost, estimateRunCost, type CostEstimate, type Pricing } from "./cost.ts";
 import { t } from "./i18n.ts";
 import type { AuxTask } from "./modelRouting.ts";
 import { selectTools, describeDeferred, searchDeferredTools, formatSearchResults, SEARCH_TOOLS_SCHEMA } from "./toolSearch.ts";
@@ -364,21 +363,10 @@ export interface AgentOptions {
   /** P2-2：该模型的单价；null = 未配置，金额未知（不编造）。 */
   pricing?: Pricing | null;
   /**
-   * 缺口 29：月度支出上限（美元）；null = 未配置（默认，不挡老用户）。
-   * 一旦配了就是硬停（与 --max-cost 同级，无豁免口子）；0 = 锁死一切计价花费。
-   */
-  monthlyCostLimitUsd?: number | null;
-  /**
-   * 缺口 29：本月已花（不含本次运行：已落盘的 LLM + MCP 花费，减去本次运行
-   * 已落盘的部分）；返回 null = 算不出（不假装封顶）。由 CLI 传入，
-   * 子任务继承时父级会把自己进行中的花费也算进去。
-   */
-  monthlySpentBeforeUsd?: (() => { spentUsd: number; incomplete: boolean } | null) | null;
-  /**
    * 缺口 43 第三批：分层成本上限回调（CLI / Bot 传入，网关不传）。
    * 每次用量上报后调用一次：入参是本次运行进行中的美元花费（未计价时
    * 为 null，此时美元层跳过、只判 token）与 token 数；返回超限信息时
-   * checkCost 抛错中止（与月度硬顶同级硬停）。回调本身绝不抛错——判定
+   * checkCost 抛错中止（与单次硬顶同级硬停）。回调本身绝不抛错——判定
    * 出错返回 null（不挡运行），暂停记录写不上也不拦中止。
    */
   tieredCapCheck?: ((runSpentUsd: number | null, runTokens: number) => { exceeded: boolean; message: string } | null) | null;
@@ -661,9 +649,6 @@ export class Agent {
    */
   private middlewareSet: MiddlewareSet | null = null;
   private middlewareCache: FunctionResultCache | null = null;
-  /** 缺口 29：月度上限与本月已花（不含本次运行）；见 AgentOptions。 */
-  private monthlyCostLimitUsd: number | null;
-  private monthlySpentBeforeUsd: AgentOptions["monthlySpentBeforeUsd"];
   /** 缺口 43 第三批：分层成本上限回调（见 AgentOptions）；子任务继承同一份。 */
   private tieredCapCheck: AgentOptions["tieredCapCheck"];
   /** 可靠性打磨第 2 项第一批：共享预留账本（opts 注入或按 home 懒建）。 */
@@ -726,8 +711,6 @@ export class Agent {
   lastCost: CostEstimate | null = null;
   /** 缺口 29：已完成子任务的计价花费合计（单次硬顶要含这部分，否则委派就是旁路）。 */
   private delegateSpentUsd = 0;
-  /** 缺口 29：最近一次算出的本月已花（含本次运行）；算不出时为 null。 */
-  lastMonthlySpentUsd: number | null = null;
   onEvent: AgentEventHandler | null;
   onFinal: ((text: string, messages: Record<string, unknown>[]) => Promise<Record<string, unknown>[] | null> | Record<string, unknown>[] | null) | null = null;
   workdir: string;
@@ -756,7 +739,7 @@ export class Agent {
   /** 缺口 15：测试注入——语音的外部命令执行器与云端 fetch。 */
   private voiceRunner: import("./voice.ts").CommandRunner | null = null;
   private voiceFetch: typeof fetch | null = null;
-  /** 缺口 15：本次运行已计价的语音花费合计（STT 按分钟、TTS 按字数；单次硬顶与月度硬顶要含这部分，否则语音就是旁路）。 */
+  /** 缺口 15：本次运行已计价的语音花费合计（STT 按分钟、TTS 按字数；单次硬顶要含这部分，否则语音就是旁路）。 */
   voiceSpentUsd = 0;
   /** H-2/H-3：本 Agent 在子 agent 注册表里的运行 id（delegate 派出的子 agent 才有）。 */
   private subagentRunId: string | null = null;
@@ -821,8 +804,6 @@ export class Agent {
     // 可靠性打磨第 1 项第一批：父级传进来的外部取消信号（子 Agent 用）。
     this.externalCancelSignal = opts.cancelSignal ?? null;
     this.pricing = opts.pricing ?? null;
-    this.monthlyCostLimitUsd = typeof opts.monthlyCostLimitUsd === "number" ? opts.monthlyCostLimitUsd : null;
-    this.monthlySpentBeforeUsd = opts.monthlySpentBeforeUsd ?? null;
     this.tieredCapCheck = opts.tieredCapCheck ?? null;
     this.budgetLedgerOpt = opts.budgetLedger;
     this.strictUnknownAmountOpt = opts.strictUnknownAmount;
@@ -975,7 +956,7 @@ export class Agent {
       visionConfig: this.visionConfig,
       // 候选提案 4：media_ingest 的云端 STT 端点（当前 provider 的 HTTP 端点；
       // 没有时只走本地 whisper）与花费回调（记进同一本硬顶账 voiceSpentUsd，
-      // 月度硬顶在下次模型调用前的 checkCost 强制执行，不在工具内抛错——
+      // 单次硬顶在下次模型调用前的 checkCost 强制执行，不在工具内抛错——
       // 工具内抛错可能触发重试，反而多花一份转写钱）。
       sttEndpoint: httpEndpointOf(this.provider),
       onVoiceCost: (cost) => { this.voiceCalls += 1; this.voiceSpentUsd += cost; },
@@ -1895,12 +1876,12 @@ export class Agent {
     return this.strictUnknownAmountCached;
   }
 
-  /** 有任一美元上限（单次/月度）才需要预留：一个都没配时，预留没有
+  /** 有单次美元上限才需要预留：没配时，预留没有
    * 意义（也没“算不出金额”的问题——没上限可超）。分层回调不算在内：
    * 它的 token 层不需要单价，USD 层在金额未知时传 null 跳过，由回调
    * 自己判（见 reserveNextCall 的 checkTieredPreCall）。 */
   private usdCapsActive(): boolean {
-    return this.maxCostUsd !== null || this.monthlyCostLimitUsd !== null;
+    return this.maxCostUsd !== null;
   }
 
   /** 本次运行已计价的美元花费合计（主 agent + 已完成子任务 + 语音）；
@@ -1963,7 +1944,7 @@ export class Agent {
    *
    * 分层回调（tieredCapCheck）不走预留：它的 token 层不需要单价，USD
    * 层在金额未知时传 null 跳过——所以单价未知时仍先判一次分层（token
-   * 层可能已经超了），判不过直接抛它的文案；只有美元上限（单次/月度）
+   * 层可能已经超了），判不过直接抛它的文案；只有美元上限（单次）
    * 才触发“金额未知则暂停”。
    */
   private reserveNextCall(messages: Record<string, unknown>[]): BudgetReservation | null {
@@ -2005,28 +1986,12 @@ export class Agent {
     if (!this.usdCapsActive()) return null;
     const limits: ReserveLimit[] = [];
     if (this.maxCostUsd !== null) limits.push({ scope: "run", limitUsd: this.maxCostUsd, spentUsd: spent });
-    if (this.monthlyCostLimitUsd !== null) {
-      // 本月已花算不出（账本读失败）时不能当 0 用——那是“假装封顶”。
-      // 严格模式下暂停（missing-monthly），非严格模式跳过月度层（旧行为）。
-      const before = this.monthlySpentBeforeUsd?.() ?? null;
-      if (before === null) {
-        if (this.strictUnknownAmount()) throw new AgentError(this.pauseUnknownAmount("missing-monthly:本月已花算不出"));
-      } else {
-        const monthSpent = before.spentUsd + spent;
-        limits.push({ scope: "monthly", limitUsd: this.monthlyCostLimitUsd, spentUsd: monthSpent });
-      }
-    }
     const res = ledger.reserve(this.reservationOwner(), requested, { limits, reason: "next-call" });
     if (!res.ok) {
       try {
         this.emit("budget_rejected", { owner: this.reservationOwner(), amount_usd: requested, reason: res.reason });
       } catch { /* ignore */ }
-      // 月度层不够时多给一句：上限精确值、重置日、怎么放宽——与 checkCost
-      // 的月度超限文案同款信息，调用没发出也能说清。
-      const monthlyNote = res.bindingScope === "monthly" && this.monthlyCostLimitUsd !== null
-        ? `\n月度支出上限 $${this.monthlyCostLimitUsd.toFixed(4)}，${nextMonthlyResetDate()} 重置；放宽改 config.monthly_cost_limit_usd。`
-        : "";
-      throw new AgentError(`预算预留不足：${res.reason}。本次调用未发出，运行已停下。${monthlyNote}`);
+      throw new AgentError(`预算预留不足：${res.reason}。本次调用未发出，运行已停下。`);
     }
     try {
       this.emit("budget_reserved", { reservation_id: res.reservation.id, owner: res.reservation.owner, amount_usd: requested });
@@ -2082,7 +2047,7 @@ export class Agent {
 
   /**
    * 成本上限是否已触顶（可靠性打磨第 1 项第一批）：与 checkCost 同口径
-   * 的“只读判定”——单次上限（--max-cost）与月度上限都算，不抛错、
+   * 的“只读判定”——单次上限（--max-cost）算，不抛错、
    * 不记事件，只回答超没超。金额算不出（未配单价 / provider 未报用量）
    * 时返回 false，不假装封顶——金额未知由请求前预留门（reserveNextCall）
    * 与 checkCost 的严格分支暂停（可靠性打磨第 2 项第一批），不进这个
@@ -2091,7 +2056,7 @@ export class Agent {
    * 在途调用还没上报，判不了——仍由 checkCost 在调用返回后硬停。
    */
   private costCapTripped(): boolean {
-    if (this.maxCostUsd === null && this.monthlyCostLimitUsd === null) return false;
+    if (this.maxCostUsd === null) return false;
     const e = estimateCost(this.usage.snapshot(), this.pricing, this.maxCostUsd);
     const voiceUsd = this.voiceSpentUsd;
     if (this.maxCostUsd !== null) {
@@ -2100,11 +2065,6 @@ export class Agent {
       } else if (voiceUsd > 0 && this.delegateSpentUsd + voiceUsd > this.maxCostUsd) {
         return true;
       }
-    }
-    if (this.monthlyCostLimitUsd !== null && ((e.status === "priced" && e.spentUsd !== null) || voiceUsd > 0)) {
-      const before = this.monthlySpentBeforeUsd?.() ?? null;
-      const check = checkMonthlyCap(before?.spentUsd ?? null, (e.spentUsd ?? 0) + voiceUsd, this.monthlyCostLimitUsd);
-      if (check.exceeded && check.monthSpentUsd !== null) return true;
     }
     return false;
   }
@@ -2783,14 +2743,9 @@ export class Agent {
    * 不是警告。金额算不出来时（未配单价 / provider 未报 usage），严格模式
    * （默认开，可靠性打磨第 2 项第一批）下暂停运行并建暂停记录等人工处理，
    * 非严格模式下不抛错、不假装封顶，只把状态留在 lastCost 里供 CLI 说明。
-   *
-   * 缺口 29：同一位置再查月度上限（与单次硬顶同一口径、同一诚实边界）。
-   * 月度已花 = 账本里本月已落盘的 LLM 花费 + 本月 MCP 花费（调用方在
-   * monthlySpentBeforeUsd 里算好）+ 本次运行进行中的花费；超限同样抛
-   * AgentError 中止，报错里写清已花多少、上限多少、哪天重置、怎么放宽。
    */
   private checkCost(): void {
-    if (this.maxCostUsd === null && this.pricing === null && this.monthlyCostLimitUsd === null && this.tieredCapCheck == null) return;
+    if (this.maxCostUsd === null && this.pricing === null && this.tieredCapCheck == null) return;
     const e = estimateCost(this.usage.snapshot(), this.pricing, this.maxCostUsd);
     this.lastCost = e;
     if (e.status === "priced") {
@@ -2830,26 +2785,7 @@ export class Agent {
         );
       }
     }
-    if (this.monthlyCostLimitUsd !== null && ((e.status === "priced" && e.spentUsd !== null) || voiceUsd > 0)) {
-      const before = this.monthlySpentBeforeUsd?.() ?? null;
-      // 缺口 15：月度“本次运行进行中的花费”同样含语音部分。
-      const check = checkMonthlyCap(before?.spentUsd ?? null, (e.spentUsd ?? 0) + voiceUsd, this.monthlyCostLimitUsd);
-      this.lastMonthlySpentUsd = check.monthSpentUsd;
-      if (check.exceeded && check.monthSpentUsd !== null) {
-        const reset = nextMonthlyResetDate();
-        this.emit("monthly_cost", {
-          spent_usd: check.monthSpentUsd, limit_usd: this.monthlyCostLimitUsd, reset,
-        });
-        throw new AgentError(
-          t("cost.monthlyExceeded", {
-            spent: check.monthSpentUsd.toFixed(4), limit: this.monthlyCostLimitUsd.toFixed(2), reset,
-          }) +
-          (before?.incomplete ? " " + t("cost.monthlyIncomplete") : "") +
-          "\n" + t("cost.monthlyRelax"),
-        );
-      }
-    }
-    // 缺口 43 第三批：分层成本上限（与月度硬顶同级硬停）。回调收本次运行
+    // 缺口 43 第三批：分层成本上限（与单次硬顶同级硬停）。回调收本次运行
     // 进行中的花费：美元未计价时传 null（美元层跳过、只判 token），token
     // 只计主 agent 快照（子任务的 token 不在父快照里，见 costCaps 文档）。
     // 回调本身绝不抛错；超了才抛错中止（暂停记录由回调里建）。
@@ -3264,16 +3200,11 @@ export class Agent {
       shellReadOnly: preset.shellReadOnly === true,
       // G-P2-5：声明式 agent 的审批模式只对本次子任务生效（不改全局配置）。
       approvalModeOverrides: opts.approvalModes ?? null,
-      // 缺口 29：月度上限子任务同样受限（没有豁免口子）。子任务的“本月已花”
-      // = 父级账本口径 + 父级本次运行进行中的花费；父级花不出来（未计价）
-      // 时子任务同样算不出，不假装封顶。
-      // 缺口 29：子任务继承单价与两个上限——否则子任务花的钱既不进单次硬顶、
-      // 也不进月度硬顶，等于给硬顶留了个旁路。子任务的月度“本月已花”已在
-      // monthlySpentBeforeUsd 里把父级进行中的花费算进去（见下）。
+      // 缺口 29：子任务继承单价与单次上限——否则子任务花的钱不进单次硬顶，
+      // 等于给硬顶留了个旁路。
       maxCostUsd: this.maxCostUsd,
       pricing: this.pricing,
-      monthlyCostLimitUsd: this.monthlyCostLimitUsd,
-      // 缺口 43 第三批：子任务继承分层上限回调（与月度上限同款，无豁免口子）。
+      // 缺口 43 第三批：子任务继承分层上限回调（与单次上限同款，无豁免口子）。
       // 子任务花的钱算进父级的层：回调入参 = 父级进行中 + 已完成子任务 +
       // 本子任务进行中（美元未计价时传 null，只判 token）。
       tieredCapCheck: this.tieredCapCheck ? (childSpentUsd, childTokens) => {
@@ -3289,16 +3220,6 @@ export class Agent {
       // 金额未知暂停约束，否则委派就是旁路。
       budgetLedger: this.budgetLedgerOpt ?? this.budgetLedger(),
       strictUnknownAmount: this.strictUnknownAmount(),
-      monthlySpentBeforeUsd: this.monthlyCostLimitUsd === null ? null : (() => {
-        const before = this.monthlySpentBeforeUsd?.() ?? null;
-        const own = this.lastCost?.status === "priced" && this.lastCost.spentUsd !== null
-          ? this.lastCost.spentUsd : null;
-        // 缺口 15：父级进行中的语音花费同样算进子任务的“本月已花”。
-        const ownVoice = this.voiceSpentUsd;
-        const ownTotal = own === null ? (ownVoice > 0 ? ownVoice : null) : own + ownVoice;
-        if (before === null || ownTotal === null) return null;
-        return { spentUsd: before.spentUsd + ownTotal, incomplete: before.incomplete };
-      }),
     });
     // 缺口 20/29：子任务用量记账（只记一次）：成功时在 child.run 返回后记，
     // 失败时（包括子任务自己撞上成本上限）在 catch 里补记——失败子任务
@@ -3620,7 +3541,7 @@ export class Agent {
    * 硬约束：默认最多 5 个同时跑（多给也夹到 5）、单个子任务默认 10 分钟超时。
    * 失败隔离：任一线程失败/超时只记自己那一项，其余照常跑完，主流程只汇总成功者。
    * 权限边界：每线程照常走 delegateDetailed——工具白名单、worktree 隔离、沙箱、
-   * 成本上限（单次 + 月度）与审批回调全部继承，不另开旁路。
+   * 成本上限（单次）与审批回调全部继承，不另开旁路。
    * 缺口 5 的规则同样守住：队列/定时任务里不自动换模型（tasks.ts 的 buildProvider
    * 只给单个 provider，子任务继承父级 provider，不新增任何自动切换）；并行本身
    * 不自动放行任何审批，approveFn 逐次照常走。
@@ -3723,16 +3644,6 @@ export class Agent {
       const reserved = ledger.activeReservedUsd();
       const limits: ReserveLimit[] = [];
       if (this.maxCostUsd !== null) limits.push({ scope: "run", limitUsd: this.maxCostUsd, spentUsd: spent });
-      if (this.monthlyCostLimitUsd !== null) {
-        const before = this.monthlySpentBeforeUsd?.() ?? null;
-        if (before === null) {
-          // 本月已花算不出：严格模式下线程不启动（父级自己的下一轮调用
-          // 同样会因此暂停），非严格模式跳过月度层。
-          if (this.strictUnknownAmount()) return { ok: false, reason: "金额未知：本月已花算不出，无法判定月度上限，线程未启动。" };
-        } else {
-          limits.push({ scope: "monthly", limitUsd: this.monthlyCostLimitUsd, spentUsd: before.spentUsd + spent });
-        }
-      }
       // 分层上限：把“本次运行 + 在途预留 + 本次线程预估”当在途花费传给
       // 回调；超了回调里已按现有口径建暂停记录，这里直接拿它的文案当拒因。
       if (this.tieredCapCheck) {

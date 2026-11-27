@@ -44,9 +44,7 @@ import { loadConfig, resolveProvider } from "./config.ts";
 import { Provider } from "./providers.ts";
 import { Agent } from "./agent.ts";
 import { READONLY_TOOLS, TOOL_SCHEMAS } from "./tools.ts";
-import { resolveMonthlyLimit, resolvePricing } from "./cost.ts";
-import { UsageLedger, monthKeyString } from "./usageLedger.ts";
-import { McpCostTracker } from "./mcpCost.ts";
+import { resolvePricing } from "./cost.ts";
 import { buildAgentCard } from "./peerCard.ts";
 import { loadSigningKey, signAgentCard } from "./cardSignature.ts";
 import { agentContract } from "./agentContract.ts";
@@ -567,7 +565,6 @@ export function runA2aAgent(
     const proposals: { proposalId: string; tool: string }[] = [];
     let text = "";
     const pricing = resolvePricing(config.pricing, provider.model ?? null);
-    const monthlyLimit = resolveMonthlyLimit(config, null);
     const agent = new Agent(provider, {
       workdir: process.cwd(),
       mode: "auto",
@@ -597,19 +594,9 @@ export function runA2aAgent(
         } catch { /* 观察器故障绝不破坏主循环 */ }
       },
       cancelSignal: opts.signal,
-      // 成本硬顶（网关同款口径：单次上限 + 月度上限 + 已花）：超支停下，不编 0。
+      // 成本硬顶（网关同款口径：单次上限）：超支停下，不编 0。
       maxCostUsd: typeof config.max_cost_usd === "number" ? (config.max_cost_usd as number) : null,
       pricing,
-      monthlyCostLimitUsd: monthlyLimit,
-      monthlySpentBeforeUsd: monthlyLimit === null ? null : (): { spentUsd: number; incomplete: boolean } | null => {
-        try {
-          const llm = new UsageLedger(home).monthTotal(monthKeyString());
-          const mcp = new McpCostTracker(home).monthTotalUsd(monthKeyString());
-          return { spentUsd: llm.spentUsd + mcp, incomplete: llm.incomplete };
-        } catch {
-          return null;
-        }
-      },
     });
     const finalText = await agent.run(task);
     const spent = agent.lastCost?.status === "priced" ? agent.lastCost.spentUsd : null;

@@ -8,10 +8,9 @@
 //   nyra budget strict [--on | --off] [--yes]
 //
 // 只读/只写预算账本与严格模式开关，不调模型、不改运行状态。金额单位都是美元。
-// 手动预留只对月度上限（配了才查）；单次运行上限没有运行上下文，查不了。
+// 手动预留不对照任何上限（月度限额已移除；单次运行上限没有运行上下文，查不了），只记账。
 import { BudgetLedger, resolveStrictUnknownAmount } from "./budget.ts";
 import { loadConfig, saveConfig } from "./config.ts";
-import { resolveMonthlyLimit } from "./cost.ts";
 import { listPauses } from "./costCaps.ts";
 import { McpCostTracker } from "./mcpCost.ts";
 import { UsageLedger, monthKeyString, nextMonthlyResetDate } from "./usageLedger.ts";
@@ -27,7 +26,7 @@ function budgetUsage(): string {
     "  nyra budget release <预留 id>",
     "  nyra budget strict [--on | --off] [--yes]",
     "",
-    "金额单位是美元。手动预留只对月度上限（配了才查）；strict 开着时（默认开），",
+    "金额单位是美元。手动预留不对照任何上限（只记账）；strict 开着时（默认开），",
     "未配单价或调用缺用量会暂停运行等人工处理，恢复走 nyra governance caps resume。",
   ].join("\n");
 }
@@ -73,7 +72,6 @@ export function budgetMain(args: string[], home: string): number {
     const activeUsd = ledger.activeReservedUsd();
     const month = monthSpentUsd(home);
     const config = loadConfig(home);
-    const monthlyLimit = resolveMonthlyLimit(config);
     const strict = resolveStrictUnknownAmount(config);
     const pauses = listPauses(home, { status: "paused" }).filter((p) => p.scope === "unknown-amount");
     if (json) {
@@ -83,7 +81,6 @@ export function budgetMain(args: string[], home: string): number {
         month_spent_usd: month.spentUsd,
         month_incomplete: month.incomplete,
         month: month.month,
-        monthly_limit_usd: monthlyLimit,
         monthly_reset_at: nextMonthlyResetDate(),
         strict_unknown_amount: strict,
         unknown_amount_pauses: pauses.map((p) => ({ id: p.id, agent: p.agent, detail: p.detail })),
@@ -91,7 +88,7 @@ export function budgetMain(args: string[], home: string): number {
       return 0;
     }
     console.log(`在途预留：$${activeUsd.toFixed(4)}（${active.length} 笔）`);
-    console.log(`本月已花：$${month.spentUsd.toFixed(4)}${month.incomplete ? "（有未计价记录，实际只会更高）" : ""}${monthlyLimit !== null ? ` / 上限 $${monthlyLimit.toFixed(2)}，${nextMonthlyResetDate()} 重置` : "（未配月度上限）"}`);
+    console.log(`本月已花：$${month.spentUsd.toFixed(4)}${month.incomplete ? "（有未计价记录，实际只会更高）" : ""}，${nextMonthlyResetDate()} 重置（仅记账，无月度上限）`);
     console.log(`金额未知严格模式：${strict ? "开" : "关"}（默认开）`);
     if (pauses.length === 0) {
       console.log("待处理暂停：无");
@@ -115,13 +112,8 @@ export function budgetMain(args: string[], home: string): number {
     const ttlIdx = rest.indexOf("--ttl-ms");
     const ttlRaw = ttlIdx >= 0 ? Number(rest[ttlIdx + 1]) : NaN;
     const ttlMs = Number.isFinite(ttlRaw) && ttlRaw > 0 ? ttlRaw : undefined;
-    // 手动预留只对月度上限（配了才查）：本月已花 + 在途预留 + 本次预留 <= 上限。
-    const config = loadConfig(home);
-    const monthlyLimit = resolveMonthlyLimit(config);
-    const limits = monthlyLimit !== null
-      ? [{ scope: "monthly" as const, limitUsd: monthlyLimit, spentUsd: monthSpentUsd(home).spentUsd }]
-      : [];
-    const res = ledger.reserve("cli", amount, { limits, reason, ...(ttlMs !== undefined ? { ttlMs } : {}) });
+    // 手动预留不对照任何上限（月度限额已移除），只记账。
+    const res = ledger.reserve("cli", amount, { limits: [], reason, ...(ttlMs !== undefined ? { ttlMs } : {}) });
     if (!res.ok) {
       console.log(`预留失败：${res.reason}`);
       return 1;

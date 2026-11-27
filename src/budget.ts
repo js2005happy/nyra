@@ -11,7 +11,7 @@
 //   - 预留是对“上限”的预留，不是对“账单”的承诺：结算以 provider 实报
 //     usage × 单价为准；算不出实际花费时释放预留、不编数字（结算为
 //     null 的行就是“花了但没法计价”，与用量账本同款诚实边界）。
-//   - 同一笔钱在每一层上限里都占着：一条预留同时扣单次上限、月度上限
+//   - 同一笔钱在每一层上限里都占着：一条预留同时扣单次上限
 //     与分层上限的剩余额度——保守，只会早拒、不会超支。
 //   - 过期预留不拦路：TTL 到了、或 owner 进程已死，读时就不计入；
 //     写盘时把过期行标 released 留痕，不静默删记录。
@@ -39,7 +39,7 @@ export interface BudgetReservation {
   owner: string;
   amountUsd: number;
   reason: ReservationReason;
-  /** 预留时最紧的那一层上限（run/monthly/tiered:<scope>），只用于展示。 */
+  /** 预留时最紧的那一层上限（run/tiered:<scope>），只用于展示。 */
   bindingScope: string | null;
   createdAt: string;
   expiresAt: string;

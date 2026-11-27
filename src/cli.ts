@@ -19,7 +19,7 @@ import { Provider, FallbackProvider, buildProviderChain, makeModelFactory, Provi
 import { Agent, AgentError, resolveMaxDelegateDepth, type ContextUsage, type VoiceReviewResult } from "./agent.ts";
 import { RunStore, RunRecorder, prepareResume, loadCompletedWriteKeys, resolveVerifyOrigin, acceptVerifyCommand, resolveVerifySettings, downgradeCompletionClaim, formatRunReport, verifyEvidenceChain, formatEvidenceReport, computeRunStats } from "./runs.ts";
 import { buildTimeline, formatTimelineText, formatReplayText, exportTimelineMarkdown } from "./timeline.ts";
-import { resolvePricing, resolveMonthlyLimit } from "./cost.ts";
+import { resolvePricing } from "./cost.ts";
 import { handleCost } from "./costCli.ts";
 import { handleStats, formatMonthLine } from "./statsCli.ts";
 import { handleTelemetry } from "./telemetryCli.ts";
@@ -65,8 +65,7 @@ import {
 } from "./pet.ts";
 import { Spinner } from "./spinner.ts";
 import { formatUsage, windowSourceLabel, type UsageSnapshot } from "./usage.ts";
-import { UsageLedger, formatHeatmap, monthKeyString } from "./usageLedger.ts";
-import { McpCostTracker } from "./mcpCost.ts";
+import { UsageLedger, formatHeatmap } from "./usageLedger.ts";
 import { formatReplStatus, ToolPrinter, useColor, textWidth } from "./consoleUi.ts";
 import { dashboardCostSegment } from "./dashboard.ts";
 import { askApproval, approvalHooks } from "./approvalUi.ts";
@@ -175,7 +174,7 @@ nyra "任务" --speak   任务跑完后把结果读出来（默认关；只读�
 nyra voice <status|speak <文字>|enable-tts|disable-tts>   语音：看配置与可用性、读一段文字、开关自动回读（详见 docs/voice.md）
 nyra voice call <start|answer|decline|end|status|list|segment|confirm|note|notes|hooks>   实时语音通话：建通话、喂音频段落转写、可选回读（本地 whisper 优先，云端默认关；详见 docs/voice.md）
 nyra video <call|signal|ice>   视频通话 + 按需视觉采样：信令 + TURN + ICE 直连传输，帧按需看（本地优先，云端默认关；详见 docs/video-call.md）
---max-cost <美元> --monthly-max-cost <美元>   单次 / 月度支出上限（超限即停；月度默认不设上限）
+--max-cost <美元>   单次运行支出上限（超限即停）
 nyra                                                        进入交互模式（REPL）
 nyra --help                    显示帮助（不用 Key、不联网）
 nyra --version                 显示版本
@@ -209,7 +208,7 @@ nyra heartbeat <add|list|remove|enable|disable|run|wake|check-script|seen-clear|
 nyra fanout <list|show|recover>   后台扇出：顶层委派立即回 handle，跑完单条回填收件箱；跑一半的进程退出后须 recover 回收（详见 docs/merge-fanout.md）
 nyra team <create|list|show|add|remove|dissolve|dispatch|handover|lead|writer>   团队模式：参谋长独占入口，只拆解、分派、汇总；成员须有完整 Charter 才能接单；交接走 inbox/outbox/变更日志；对外动作一律回参谋长/人批；lead 租约 + 纪元防旧参谋长晚到指令（详见 docs/team.md）
 nyra governance <policy|mandate|mode|dry-runs>   企业治理：版本化策略 + 不可变授权 + observe/auto 接单模式 + 干跑记录（详见 docs/governance.md）
-nyra governance caps <set|list|show|check|assign-team|pause|resume|discard|pauses>   分层成本上限：按 Bot/角色/团队/人设设月度上限，触顶进可恢复暂停态
+nyra governance caps <set|list|show|check|assign-team|pause|resume|discard|pauses>   分层成本上限：按 Bot 设每日上限，触顶进可恢复暂停态
 nyra governance audit <export|verify>   审计导出：治理审计日志导出给 SIEM（JSONL + 哈希链，可验证）
 nyra governance audit export [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--source <来源>] [--actor <主体>] [--type <事件类型>] [--scope <deployment|org>] [--initiator <触发方>]   审计导出：按时间/主体/事件类型/范围/触发方过滤导出给 SIEM（详见 docs/governance.md）
 nyra governance audit deployment [--all] [--json]   部署级审计：部署/升级/回滚记录（详见 docs/governance.md）
@@ -276,7 +275,7 @@ nyra stats [--heatmap] [--json]  本月用量与每日用量热力图（--json �
 nyra telemetry [status|spans|metrics|export|enable|disable|otlp]   可观测性：trace（span 落盘 + OTLP 导出）+ metrics（计数器与直方图）+ 运行事件 trace 关联（详见 docs/telemetry.md）
 nyra acp <serve|status|grant|revoke-grant>   ACP 服务端：编辑器经 stdio 用 JSON-RPC 驱动 Nyra（只读先行，写操作进 peer 提议门，须机主逐条批）（详见 docs/acp.md）
 nyra a2a <serve|card>   A2A 服务端：别的 agent 经 HTTP 用 JSON-RPC 2.0 调用 Nyra（只读先行，写操作进 peer 提议门，须机主逐条批）（详见 docs/a2a.md）
-nyra cost --show [--json]      定价、单次上限与月度上限（本月已花）
+nyra cost --show [--json]      定价、单次上限与本月已花
 nyra --plan "任务"             只读分析，生成工作目录中的 plan.md，不执行
 nyra --execute-plan --approve-plan <SHA256>   执行经校验值批准的 plan.md
 nyra --verify "<命令>"         任务完成后运行验证命令（退出码 0 才算验证通过）
@@ -346,7 +345,7 @@ nyra "task" --speak   read the result aloud after the run (off by default; only 
 nyra voice <status|speak <text>|enable-tts|disable-tts>   voice: show config and availability, speak a text, toggle auto readback (see docs/voice.md)
 nyra voice call <start|answer|decline|end|status|list|segment|confirm|note|notes|hooks>   live voice call: start a call, feed audio segments to transcribe, optional readback (local whisper.cpp first, cloud off by default; see docs/voice.md)
 nyra video <call|signal|ice>   video call + on-demand frame sampling: signaling + TURN + ICE direct transport, frames seen on demand (local first, cloud off by default; see docs/video-call.md)
---max-cost <USD> --monthly-max-cost <USD>   per-run / monthly spend caps (hard stop when exceeded; monthly cap unset by default)
+--max-cost <USD>   per-run spend cap (hard stop when exceeded)
 nyra                                                        interactive mode (REPL)
 nyra --help                    show help (no key, no network)
 nyra --version                 show version
@@ -381,7 +380,7 @@ nyra heartbeat <add|list|remove|enable|disable|run|wake|check-script|seen-clear|
 nyra fanout <list|show|recover>   background fan-out: top-level delegation returns a handle immediately, results backfill the inbox as one message; half-run fan-outs need recover after the process exits (see docs/merge-fanout.md)
 nyra team <create|list|show|add|remove|dissolve|dispatch|handover|lead|writer>   team mode: the chief is the single entry point — splits, dispatches and summarizes only; members need a complete Charter to take work; handovers go through inbox/outbox/change log; outbound actions always go back to the chief / a human for approval; lead lease + epoch guards against stale chief instructions (see docs/team.md)
 nyra governance <policy|mandate|mode|dry-runs>   enterprise governance: versioned policy + immutable mandates + observe/auto intake modes + dry-run ledger (see docs/governance.md)
-nyra governance caps <set|list|show|check|assign-team|pause|resume|discard|pauses>   tiered cost caps: monthly USD/token limits per Bot/role/team/persona, over-cap tasks pause recoverably
+nyra governance caps <set|list|show|check|assign-team|pause|resume|discard|pauses>   tiered cost caps: daily USD/token limits per Bot, over-cap tasks pause recoverably
 nyra governance audit <export|verify>   audit export: governance audit logs to SIEM (JSONL + hash chain, verifiable)
 nyra governance audit export [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--source <source>] [--actor <actor>] [--type <event type>] [--scope <deployment|org>] [--initiator <initiator>]   audit export: filter by time / actor / event type / scope / initiator and export to SIEM (see docs/governance.md)
 nyra governance audit deployment [--all] [--json]   deployment audit: deploy / upgrade / rollback records (see docs/governance.md)
@@ -448,7 +447,7 @@ nyra stats [--heatmap]         this month's usage and the daily usage heatmap (s
 nyra telemetry [status|spans|metrics|export|enable|disable|otlp]   observability: traces (spans on disk + OTLP export) + metrics (counters and histograms) + run-event trace correlation (see docs/telemetry.md)
 nyra acp <serve|status|grant|revoke-grant>   ACP server: editors drive Nyra over stdio JSON-RPC (read-only first, writes go to the peer proposal gate for owner approval) (see docs/acp.md)
 nyra a2a <serve|card>   A2A server: other agents call Nyra over HTTP JSON-RPC 2.0 (read-only first, writes go to the peer proposal gate for owner approval) (see docs/a2a.md)
-nyra cost --show               pricing, per-run cap and monthly cap (spent this month)
+nyra cost --show               pricing, per-run cap and spent this month
 nyra verdict [task]            one conclusion: is this run worth it (redlines + savings + recall + history)
 nyra verdict --run <id>         score one run; --recent N: trend over the last N runs; --json: machine-readable
 nyra guard [--strict]          gate: exit 2 when verdict is red (yellow too with --strict)
@@ -537,8 +536,6 @@ export interface CliArgs {
   contract: string | null;
   /** P2-2：本次运行的成本上限（美元）；null = 不设上限。 */
   maxCost: number | null;
-  /** 缺口 29：本次运行的月度支出上限（美元）；null = 按配置（默认不设上限）。 */
-  monthlyMaxCost: number | null;
   /** 本次运行禁用的工具（可重复 --disable-tool）。 */
   disableTools: string[];
   /** 功能开关的 CLI 覆盖（--enable-feature / --disable-feature，可重复）。 */
@@ -581,7 +578,7 @@ export function parseArgs(argv: string[]): CliArgs {
     listSkills: false, listSessions: false, listMcp: false,
     compact: null, resume: null, resumeRun: null,
     planMode: false, executePlan: false, approvePlan: null,
-    verify: null, verifyTimeout: null, verifyRetries: null, contract: null, maxCost: null, monthlyMaxCost: null, disableTools: [], enableFeatures: [], disableFeatures: [], addDirs: [],
+    verify: null, verifyTimeout: null, verifyRetries: null, contract: null, maxCost: null, disableTools: [], enableFeatures: [], disableFeatures: [], addDirs: [],
     trustAgentsVerify: false, jsonMode: false, autoCompact: false,
     autoCompactThreshold: null, poppy: false, fallback: false, noFallback: false,
     discoverPoppy: null, inspectPoppyIdentity: null,
@@ -593,7 +590,7 @@ export function parseArgs(argv: string[]): CliArgs {
   const positional: string[] = [];
   const valueFlags = new Set([
       "--provider", "--model", "--profile", "--mode", "--max-turns", "--context-window",
-      "--compact", "--resume", "--resume-run", "--verify", "--verify-timeout", "--verify-retries", "--monthly-max-cost",
+      "--compact", "--resume", "--resume-run", "--verify", "--verify-timeout", "--verify-retries",
       "--contract",
       "--auto-compact-threshold", "--discover-poppy", "--inspect-poppy-identity",
       "--approve-plan", "--workdir", "--sandbox", "--sandbox-id", "--sandbox-template", "--sandbox-timeout",
@@ -654,7 +651,6 @@ export function parseArgs(argv: string[]): CliArgs {
         case "--verify": args.verify = value; break;
         case "--contract": args.contract = value; break;
         case "--max-cost": args.maxCost = parseFloat(value); break;
-        case "--monthly-max-cost": args.monthlyMaxCost = parseFloat(value); break;
         case "--disable-tool": args.disableTools.push(value); break;
         case "--enable-feature": args.enableFeatures.push(value); break;
         case "--add-dir": args.addDirs.push(value); break;
@@ -798,8 +794,6 @@ interface BuiltAgent {
   agentId: string | null;
   /** 缺口 43 第三批：分层上限回调的上下文 holder（调用方知道 runId 时填进去，触顶暂停记录就带上）。 */
   tieredCtx: TieredCtxHolder;
-  /** 缺口 20/29：用量账本与本次运行已落盘的 LLM 花费 holder（月度口径要扣掉它，避免重复计）。 */
-  monthly: { ledger: UsageLedger; flushed: { flushedUsd: number } };
   /**
   * 缺口 5：兜底切换回调（stderr 提示 + 经 Agent 发 model_switch 事件进
   * 证据链）。REPL `/model` 建新链时复用同一回调，之后自动切换照样留痕。
@@ -889,24 +883,8 @@ async function buildAgent(args: CliArgs, opts?: { interactive: boolean; skillsDi
       cli: args.contextWindow, manual: manualWindow.value, manualKey: manualWindow.key,
       cache: loadModelCache(home),
     });
-  // 缺口 29：月度硬顶的“本月已花（不含本次运行）”——账本里的本月 LLM 花费
-  // + 本月 MCP 花费，减去本次运行已经落盘的部分（账本里有、但本次运行的
-  // 进行中花费还没算进去，扣掉才不重复计）。账本读失败返回 null：算不出
-  // 就不封顶，不假装。月度上限本身：CLI 显式值 > 配置，默认不设上限。
-  const monthlyLedger = new UsageLedger(home);
-  const monthlyFlushed = { flushedUsd: 0 };
-  const monthlyLimit = resolveMonthlyLimit(config, args.monthlyMaxCost ?? null);
-  const monthlySpentBeforeUsd = monthlyLimit === null ? null : (): { spentUsd: number; incomplete: boolean } | null => {
-    try {
-      const llm = monthlyLedger.monthTotal(monthKeyString());
-      const mcp = new McpCostTracker(home).monthTotalUsd(monthKeyString());
-      return { spentUsd: llm.spentUsd + mcp - monthlyFlushed.flushedUsd, incomplete: llm.incomplete };
-    } catch {
-      return null;
-    }
-  };
   // 缺口 43 第三批：分层成本上限回调（定时任务 --agent 等知道 agent id 时才接；
-  // CLI 交互运行没有 agent id，不接——组织级月度硬顶照样管它）。
+  // CLI 交互运行没有 agent id，不接）。
   const tieredCtx: TieredCtxHolder = {};
   const agentId = opts?.agentId ?? null;
   const tieredCapCheck = agentId ? makeTieredCapCheck(home, agentId, tieredCtx) : null;
@@ -943,10 +921,7 @@ async function buildAgent(args: CliArgs, opts?: { interactive: boolean; skillsDi
           return args.maxCost ?? (typeof config.max_cost_usd === "number" ? config.max_cost_usd : null);
         })(),
       pricing: resolvePricing(config.pricing, provider.model),
-      // 缺口 29：月度支出硬顶（与 --max-cost 同级硬停；默认不设上限，见 docs/cost.md）。
-      monthlyCostLimitUsd: monthlyLimit,
-      monthlySpentBeforeUsd,
-      // 缺口 43 第三批：分层成本上限（与月度硬顶同级硬停；只有知道 agent id 时才接）。
+      // 缺口 43 第三批：分层成本上限（与单次硬顶同级硬停；只有知道 agent id 时才接）。
       tieredCapCheck,
       // 辅助任务走便宜模型（对齐 Alma 的 Tool Model）：压缩与子任务默认模型。
       auxModels: (() => { const r = resolveAuxRouting(config, provider.model); return { compact: r.compact, delegate: r.delegate }; })(),
@@ -1033,18 +1008,18 @@ async function buildAgent(args: CliArgs, opts?: { interactive: boolean; skillsDi
       commandBackend,
     });
   switchAgent.current = agent;
-  return { agent, providerName: primaryCfg.name, config, home, agentId, tieredCtx, monthly: { ledger: monthlyLedger, flushed: monthlyFlushed }, onModelSwitch, switchRunId };
+  return { agent, providerName: primaryCfg.name, config, home, agentId, tieredCtx, onModelSwitch, switchRunId };
 }
 
 // ---- 缺口 20：用量账本 flush ----
-// 把一次运行的累计用量增量写进账本（热力图与月度硬顶的事实源）。
+// 把一次运行的累计用量增量写进账本（热力图与本月账本的事实源）。
 // own 事件（usage/cost_update）：按上次 flush 的快照算增量；
 // delegate_usage：子任务独立累计，全量当增量记。账本写失败绝不破坏运行。
 function makeUsageFlusher(built: BuiltAgent): {
   flush: (agent: Agent, kind: string, data: Record<string, unknown>) => void;
   flushNow: (agent: Agent) => void;
 } {
-  const ledger = built.monthly.ledger;
+  const ledger = new UsageLedger(built.home);
   let lastSnap: UsageSnapshot | null = null;
   let lastSpent: number | null = null;
   const recordOwn = (agent: Agent): void => {
@@ -1055,11 +1030,7 @@ function makeUsageFlusher(built: BuiltAgent): {
     const voiceSpent = agent.voiceSpentUsd ?? 0;
     const spent = tokenSpent === null ? (voiceSpent > 0 ? voiceSpent : null) : tokenSpent + voiceSpent;
     // 缺口 43 第三批：知道 agent id 时按 agent 归属记账（分层上限用）；不知道时不记归属。
-    const rec = ledger.recordDelta(snap, lastSnap, spent, lastSpent, agent.provider.model, undefined, built.agentId ?? null);
-    // 只有主 agent 自己的已落盘花费才进 flushedUsd：月度口径 = 账本 - flushedUsd
-    // + 本次运行进行中花费；子任务的花费已在账本里、但不在主 agent 快照里，
-    // 不能扣，扣了就会漏计子任务。
-    if (rec && rec.spent_usd !== null) built.monthly.flushed.flushedUsd += rec.spent_usd;
+    ledger.recordDelta(snap, lastSnap, spent, lastSpent, agent.provider.model, undefined, built.agentId ?? null);
     lastSnap = snap;
     lastSpent = spent;
   };
@@ -6605,7 +6576,7 @@ async function handleAgentRun(args: CliArgs, home: string): Promise<number> {
  * handover 是纯本地操作（不建 agent、不烧 token）；只有 dispatch 跑模型：
  * 建一个参谋长 Agent（Soul = 参谋长、teamId = 团队、teamRole = chief，工作
  * 目录落在参谋长自己的电脑 workspace 里），跑 buildChiefTask 的任务文本。
- * 分派前 planTeamDispatch 已做过三道门（团队 active、Charter 齐全、月度硬顶）。 */
+ * 分派前 planTeamDispatch 已做过三道门（团队 active、Charter 齐全、分层每日上限）。 */
 async function handleTeamCommand(args: CliArgs, home: string): Promise<number> {
   const subArgs = args.subArgs ?? [];
   // handleTeam 在分派前发的团队事件（team_dispatched）先收下来，等 chief

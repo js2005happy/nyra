@@ -3,11 +3,10 @@
 //   nyra stats                    本月累计 + 今日 + 最近 7 天（数字版）
 //   nyra stats heatmap [--weeks N]  终端内每日用量热力图（默认 8 周）
 //
-// 数字只读用量账本（~/.nyra/usage_daily.jsonl）：热力图与月度硬顶同一份
+// 数字只读用量账本（~/.nyra/usage_daily.jsonl）：热力图与本月账本同一份
 // 事实源；账本从本批起才开始记，之前的运行没有留存用量，不补编历史。
 // 未计价的部分（没配单价/没报 usage）只记 token、不记金额，花费显示“未知”。
 import { loadConfig } from "./config.ts";
-import { resolveMonthlyLimit } from "./cost.ts";
 import { modelSwitchSummaryLine, summarizeModelSwitches } from "./modelSwitch.ts";
 import { UsageLedger, formatHeatmap, localDateString, monthKeyString, nextMonthlyResetDate } from "./usageLedger.ts";
 import { McpCostTracker } from "./mcpCost.ts";
@@ -17,22 +16,17 @@ function money(v: number | null): string {
   return typeof v === "number" ? `$${v.toFixed(4)}` : t("stats.spentUnknown");
 }
 
-/** 本月一行（供 REPL /stats 与 cost --show 复用）：已花、MCP 占比、上限、重置日。 */
+/** 本月一行（供 REPL /stats 与 cost --show 复用）：已花、MCP 占比、重置日（仅记账，无月度上限）。 */
 export function formatMonthLine(home: string, now = new Date()): string {
-  const config = loadConfig(home);
   const month = monthKeyString(now);
   const ledger = new UsageLedger(home);
   const llm = ledger.monthTotal(month);
   const mcp = new McpCostTracker(home).monthTotalUsd(month);
   const spent = llm.spentUsd + mcp;
-  const limit = resolveMonthlyLimit(config);
-  const limitPart = limit === null
-    ? t("stats.monthNoLimit")
-    : t("stats.monthLimit", { limit: `$${limit.toFixed(2)}`, reset: nextMonthlyResetDate(now) });
   const incomplete = llm.incomplete ? " " + t("run.statsPartial") : "";
   return t("stats.monthLine", {
     month, tokens: llm.totalTokens.toLocaleString("en-US"),
-    spent: money(spent) + incomplete, mcp: money(mcp), limitPart,
+    spent: money(spent) + incomplete, mcp: money(mcp), reset: nextMonthlyResetDate(now),
   });
 }
 
@@ -88,7 +82,6 @@ export function handleStats(argv: string[], home: string): number {
       monthSpentUsd: spent,
       incomplete: llm.incomplete,
       mcpSpentUsd: mcp,
-      monthlyLimitUsd: resolveMonthlyLimit(config),
       resetAt: nextMonthlyResetDate(now),
       today: t0 ? { date: todayKey, tokens: t0.total, spent: t0.spent, calls: t0.calls } : null,
       days,
@@ -145,7 +138,6 @@ export interface StatsJson {
   /** 本月是否有调用没配单价（有 → spent 不完整）。 */
   incomplete: boolean;
   mcp_spent_usd: number | null;
-  monthly_limit_usd: number | null;
   reset_at: string;
   /** 今日（本地日期）。 */
   today: { date: string; tokens: number; spent_usd: number | null; calls: number } | null;
@@ -166,7 +158,6 @@ export function buildStatsJson(input: {
   monthSpentUsd: number | null;
   incomplete: boolean;
   mcpSpentUsd: number | null;
-  monthlyLimitUsd: number | null;
   resetAt: string;
   today: { date: string; tokens: number; spent: number | null; calls: number } | null;
   days: { date: string; tokens: number; spent: number | null; calls: number }[];
@@ -185,7 +176,6 @@ export function buildStatsJson(input: {
     month_spent_usd: input.monthSpentUsd,
     incomplete: input.incomplete,
     mcp_spent_usd: input.mcpSpentUsd,
-    monthly_limit_usd: input.monthlyLimitUsd,
     reset_at: input.resetAt,
     today: input.today ? day(input.today) : null,
     days: input.days.map(day),

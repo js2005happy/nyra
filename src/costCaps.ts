@@ -1,37 +1,33 @@
 // src/costCaps.ts — 缺口 43 第三批：分层成本上限 + 审计导出（企业治理控制面的最后一批）。
 //
 // 两件事：
-//   1. 分层成本上限：按 Bot / 角色 / 团队 / 人设设月度上限（美元与 token 两
-//      种），默认最严——最严的一层胜出；子层上限永远不能超过组织级上限，
-//      想放宽先抬组织级，而抬上限本身（放宽）要进证据链（谁、什么时候、
-//      从多少抬到多少、为什么）。触顶时任务进可恢复暂停态（检查点已落盘），
-//      不是直接丢弃。
+//   1. 分层成本上限：只剩 agent 层每日上限（美元与 token 两种，每 Bot 当日
+//      用量）。月度限额已移除（2026-11-27，用户令“月度限额全去”）：
+//      org / team / role / persona 层的月度上限整个拿掉，不再能设；
+//      组织级月度硬顶（config.monthly_cost_limit_usd）也不存在了。
+//      放宽上限本身要进证据链（谁、什么时候、从多少抬到多少、为什么）。
+//      触顶时任务进可恢复暂停态（检查点已落盘），不是直接丢弃。
 //   2. 审计导出：把治理审计日志导出给 SIEM，格式固定一种（JSONL），每条记
 //      录带哈希链（改一行就验得出来）；导出操作本身进证据链。
 //
 // 几个定夺（写死在这里，免得后人各说各话）：
-//   - “组织级默认应有一条最严上限”：组织级上限就是已有的月度硬顶
-//     （config.monthly_cost_limit_usd，缺口 20/29 口径），不在这里另设
-//     一个美元数——cost.ts 已定：任何默认美元数都是凭空编的，默认不设
-//     上限（null）。“默认最严”落在机制上：多层同时设了时取最严的一层，
-//     子层超过组织级时直接拒绝设置（须先显式抬组织级，抬的动作本身进
-//     证据链）。没配组织级上限时，子层上限各自生效。
-//   - 花费口径与月度硬顶同一份数：组织级 = 用量账本本月 LLM 花费 +
-//     MCP 花费（与 checkAutoAllowed 同口径）；分层 = 用量账本按 agent
-//     归属拆分（usageLedger 的 agent 字段）。MCP 花费没有 agent 归属，
-//     只在组织级计入，分层不含 MCP——这是诚实边界，不是漏洞，写进文档。
+//   - 每日上限只在 agent 层有意义（每 Bot 当日用量）；其他层传了也直接拒绝，
+//     不静默收下。没配每日上限时，分层不拦人。
+//   - 花费口径：agent 每日层 = 用量账本按 agent 归属拆分的当日花费（与
+//     checkAutoAllowed 同口径）；MCP 花费没有 agent 归属，分层不含 MCP——
+//     这是诚实边界，不是漏洞，写进文档。
 //   - 分层花费是下界：账本里没归属的行（旧行、CLI 交互运行、网关会话）
-//     分不下去，只会让分层判定晚触发、不会误触发（与月度硬顶同款）。
-//   - 角色层按“请求方账号的角色”算：分层里没有按角色汇总的花费账本，
-//     角色上限约束的是“以该角色身份跑的 agent 各自的花费”（与 agent 层
-//     同一份数、不同的一层上限），不是全角色汇总——汇总数算不出来，不编。
+//     分不下去，只会让分层判定晚触发、不会误触发。
 //   - 暂停的“检查点”就是运行记录 + 任务板行：runId 指向的运行记录里有
 //     完整状态与用量，任务板行里有任务元数据；不另写一份检查点文件，
 //     恢复时按运行记录/任务板行续。没有 runId/taskId 的暂停，检查点就
-//     是 agent + 月份 + 当时已花（记录里写清）。
+//     是 agent + 当日 + 当时已花（记录里写清）。
 //   - 审计导出只覆盖治理控制面的 5 份审计日志（governance、sso、
 //     accounts、business-redlines、soul）；运行级证据链（runs/ 下每运
 //     行的 events.jsonl）不在本导出里——那是另一份量级的导出，后续再做。
+//   - 旧 caps 文件迁移：load 时剥掉月度字段（monthUsd/monthTokens），
+//     无剩余限额的层（非 agent 层、或只剩月度字段的 agent 层）丢掉；
+//     relaxations 历史旧值不重写（审计历史原样留着）。
 //
 // 护城河：
 //   - 账本全部原子写 0600，损坏先备份再抛错、不静默重建；
@@ -46,10 +42,9 @@ import { createHash, randomBytes } from "node:crypto";
 import { resolveHome, loadConfig } from "./config.ts";
 import { RunStore } from "./runs.ts";
 import { UsageLedger, localDateString, monthKeyString } from "./usageLedger.ts";
-import { McpCostTracker } from "./mcpCost.ts";
-import { resolveMonthlyLimit, resolvePricing } from "./cost.ts";
+import { resolvePricing } from "./cost.ts";
 import { resolveStrictUnknownAmount } from "./budget.ts";
-import { soulExists, SOUL_AGENT_ID_RE } from "./soul.ts";
+import { SOUL_AGENT_ID_RE } from "./soul.ts";
 import { ACCOUNTS_FILE } from "./accounts.ts";
 import { pauseKanbanTask, resumeKanbanTask, getKanbanTask } from "./kanban.ts";
 
@@ -68,13 +63,9 @@ export type CapScopeKind = "org" | "team" | "role" | "agent" | "persona";
 export interface CostCap {
   scope: string;
   kind: CapScopeKind;
-  /** 月度美元上限；null = 本层不限美元。 */
-  monthUsd: number | null;
-  /** 月度 token 上限；null = 本层不限 token。 */
-  monthTokens: number | null;
-  /** M1：每日美元上限（只在 agent 层用）；null/缺失 = 当日不限美元。 */
+  /** 每日美元上限（只在 agent 层用）；null/缺失 = 当日不限美元。 */
   dayUsd?: number | null;
-  /** M1：每日 token 上限（只在 agent 层用）；null/缺失 = 当日不限 token。 */
+  /** 每日 token 上限（只在 agent 层用）；null/缺失 = 当日不限 token。 */
   dayTokens?: number | null;
   setBy: string;
   setAt: string;
@@ -85,7 +76,7 @@ export interface CapRelaxation {
   id: string;
   at: string;
   scope: string;
-  field: "monthUsd" | "monthTokens" | "dayUsd" | "dayTokens" | "cap-removed";
+  field: "dayUsd" | "dayTokens" | "cap-removed";
   oldValue: number | null;
   newValue: number | null;
   by: string;
@@ -119,8 +110,7 @@ export interface CostPause {
   decidedBy: string | null;
   decidedAt: string | null;
   note: string | null;
-  /** M1：触顶的是月度层还是每日层（缺失 = 月度层，老记录）；day 层时
-   *  同 agent 同 scope 在不同日期是不同的暂停，不共用一条去重。 */
+  /** M1：触顶的是每日层（period 缺失的老记录是已移除的月度层）。 */
   period?: "month" | "day";
   /** M1：period 为 day 时触顶的自然日（本地日期 YYYY-MM-DD）。 */
   day?: string;
@@ -137,7 +127,7 @@ export interface PauseStore {
 
 export interface TierCheck {
   scope: string;
-  /** M1：这一层算的是月度窗口还是每日窗口（缺失 = 月度，老调用方兼容）。 */
+  /** 这一层算的是每日窗口（缺失 = 老记录的月度层，已随月度限额移除）。 */
   period?: "month" | "day";
   capUsd: number | null;
   spentUsd: number;
@@ -270,7 +260,18 @@ function isPauseStore(raw: unknown): raw is PauseStore {
 }
 
 export function loadCapsStore(home: string): CostCapsStore {
-  return loadJson(home, CAPS_FILE, { version: 1, caps: [], agentTeams: {}, relaxations: [] } as CostCapsStore, isCapsStore);
+  const store = loadJson(home, CAPS_FILE, { version: 1, caps: [], agentTeams: {}, relaxations: [] } as CostCapsStore, isCapsStore);
+  // 旧文件迁移（月度限额已移除）：剥掉月度字段，无剩余限额的层丢掉。
+  // 只在内存里做（下次 setCap 保存时自然落盘）；relaxations 历史不重写。
+  const migrated = store.caps
+    .filter((c) => c.kind === "agent")
+    .map((c) => {
+      const { monthUsd: _m, monthTokens: _t, ...rest } = c as CostCap & { monthUsd?: unknown; monthTokens?: unknown };
+      return rest as CostCap;
+    })
+    .filter((c) => c.dayUsd !== null && c.dayUsd !== undefined || c.dayTokens !== null && c.dayTokens !== undefined);
+  if (migrated.length !== store.caps.length) store.caps = migrated;
+  return store;
 }
 
 export function loadPauseStore(home: string): PauseStore {
@@ -354,11 +355,11 @@ export function listRelaxations(home: string): CapRelaxation[] {
 }
 
 /**
- * 设一层上限。monthUsd/monthTokens 传 undefined = 保持原值，null = 取消该项。
+ * 设一层上限。dayUsd/dayTokens 传 undefined = 保持原值，null = 取消该项。
  * 两项都取消（或本来就没这一层）= 整层删掉。
- *   - org 层拒绝在这里设：组织级上限就是月度硬顶（config.monthly_cost_limit_usd）。
- *   - 子层上限不能超过组织级上限（美元项；组织级未配时不拦）：想放宽先抬
- *     组织级，抬的动作本身进证据链。
+ *   - 只支持 agent 层每日上限：org / team / role / persona 层不再能设
+ *     上限（月度限额已移除，分层只剩 agent 层每日维）；monthUsd /
+ *     monthTokens 也不再接受，传了直接拒绝。
  *   - 抬高上限或取消上限 = 放宽：记一条 relaxations + 审计（谁、什么时候、
  *     从多少到多少、为什么）；调低或新设上限 = 收紧，只记审计。
  */
@@ -368,36 +369,24 @@ export function setCap(
   opts: { monthUsd?: number | null; monthTokens?: number | null; dayUsd?: number | null; dayTokens?: number | null; by?: string; reason: string; runId?: string | null },
 ): CostCap | null {
   const { kind } = parseCapScope(scope);
-  if (kind === "org") {
-    throw new CostCapsError("组织级上限就是月度硬顶（config.monthly_cost_limit_usd），请用 nyra cost 或 --monthly-max-cost 改，不在这里设");
+  if (kind !== "agent") {
+    throw new CostCapsError("分层上限只剩 agent 层每日上限（月度限额已移除）：org / team / role / persona 层不再能设上限");
+  }
+  if (opts.monthUsd !== undefined || opts.monthTokens !== undefined) {
+    throw new CostCapsError("月度上限已移除：分层上限只剩 agent 层每日上限（--day-usd / --day-tokens）");
   }
   const reason = (opts.reason ?? "").trim();
   if (!reason) throw new CostCapsError("设上限须写原因（--reason）");
   if (reason.length > MAX_REASON_CHARS) throw new CostCapsError(`原因过长（超过 ${MAX_REASON_CHARS} 字符）`);
   const by = (opts.by ?? "cli").trim() || "cli";
-  const monthUsd = validateCapValue(opts.monthUsd, "月度美元上限");
-  const monthTokens = validateCapValue(opts.monthTokens, "月度 token 上限");
-  // M1：每日上限只在 agent 层有意义（每 Bot 当日用量）；其他层传了也直接拒绝，不静默收下。
   const dayUsd = validateCapValue(opts.dayUsd, "每日美元上限");
   const dayTokens = validateCapValue(opts.dayTokens, "每日 token 上限");
-  if ((dayUsd !== null || dayTokens !== null) && kind !== "agent") {
-    throw new CostCapsError("每日上限只支持 agent 层（每 Bot 当日用量），其他层只设月度上限");
-  }
   const store = loadCapsStore(home);
   const existing = store.caps.find((c) => c.scope === scope);
-  const nextUsd = opts.monthUsd === undefined ? (existing?.monthUsd ?? null) : monthUsd;
-  const nextTokens = opts.monthTokens === undefined ? (existing?.monthTokens ?? null) : monthTokens;
   const nextDayUsd = opts.dayUsd === undefined ? (existing?.dayUsd ?? null) : dayUsd;
   const nextDayTokens = opts.dayTokens === undefined ? (existing?.dayTokens ?? null) : dayTokens;
-  // 子层不能超过组织级（美元项）：组织级未配时不拦。
-  if (nextUsd !== null) {
-    const orgLimit = resolveMonthlyLimit(loadConfig(home));
-    if (orgLimit !== null && nextUsd > orgLimit) {
-      throw new CostCapsError(`子层上限 $${nextUsd} 超过组织级上限 $${orgLimit}：先抬组织级（nyra cost 或 --monthly-max-cost），抬的动作会进证据链`);
-    }
-  }
   const relaxations: CapRelaxation[] = [];
-  const relax = (field: "monthUsd" | "monthTokens" | "dayUsd" | "dayTokens" | "cap-removed", oldValue: number | null, newValue: number | null): void => {
+  const relax = (field: "dayUsd" | "dayTokens" | "cap-removed", oldValue: number | null, newValue: number | null): void => {
     const r: CapRelaxation = {
       id: newCapRelaxationId(), at: nowIso(), scope, field, oldValue, newValue, by, reason,
     };
@@ -410,16 +399,6 @@ export function setCap(
     mirrorEvent(home, opts.runId ?? null, "cost_cap_relaxed", { scope, field, old_value: oldValue, new_value: newValue });
   };
   if (existing) {
-    if (opts.monthUsd !== undefined && nextUsd !== existing.monthUsd) {
-      if (nextUsd === null || (existing.monthUsd !== null && nextUsd > existing.monthUsd)) {
-        relax("monthUsd", existing.monthUsd, nextUsd);
-      }
-    }
-    if (opts.monthTokens !== undefined && nextTokens !== existing.monthTokens) {
-      if (nextTokens === null || (existing.monthTokens !== null && nextTokens > existing.monthTokens)) {
-        relax("monthTokens", existing.monthTokens, nextTokens);
-      }
-    }
     if (opts.dayUsd !== undefined && nextDayUsd !== (existing.dayUsd ?? null)) {
       if (nextDayUsd === null || ((existing.dayUsd ?? null) !== null && nextDayUsd > (existing.dayUsd as number))) {
         relax("dayUsd", existing.dayUsd ?? null, nextDayUsd);
@@ -431,8 +410,8 @@ export function setCap(
       }
     }
   }
-  if (nextUsd === null && nextTokens === null && nextDayUsd === null && nextDayTokens === null) {
-    // 四项都空 = 整层删掉（放宽：原来有上限，现在没了）。
+  if (nextDayUsd === null && nextDayTokens === null) {
+    // 两项都空 = 整层删掉（放宽：原来有上限，现在没了）。
     if (existing) {
       relax("cap-removed", null, null);
       store.caps = store.caps.filter((c) => c.scope !== scope);
@@ -442,7 +421,6 @@ export function setCap(
   }
   const cap: CostCap = {
     scope, kind,
-    monthUsd: nextUsd, monthTokens: nextTokens,
     dayUsd: nextDayUsd, dayTokens: nextDayTokens,
     setBy: by, setAt: nowIso(), reason,
   };
@@ -454,7 +432,7 @@ export function setCap(
   saveJsonAtomic(home, CAPS_FILE, store);
   if (relaxations.length === 0) {
     appendCostCapsAudit(home, {
-      action: "cost_cap_set", scope, month_usd: nextUsd, month_tokens: nextTokens, day_usd: nextDayUsd, day_tokens: nextDayTokens, by, reason_hash: shortHash(reason),
+      action: "cost_cap_set", scope, day_usd: nextDayUsd, day_tokens: nextDayTokens, by, reason_hash: shortHash(reason),
     });
     mirrorEvent(home, opts.runId ?? null, "cost_cap_set", { scope, field: "cap" });
   }
@@ -498,7 +476,7 @@ export function findAccountRoleSync(home: string, accountId: string): string | n
 }
 
 // ---------------------------------------------------------------------------
-// 分层判定（纯判定，不执行；与月度硬顶同一份数、同一诚实边界）
+// 分层判定（纯判定，不执行；与单次硬顶同一份数、同一诚实边界）
 // ---------------------------------------------------------------------------
 
 function layerCheck(
@@ -541,16 +519,12 @@ export function tierWarnings(layers: TierCheck[]): TierWarning[] {
 }
 
 /**
- * 分层上限判定。层与花费口径：
- *   - org：本月全部花费（用量账本 LLM + MCP，含未归属）对月度硬顶；
- *     token = 本月全部 token。
- *   - team：该团队成员 agent 的花费之和（成员关系见 caps assign-team）。
- *   - role：请求方账号的角色；花费 = 该 agent 自己的花费（按角色汇总的
- *     账本不存在，不编汇总数——见文件头定夺）。
- *   - agent：该 agent 自己的花费。
- *   - persona：该 agent 的 Soul（没建 Soul 时该层跳过）；花费与 agent 层同一份。
- * 进行中的花费（inProgress）加到每一层——同一笔钱在各层都算数。
- * 美元数算不出（未计价）时该层美元不判超，只判 token（与月度硬顶同款）。
+ * 分层上限判定。只剩 agent 层每日上限：
+ *   - agent：该 agent 自己当日的花费（本地自然日，美元与 token 两维）。
+ * 进行中的花费（inProgress）加到该层——同一笔钱在各层都算数。
+ * 美元数算不出（未计价）时美元层不判超，只判 token。
+ * org / team / role / persona 层已随月度限额移除，不再判定（旧 caps
+ * 文件里的这些层由 loadCapsStore 在读时丢掉）。
  */
 export function evaluateTieredCaps(home: string, ctx: TieredCtx): TieredEvaluation {
   const agent = (ctx.agent ?? "").trim();
@@ -559,52 +533,15 @@ export function evaluateTieredCaps(home: string, ctx: TieredCtx): TieredEvaluati
   const store = loadCapsStore(home);
   const capOf = (scope: string): CostCap | null => store.caps.find((c) => c.scope === scope) ?? null;
   const ledger = new UsageLedger(home);
-  const monthTotal = ledger.monthTotal(month);
   const byAgent = ledger.monthSpendByAgent(month);
-  const mcpUsd = new McpCostTracker(home).monthTotalUsd(month);
   const inUsd = typeof ctx.inProgressUsd === "number" && Number.isFinite(ctx.inProgressUsd) ? Math.max(0, ctx.inProgressUsd) : null;
   const inTokens = typeof ctx.inProgressTokens === "number" && Number.isFinite(ctx.inProgressTokens) ? Math.max(0, Math.floor(ctx.inProgressTokens)) : 0;
 
-  const agentSpend = byAgent.byAgent.get(agent) ?? { spentUsd: 0, totalTokens: 0, calls: 0 };
-  const agentUsdKnown = agentSpend.spentUsd > 0 || inUsd !== null;
   const layers: TierCheck[] = [];
 
-  // org 层：组织级上限就是月度硬顶；MCP 花费只在这里计入。
-  const orgCap = resolveMonthlyLimit(loadConfig(home));
-  const orgSpentUsd = monthTotal.spentUsd + mcpUsd + (inUsd ?? 0);
-  const orgUsdKnown = orgSpentUsd > 0 || inUsd !== null;
-  layers.push(layerCheck("org", orgCap, orgSpentUsd, orgUsdKnown, null, monthTotal.totalTokens + inTokens));
-
-  // team 层：成员花费之和。
-  const teamId = store.agentTeams[agent] ?? null;
-  if (teamId) {
-    const members = teamMembers(home, teamId);
-    let spent = 0;
-    let tokens = 0;
-    let known = inUsd !== null;
-    for (const m of members) {
-      const s = byAgent.byAgent.get(m);
-      if (!s) continue;
-      spent += s.spentUsd;
-      tokens += s.totalTokens;
-      if (s.spentUsd > 0) known = true;
-    }
-    const cap = capOf(`team:${teamId}`);
-    if (cap) layers.push(layerCheck(cap.scope, cap.monthUsd, spent + (inUsd ?? 0), known, cap.monthTokens, tokens + inTokens));
-  }
-
-  // role 层：请求方账号的角色（没给账号/读不到角色时跳过）。
-  const role = ctx.role ?? (ctx.accountId ? findAccountRoleSync(home, ctx.accountId) : null);
-  if (role && ROLE_RE.test(role)) {
-    const cap = capOf(`role:${role}`);
-    if (cap) layers.push(layerCheck(cap.scope, cap.monthUsd, agentSpend.spentUsd + (inUsd ?? 0), agentUsdKnown, cap.monthTokens, agentSpend.totalTokens + inTokens));
-  }
-
-  // agent 层。
+  // agent 每日层（只在该 agent 设了每日上限时出现；窗口是本地自然日，
+  // 当日没归属/没计价的部分同样只算下界）。
   const agentCap = capOf(`agent:${agent}`);
-  if (agentCap) layers.push(layerCheck(agentCap.scope, agentCap.monthUsd, agentSpend.spentUsd + (inUsd ?? 0), agentUsdKnown, agentCap.monthTokens, agentSpend.totalTokens + inTokens));
-  // M1：agent 每日层（只在该 agent 设了每日上限时出现；窗口是本地自然日，
-  // 与月层同一份账本、同一诚实边界——当日没归属/没计价的部分同样只算下界）。
   if (agentCap && (agentCap.dayUsd !== null && agentCap.dayUsd !== undefined || agentCap.dayTokens !== null && agentCap.dayTokens !== undefined)) {
     const day = localDateString();
     const daySpend = ledger.dayAgentTotal(day, agent);
@@ -615,18 +552,11 @@ export function evaluateTieredCaps(home: string, ctx: TieredCtx): TieredEvaluati
     ));
   }
 
-  // persona 层：该 agent 建了 Soul 才有；花费与 agent 层同一份。
-  if (soulExists(home, agent)) {
-    const personaCap = capOf(`persona:${agent}`);
-    if (personaCap) layers.push(layerCheck(personaCap.scope, personaCap.monthUsd, agentSpend.spentUsd + (inUsd ?? 0), agentUsdKnown, personaCap.monthTokens, agentSpend.totalTokens + inTokens));
-  }
-
   const binding = layers.find((l) => l.exceeded) ?? null;
-  const periodWord = (l: TierCheck): string => (l.period ?? "month") === "day" ? "当日" : "当月";
   const bindingReason = binding
     ? binding.binding === "usd"
-      ? `${binding.scope} 层美元上限已超（${periodWord(binding)}）：已花 $${binding.spentUsd.toFixed(4)} / 上限 $${(binding.capUsd ?? 0).toFixed(2)}（${(binding.period ?? "month") === "day" ? localDateString() : month}）`
-      : `${binding.scope} 层 token 上限已超（${periodWord(binding)}）：已用 ${binding.spentTokens.toLocaleString("en-US")} / 上限 ${(binding.capTokens ?? 0).toLocaleString("en-US")}（${(binding.period ?? "month") === "day" ? localDateString() : month}）`
+      ? `${binding.scope} 层美元上限已超（当日）：已花 $${binding.spentUsd.toFixed(4)} / 上限 $${(binding.capUsd ?? 0).toFixed(2)}（${localDateString()}）`
+      : `${binding.scope} 层 token 上限已超（当日）：已用 ${binding.spentTokens.toLocaleString("en-US")} / 上限 ${(binding.capTokens ?? 0).toLocaleString("en-US")}（${localDateString()}）`
     : "";
   return {
     allowed: binding === null,
@@ -644,15 +574,13 @@ export function evaluateTieredCaps(home: string, ctx: TieredCtx): TieredEvaluati
 
 export function tieredExceededMessage(ev: TieredEvaluation): string {
   const binding = ev.layers.find((l) => l.exceeded);
-  const isDay = (binding?.period ?? "month") === "day";
-  const reset = isDay ? "或等明天 0 点重置" : "或等下月 1 日重置";
   const lines = [
     `分层成本上限已超：${ev.bindingReason}`,
     "运行已中止，任务进可恢复暂停态（检查点已落盘：运行记录 + 任务板行），不是直接丢弃。",
-    `恢复办法：抬上限（nyra governance caps set --scope <层>，放宽进证据链）${reset}，再跑 nyra governance caps resume <暂停 id> --yes。`,
+    "恢复办法：抬上限（nyra governance caps set --scope <层>，放宽进证据链）或等明天 0 点重置，再跑 nyra governance caps resume <暂停 id> --yes。",
   ];
   if (ev.unattributedUsd > 0) {
-    lines.push(`注意：本月另有 $${ev.unattributedUsd.toFixed(4)} 未归属到任何 agent 的花费（分层数是下界，组织级月度口径已含它）。`);
+    lines.push(`注意：本月另有 $${ev.unattributedUsd.toFixed(4)} 未归属到任何 agent 的花费（分层数是下界）。`);
   }
   return lines.join("\n");
 }
@@ -690,12 +618,11 @@ export function pauseForCap(
   const store = loadPauseStore(home);
   const binding = ev.layers.find((l) => l.exceeded);
   const scope = binding?.scope ?? "manual";
-  // M1：每日层按日去重（同 agent 同 scope 同日只留一条），月度层按月去重（老行为）。
-  const period = binding?.period ?? "month";
+  // 每日层按日去重（同 agent 同 scope 同日只留一条）。
+  const period = binding?.period ?? "day";
   const day = period === "day" ? ev.day : undefined;
   const open = store.pauses.find((p) =>
-    p.status === "paused" && p.agent === ev.agent && p.scope === scope &&
-    (period === "day" ? p.day === day : p.at.slice(0, 7) === ev.month));
+    p.status === "paused" && p.agent === ev.agent && p.scope === scope && p.day === day);
   if (open) return open;
   const pause: CostPause = {
     id: newPauseId(),
@@ -824,7 +751,7 @@ export function resumePause(home: string, id: string, by: string, opts?: { runId
   } else {
     const ev = evaluateTieredCaps(home, { agent: pause.agent });
     if (!ev.allowed) {
-      throw new CostCapsError(`还不能恢复：${ev.bindingReason}。先抬上限或等下月 1 日重置。`);
+      throw new CostCapsError(`还不能恢复：${ev.bindingReason}。先抬上限或等明天 0 点重置。`);
     }
   }
   pause.status = "resumed";
@@ -1210,26 +1137,21 @@ function tokens(v: number | null): string {
 }
 
 function printCap(cap: CostCap): void {
-  const day = (cap.dayUsd !== null && cap.dayUsd !== undefined) || (cap.dayTokens !== null && cap.dayTokens !== undefined)
-    ? `；每日美元 ${money(cap.dayUsd ?? null)}，每日 token ${tokens(cap.dayTokens ?? null)}`
-    : "";
-  console.log(`${cap.scope}：美元 ${money(cap.monthUsd)}，token ${tokens(cap.monthTokens)}${day}（${cap.setBy}，${cap.setAt}，${cap.reason}）`);
+  console.log(`${cap.scope}：每日美元 ${money(cap.dayUsd ?? null)}，每日 token ${tokens(cap.dayTokens ?? null)}（${cap.setBy}，${cap.setAt}，${cap.reason}）`);
 }
 
 function printEvaluation(ev: TieredEvaluation): void {
-  console.log(`分层判定（${ev.month}，agent ${ev.agent}）：${ev.allowed ? "通过" : "已超限"}`);
+  console.log(`分层判定（${ev.day}，agent ${ev.agent}）：${ev.allowed ? "通过" : "已超限"}`);
   for (const l of ev.layers) {
-    const window = (l.period ?? "month") === "day" ? "当日" : "当月";
     const usd = l.capUsd === null ? "美元不限" : `美元 $${l.spentUsd.toFixed(4)} / ${money(l.capUsd)}${l.usdKnown ? "" : "（算不出，不判）"}`;
     const tok = l.capTokens === null ? "token 不限" : `token ${l.spentTokens.toLocaleString("en-US")} / ${tokens(l.capTokens)}`;
-    console.log(`  ${l.scope}（${window}）：${usd}；${tok}${l.exceeded ? ` ← 超限（${l.binding}）` : ""}`);
+    console.log(`  ${l.scope}（当日）：${usd}；${tok}${l.exceeded ? ` ← 超限（${l.binding}）` : ""}`);
   }
   for (const w of ev.warnings) {
-    const window = w.period === "day" ? "当日" : "当月";
-    console.log(`  提醒：${w.scope}（${window}）${w.kind === "usd" ? "美元" : "token"}已用 ${(w.pct * 100).toFixed(0)}%，到 80% 了`);
+    console.log(`  提醒：${w.scope}（当日）${w.kind === "usd" ? "美元" : "token"}已用 ${(w.pct * 100).toFixed(0)}%，到 80% 了`);
   }
   if (ev.unattributedUsd > 0 || ev.unattributedTokens > 0) {
-    console.log(`  未归属：$${ev.unattributedUsd.toFixed(4)} / ${ev.unattributedTokens.toLocaleString("en-US")} token（分层数是下界；MCP 花费只在组织级计入）`);
+    console.log(`  未归属：$${ev.unattributedUsd.toFixed(4)} / ${ev.unattributedTokens.toLocaleString("en-US")} token（分层数是下界）`);
   }
   if (!ev.allowed) console.log(`  ${ev.bindingReason}`);
 }
@@ -1261,18 +1183,16 @@ export function handleCaps(args: string[], home: string): number {
   }
   if (sub === "set") {
     const scope = getFlag(rest, "--scope");
-    if (!scope) throw new CostCapsError("用法：nyra governance caps set --scope <范围> [--usd <美元>|--usd-null] [--tokens <数>|--tokens-null] [--day-usd <美元>|--day-usd-null] [--day-tokens <数>|--day-tokens-null] --reason <原因>");
+    if (!scope) throw new CostCapsError("用法：nyra governance caps set --scope <范围> [--day-usd <美元>|--day-usd-null] [--day-tokens <数>|--day-tokens-null] --reason <原因>（只支持 agent 层每日上限）");
     const reason = getFlag(rest, "--reason");
     if (!reason) throw new CostCapsError("设上限须写原因：--reason <原因>");
-    const monthUsd = parseUsdFlag(rest, "--usd", "--usd-null");
-    const monthTokens = parseTokensFlag(rest, "--tokens", "--tokens-null");
     const dayUsd = parseUsdFlag(rest, "--day-usd", "--day-usd-null");
     const dayTokens = parseTokensFlag(rest, "--day-tokens", "--day-tokens-null");
-    if (monthUsd === undefined && monthTokens === undefined && dayUsd === undefined && dayTokens === undefined) throw new CostCapsError("至少给一项：--usd、--tokens、--day-usd 或 --day-tokens（--usd-null / --tokens-null / --day-usd-null / --day-tokens-null 是取消该项；每日上限只支持 agent 层）");
-    const cap = setCap(home, scope, { monthUsd, monthTokens, dayUsd, dayTokens, by: getFlag(rest, "--by") ?? undefined, reason });
+    if (dayUsd === undefined && dayTokens === undefined) throw new CostCapsError("至少给一项：--day-usd 或 --day-tokens（--day-usd-null / --day-tokens-null 是取消该项；只支持 agent 层）");
+    const cap = setCap(home, scope, { dayUsd, dayTokens, by: getFlag(rest, "--by") ?? undefined, reason });
     if (cap === null) console.log(`已删掉 ${scope} 层的上限（放宽，已进证据链）`);
     else {
-      console.log(`上限已设：${cap.scope}：美元 ${money(cap.monthUsd)}，token ${tokens(cap.monthTokens)}${(cap.dayUsd !== null && cap.dayUsd !== undefined) || (cap.dayTokens !== null && cap.dayTokens !== undefined) ? `；每日美元 ${money(cap.dayUsd ?? null)}，每日 token ${tokens(cap.dayTokens ?? null)}` : ""}`);
+      console.log(`上限已设：${cap.scope}：每日美元 ${money(cap.dayUsd ?? null)}，每日 token ${tokens(cap.dayTokens ?? null)}`);
       const rel = listRelaxations(home).filter((r) => r.scope === scope);
       if (rel.length > 0 && rel[0].at >= cap.setAt) console.log("  注意：这次是放宽（上限抬高或取消），已记进证据链。");
     }
@@ -1284,7 +1204,7 @@ export function handleCaps(args: string[], home: string): number {
     if (json) {
       printJson({ caps, agentTeams: store.agentTeams, relaxations: store.relaxations.length });
     } else if (caps.length === 0 && Object.keys(store.agentTeams).length === 0) {
-      console.log("还没设过分层上限（组织级上限是月度硬顶，见 nyra cost --show）");
+      console.log("还没设过分层上限（分层只剩 agent 层每日上限）");
     } else {
       for (const c of caps) printCap(c);
       for (const [a, t] of Object.entries(store.agentTeams)) console.log(`agent ${a} → 团队 ${t}`);

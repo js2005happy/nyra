@@ -20,7 +20,6 @@ import { DANGEROUS_KEYS } from "./configSecurity.ts";
  */
 export const ENFORCEABLE_KEYS: readonly string[] = [
   "max_cost_usd",
-  "monthly_cost_limit_usd",
   "deny_read_globs",
   "disabled_tools",
   "sandbox",
@@ -121,7 +120,7 @@ export function effectiveStringList(config: Record<string, unknown> | null | und
  *
  * 与 ``effectiveValue`` 的区别（踩过）：effectiveValue 没锁时返回 config 顶层值，
  * 拿它当"是否有锁"的判定会让**优先级顺序失效**——
- * 例如月度上限：``enforcedOnly ?? cli ?? config`` 才是对的；
+ * 例如每任务硬顶：``enforcedOnly ?? cli ?? config`` 才是对的；
  * 用 effectiveValue 会变成"config 有值就压过 CLI"，与文档写的 CLI 优先矛盾。
  */
 export function enforcedOnly(config: Record<string, unknown> | null | undefined, key: string): unknown {

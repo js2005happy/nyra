@@ -9,8 +9,8 @@
 //     不同正文的旧事实标 superseded（被取代），两边都留着可查，不直接覆盖。
 //   - 过期：事实带 validUntil（只有来源明确说了结束时间才有），到期自动失效
 //     （Graphiti 的时态失效思路，轻量版：读时惰性过期 + 做梦代谢里定期扫）。
-//   - 默认关：config.json 的 semantic_facts 一节，enabled false；抽取先过月度
-//     成本上限，超支就跳过，花了多少进当月账本。
+//   - 默认关：config.json 的 semantic_facts 一节，enabled false；抽取花了
+//     多少进当月账本（月度限额已移除，不再先过月度上限）。
 // 本模块不 import memoryProposals.ts / dream.ts（memoryProposals.ts 调它建事实；
 // dream.ts 调它跑抽取与过期扫——反向 import 会成环）。队列插入由调用方
 // （dream / memory extract）走 memoryProposals.ts 的 addProposalDrafts。
@@ -21,9 +21,8 @@ import { dirname, join } from "node:path";
 import { loadConfig, resolveHome, resolveProvider } from "./config.ts";
 import { loadSession } from "./memory.ts";
 import { tokenize, scoreBm25 } from "./knowledge.ts";
-import { estimateCost, resolveMonthlyLimit, resolvePricing } from "./cost.ts";
-import { UsageLedger, monthKeyString } from "./usageLedger.ts";
-import { McpCostTracker } from "./mcpCost.ts";
+import { estimateCost, resolvePricing } from "./cost.ts";
+import { UsageLedger } from "./usageLedger.ts";
 import { UsageTracker } from "./usage.ts";
 import { Provider } from "./providers.ts";
 
@@ -514,7 +513,7 @@ export interface ModelExtractionResult {
   drafts: SemanticFactDraft[];
   /** 本次抽取花掉的钱（没上报 usage 或没调模型时为 null）。 */
   spentUsd: number | null;
-  /** 没跑的原因：no-credentials / monthly-cap-reached / model-failed / no-user-turns。 */
+  /** 没跑的原因：no-credentials / model-failed / no-user-turns。 */
   skippedReason?: string;
 }
 
@@ -524,7 +523,6 @@ function recordFactSpend(
   config: Record<string, unknown>,
   provider: Provider,
   usage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null | undefined,
-  monthlyLimit: number | null,
   now: Date,
 ): number | null {
   try {
@@ -532,7 +530,7 @@ function recordFactSpend(
     tracker.record({ usage: usage ?? null });
     const snap = tracker.snapshot();
     const pricing = resolvePricing(config.pricing, provider.model ?? null);
-    const est = estimateCost(snap, pricing, monthlyLimit);
+    const est = estimateCost(snap, pricing, null);
     if (est.status === "priced" && est.spentUsd !== null) {
       new UsageLedger(home).recordDelta(snap, null, est.spentUsd, null, provider.model ?? null, now);
       return est.spentUsd;
@@ -543,7 +541,7 @@ function recordFactSpend(
 
 /**
  * 用小模型跑一次事实抽取（不进待审队列、不写记忆，只返回草稿与花费）。
- * - 没凭证 / 月度上限已到 / 模型调用失败时返回空草稿 + skippedReason，不抛错。
+ * - 没凭证 / 模型调用失败时返回空草稿 + skippedReason，不抛错。
  * - 开关（semantic_facts.enabled）由调用方判断（做梦代谢里判断；终端手动
  *   提炼是用户亲手点的，不拦），本函数只负责跑一次抽取。
  */
@@ -577,7 +575,6 @@ export async function runModelExtraction(
     chars += t.length;
     if (chars >= SEMANTIC_FACT_INPUT_MAX_CHARS) break;
   }
-  const monthlyLimit = resolveMonthlyLimit(config, null);
   // 先解析 provider（只为拿到模型名与价目做记账；解析失败不拦抽取，
   // 注入的假 runner 照样能跑，只是没法记账）。
   let provider: Provider | null = null;
@@ -593,15 +590,6 @@ export async function runModelExtraction(
     }
     runner = defaultFactModelRunner(provider);
   }
-  if (monthlyLimit !== null) {
-    try {
-      const llm = new UsageLedger(home).monthTotal(monthKeyString(now));
-      const mcp = new McpCostTracker(home).monthTotalUsd(monthKeyString(now));
-      if (llm.spentUsd + mcp >= monthlyLimit) {
-        return { drafts: [], spentUsd: null, skippedReason: "monthly-cap-reached" };
-      }
-    } catch { /* 账本读失败不拦抽取 */ }
-  }
   let out: { text: string; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null };
   try {
     out = await runner(buildFactExtractionPrompt(kept));
@@ -611,7 +599,7 @@ export async function runModelExtraction(
   const drafts = parseFactDrafts(out.text, kept);
   let spentUsd: number | null = null;
   if (provider) {
-    spentUsd = recordFactSpend(home, config, provider, out.usage, monthlyLimit, now);
+    spentUsd = recordFactSpend(home, config, provider, out.usage, now);
   }
   return { drafts, spentUsd };
 }

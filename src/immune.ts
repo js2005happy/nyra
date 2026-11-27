@@ -23,7 +23,6 @@ import {
   type MemoryGateSecretKind,
 } from "./memoryGate.ts";
 import { parseSkillFile } from "./skills.ts";
-import { monthlyCapDecided } from "./cost.ts";
 
 export const IMMUNE_REPORT_FILE = "immune-report.json";
 export const QUARANTINE_DIR = "quarantine";
@@ -421,8 +420,8 @@ export function runImmuneChecks(home: string, opts: { now?: Date } = {}): Immune
     });
   }
 
-  // 6）成本硬顶：上限配置与暂停账本是不是好的（月度上限没选定不算失败，
-  //    首次付费调用前会先问你——P0-3 的运行时门，不是体检的失败项）。
+  // 6）成本硬顶：上限配置与暂停账本是不是好的（月度限额已移除，
+  //    这里只查单次上限 max_cost_usd 与暂停账本）。
   {
     let ok = true;
     let detail = "成本上限配置正常，暂停账本能解析";
@@ -433,18 +432,10 @@ export function runImmuneChecks(home: string, opts: { now?: Date } = {}): Immune
         ok = false;
         detail = "config.json 里 max_cost_usd 不是非负数字";
       }
-      const monthly = (config as Record<string, unknown>).monthly_cost_limit_usd;
-      if (monthly !== undefined && monthly !== null && (typeof monthly !== "number" || !Number.isFinite(monthly) || monthly < 0)) {
-        ok = false;
-        detail = "config.json 里 monthly_cost_limit_usd 不是非负数字";
-      }
       const pauses = parseJsonFile(home, "cost-pauses.json");
       if (!pauses.ok) {
         ok = false;
         detail = `暂停账本 cost-pauses.json 解析失败：${pauses.error ?? ""}`;
-      }
-      if (ok && !monthlyCapDecided(config)) {
-        detail = "成本上限配置正常；月度上限还没选定（首次付费调用前会先问你，不会悄悄花钱）";
       }
     } catch (err) {
       ok = false;

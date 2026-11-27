@@ -10,7 +10,7 @@
 //   - 媒体面：协商成功后，视频帧走 ICE 提名出来的 UDP 直连通道（长度
 //     前缀成帧），不是 DTLS-SRTP——原因见诚实边界；
 //   - 按需看：采样三档（点一下才看 / 画面变化 / 定时），本地小视觉模型
-//     优先（Ollama），云端视觉默认关、显式 opt-in 才走、走前套月度硬顶；
+//     优先（Ollama），云端视觉默认关、显式 opt-in 才走；
 //   - 三本账分开：传输（字节、直连还是中转）/ 看（帧数、引擎、花费）/
 //     干活（本次通话不把描述当任务跑，无 token 花费）。
 //
@@ -45,7 +45,7 @@ import { computeCostUsd, resolvePricing } from "./cost.ts";
 import { loadConfig, resolveProvider } from "./config.ts";
 import { Provider } from "./providers.ts";
 import { Vault } from "./vault.ts";
-import { checkCallCloudCap, detectSensitiveIntent, type VoiceCallTransport } from "./voiceCall.ts";
+import { detectSensitiveIntent, type VoiceCallTransport } from "./voiceCall.ts";
 import {
   buildVisionUserMessage, loadImageFile, modelSupportsVision,
   resolveVisionConfig, shortImageHash, visionGateMessage,
@@ -1566,7 +1566,7 @@ function getVideoCall(store: VideoCallStore, id: string): VideoCall {
   return call;
 }
 
-// ---- 视觉描述：本地优先，云端须显式 opt-in + 月度硬顶 ----
+// ---- 视觉描述：本地优先，云端须显式 opt-in ----
 
 export interface VisionDescribeResult {
   text: string;
@@ -1609,7 +1609,7 @@ function extractVisionUsage(resp: Record<string, unknown>): { promptTokens: numb
 
 /**
  * 默认视觉描述：本地 Ollama 模型优先（配了 vision_local_model 才走）；
- * 本地不可用时，只有 vision_cloud_enabled 才升级云端（走前套月度硬顶，
+ * 本地不可用时，只有 vision_cloud_enabled 才升级云端（
  * 估算按一帧 765 输入 token + 200 输出 token；没配单价算不出金额时
  * 不假装封顶、只记未计价）。两条路都没有时直接报错指路。
  */
@@ -1644,9 +1644,9 @@ export async function describeFrameDefault(opts: {
   }
   if (!videoCfg.visionCloudEnabled) {
     if (videoCfg.visionLocalModel && localFailed) {
-      throw new VideoCallError("本地视觉模型不可用（Ollama 没跑、模型没拉、或模型看不了图），且云端视觉默认关闭。两条路任选其一：1）起好 Ollama 并拉好模型（config.json 的 video.vision_local_model）；2）在 config.json 的 video.vision_cloud_enabled 设为 true 才走云端（云端要花钱，且过月度硬顶）。详见 docs/video-call.md");
+      throw new VideoCallError("本地视觉模型不可用（Ollama 没跑、模型没拉、或模型看不了图），且云端视觉默认关闭。两条路任选其一：1）起好 Ollama 并拉好模型（config.json 的 video.vision_local_model）；2）在 config.json 的 video.vision_cloud_enabled 设为 true 才走云端（云端要花钱）。详见 docs/video-call.md");
     }
-    throw new VideoCallError("没有可用的看图路：本地视觉模型未配，且云端视觉默认关闭。配一个本地视觉模型（video.vision_local_model，如 qwen2.5-vl:3b，走 Ollama），或在 config.json 的 video.vision_cloud_enabled 设为 true 才走云端（云端要花钱，且过月度硬顶）。详见 docs/video-call.md");
+    throw new VideoCallError("没有可用的看图路：本地视觉模型未配，且云端视觉默认关闭。配一个本地视觉模型（video.vision_local_model，如 qwen2.5-vl:3b，走 Ollama），或在 config.json 的 video.vision_cloud_enabled 设为 true 才走云端（云端要花钱）。详见 docs/video-call.md");
   }
   const resolved = resolveProvider({ home, config });
   if (resolved.auth === "cli" || !resolved.apiKey) {
@@ -1655,9 +1655,6 @@ export async function describeFrameDefault(opts: {
   const gate = modelSupportsVision(resolved.model, resolved.name);
   if (!gate.supported) throw new VideoCallError(visionGateMessage(resolved.model, resolved.name));
   const pricing = resolvePricing(config.pricing, resolved.model);
-  const estCost = computeCostUsd(765 + Math.ceil(opts.prompt.length / 4), 200, pricing ?? { inputPer1M: 0, outputPer1M: 0 });
-  const cap = checkCallCloudCap(home, config, pricing ? estCost : null);
-  if (!cap.allowed) throw new VideoCallError(cap.reason ?? "月度硬顶已触发，云端视觉已停");
   const provider = new Provider(resolved);
   const resp = await provider.chat([buildVisionUserMessage(opts.prompt, [opts.image])] as never, null);
   const text = extractVisionText(resp);

@@ -22,7 +22,7 @@
 //
 // 诚实边界（已写进 docs/team.md）：
 //   - 参谋长是单点瓶颈与单点故障：拆错了全队白跑；只收摘要不收全文，
-//     上下文本身会成为瓶颈；参谋长自己同样受月度硬顶约束（接单前先过
+//     上下文本身会成为瓶颈；参谋长自己同样受分层每日上限约束（接单前先过
 //     checkAutoAllowed，触顶不接单）。
 //   - Charter 写得再好模型也可能不遵守：抽查是确定性启发式检查（只核
 //     说法不验语义），内容对错仍由 verifier + 人批负责；不要拿“有合同”
@@ -707,7 +707,7 @@ team: Team;
 chief: string;
 members: string[];
 task: string;
-/** 接单前月度硬顶检查（checkAutoAllowed）：触顶不接单。 */
+/** 接单前分层每日上限检查（checkAutoAllowed）：触顶不接单。 */
 cap: { allowed: boolean; reason: string};
 /** 第 2 批 G-P1-3：本次分派的纪元（dispatch 处理里拿租约后填；没填时
  * chief Agent 不校验纪元——老调用方与 dry-run 不受影响）。 */
@@ -716,7 +716,7 @@ epoch?: number;
 
 /**
 * 分派前计划（确定性部分，不调模型、不花 token）：团队须 active、参谋长
-* 与每个成员的 Charter 须完整、月度硬顶（组织级 + 分层）须没触顶。
+* 与每个成员的 Charter 须完整、分层每日上限须没触顶。
 * 计划过了才建 chief run；不过直接拒绝，连 chief 都不起。
 */
 export function planTeamDispatch(home: string, idOrName: string, task: string): TeamDispatchPlan {
@@ -729,7 +729,7 @@ if (team.status!== "active") throw new TeamError(`团队 ${team.name} 已解散�
 requireCharter(home, team.chief, "分派");
 for (const m of team.members) requireCharter(home, m, "分派");
 const cap = checkAutoAllowed(home, team.chief);
-if (!cap.allowed) throw new TeamError(`分派被月度硬顶拦住：${cap.reason}`);
+if (!cap.allowed) throw new TeamError(`分派被分层上限拦住：${cap.reason}`);
 return { team, chief: team.chief, members: [...team.members], task: trimmed, cap};
 }
 
@@ -1021,7 +1021,7 @@ process.stdout.write(
 + ` 团队：${plan.team.name}（${plan.team.id}）\n`
 + ` 参谋长：${plan.chief}（独占入口，只拆解、分派、汇总）\n`
 + ` 成员：${plan.members.join("、")}\n`
-+ ` 月度硬顶：${plan.cap.reason}\n`
++ ` 分层上限：${plan.cap.reason}\n`
 + ` 任务：${plan.task}\n`,
 );
 return 0;

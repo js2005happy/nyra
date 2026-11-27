@@ -40,7 +40,7 @@ import {
   getThreadHistory, listThreadRuns, setThreadStatus, threadPublic,
 } from "./threads.ts";
   // 缺口 30：网关入口此前完全不接成本硬顶与用量账本——Web UI 一跑等于绕过 --max-cost。
-import { resolvePricing, resolveMonthlyLimit, monthlyCapDecided } from "./cost.ts";
+import { resolvePricing } from "./cost.ts";
 import { recordModelSwitch, switchTimeShort } from "./modelSwitch.ts";
 import { UsageLedger, monthKeyString, nextMonthlyResetDate } from "./usageLedger.ts";
 import type { UsageSnapshot } from "./usage.ts";
@@ -503,24 +503,6 @@ export class Gateway {
     return { ok: true, status: "running", stopping: true };
   }
 
-  /**
-   * P0-3 花钱之前先看见上限：第一次花钱的任务开始前，月度上限必须已明
-   * 确选定（填过数字、或明确选过“不设上限”）。没选定时、且当前 provider
-   * 是要 Key 的付费模型，直接拦下并指去设置；本地/免 Key 模型不花钱，
-   * 不拦。CLI 与 plan() 走同一道门（executePlan 复用 send()）。
-   */
-  private requireMonthlyCapDecision(): void {
-    if (monthlyCapDecided(this.config)) return;
-    let name: string | null = null;
-    try { name = (this.provider() as unknown as { name?: string }).name ?? null; } catch { name = null; }
-    if (!name) name = typeof this.config.provider === "string" ? this.config.provider : null;
-    if (!name) return;
-    const presets = getProviderPresets(this.config);
-    const preset = presets[name] as unknown as { envKey?: string | null } | undefined;
-    if (!preset || !preset.envKey) return;
-    throw new Error("请先在设置里选定月度上限（填一个数字，或明确选“不设上限”），再开始花钱的任务。设置 → 通用 → 月度上限。");
-  }
-
   sessionKnown(sid: string): boolean {
     if (this.getRun(sid, false)) return true;
     return loadSession(sid, this.home) !== null;
@@ -725,17 +707,15 @@ export class Gateway {
 
   /**
    * 缺口 30：网关入口的成本口径。此前 `nyra ui` 起的 agent 完全不接
-   * maxCostUsd / monthlyCostLimitUsd，Web UI 一跑就等于绕过 `--max-cost`——
+   * maxCostUsd，Web UI 一跑就等于绕过 `--max-cost`——
    * 硬顶只对 CLI 生效，那不叫硬顶。
    *
-   * 与 cli.buildAgent 同语义：单价按 config.pricing 解析（未配置则金额未知，不编造），
-   * 月度上限 = 配置值（网关没有 CLI 覆盖），本月已花 = 账本里的 LLM + MCP 花费。
+   * 与 cli.buildAgent 同语义：单价按 config.pricing 解析（未配置则金额未知，不编造）。
+   * 月度限额已移除，这里不再有月度上限。
    */
   private costOptions(): {
     maxCostUsd: number | null;
     pricing: ReturnType<typeof resolvePricing>;
-    monthlyCostLimitUsd: number | null;
-    monthlySpentBeforeUsd: (() => { spentUsd: number; incomplete: boolean } | null) | null;
   } {
     const cfg = this.config as Record<string, unknown>;
     const limit = typeof cfg.max_cost_usd === "number" ? cfg.max_cost_usd : null;
@@ -747,28 +727,15 @@ export class Gateway {
     } catch {
       model = this.model ?? null;
     }
-    const monthlyLimit = resolveMonthlyLimit(cfg, null);
-    const ledger = new UsageLedger(this.home);
-    const spentBefore = monthlyLimit === null ? null : (): { spentUsd: number; incomplete: boolean } | null => {
-      try {
-        const llm = ledger.monthTotal(monthKeyString());
-        const mcp = new McpCostTracker(this.home).monthTotalUsd(monthKeyString());
-        return { spentUsd: llm.spentUsd + mcp, incomplete: llm.incomplete };
-      } catch {
-        return null; // 账本读不了就不封顶，不假装
-      }
-    };
     return {
       maxCostUsd: limit,
       pricing: resolvePricing(cfg.pricing, model),
-      monthlyCostLimitUsd: monthlyLimit,
-      monthlySpentBeforeUsd: spentBefore,
     };
   }
 
   /**
-   * P0-3：月度预算摘要（设置页与会话视图共用）：上限、本月已花、是否已
-   * 明确选定、下次重置日。账本读失败时已花记 null，不当 0 用。
+   * 本月花费摘要（设置页与会话视图共用）：本月已花、下次重置日。
+   * 月度限额已移除，这里只有记账展示，没有上限。账本读失败时已花记 null，不当 0 用。
    */
   budgetSummary(): Record<string, unknown> {
     const cfg = this.config as Record<string, unknown>;
@@ -782,15 +749,13 @@ export class Gateway {
       incomplete = llm.incomplete;
     } catch { spent = null; }
     return {
-      monthly_cost_limit_usd: resolveMonthlyLimit(cfg, null),
-      monthly_cost_limit_decided: monthlyCapDecided(cfg),
       monthly_spent_usd: spent,
       monthly_spent_incomplete: incomplete,
       monthly_reset_at: nextMonthlyResetDate(),
     };
   }
 
-  /** 缺口 30：把网关运行的用量增量写进账本（热力图与月度硬顶的事实源）。 */
+  /** 缺口 30：把网关运行的用量增量写进账本（热力图与本月账本的事实源）。 */
   private flushUsageToLedger(run: SessionRun, kind: string, data: Record<string, unknown>): void {
     try {
       if (kind === "usage" || kind === "cost_update") {
@@ -857,8 +822,8 @@ export class Gateway {
       profiles: Object.keys((this.config.profiles as Record<string, unknown>) ?? {}).sort(),
     };
     out.mcp_tools = this.mcpManager ? this.mcpManager.toolSchemas.length : 0;
-    // P0-3：桌面页启动时按这里的语言渲染（未设时跟随系统）；月度预算摘要
-    // 供状态栏显示“未选月度上限”提示用（每 15 秒随 loadInfo 刷新）。
+    // P0-3：桌面页启动时按这里的语言渲染（未设时跟随系统）；本月花费摘要
+    // 供状态栏显示（每 15 秒随 loadInfo 刷新）。
     out.language = typeof this.config.language === "string" ? this.config.language : null;
     out.budget = this.budgetSummary();
     out.providers = Object.entries(presets).map(([name, preset]) => ({
@@ -1120,15 +1085,6 @@ export class Gateway {
       return run;
     }
     run.status = "running";
-    // P0-3：花钱之前先看见上限——月度上限没选定时，付费模型不开始跑。
-    // 转人工静默（上面已 return）不调模型，不拦；本地/免 Key 模型不拦。
-    try {
-      this.requireMonthlyCapDecision();
-    } catch (err) {
-      run.status = "error";
-      run.error = err instanceof Error ? err.message : String(err);
-      return run;
-    }
     try {
       if (!run.agent) {
         const provider = this.provider();
@@ -1240,8 +1196,6 @@ export class Gateway {
     this.record(run, "user", { content: text, plan: true });
     void (async () => {
       try {
-        // P0-3：规划也要调付费模型，花钱之前先看见上限（与 send() 同款门）。
-        this.requireMonthlyCapDecision();
         const provider = this.provider();
         // 缺口 24：Plan 阶段用强推理模型（配了 plan_model 时）；没配沿用主模型。
         const planModel = this.planActModels().plan
@@ -1588,7 +1542,7 @@ export class Gateway {
         default_model: effectiveModelFor(cfg, typeof cfg.provider === "string" ? cfg.provider : "deepseek"),
       },
       mcp: { enabled: Boolean(cfg.mcp_enabled), active: Boolean(this.mcpManager), mode_allows: this.mode === "full", servers },
-      // P0-3：月度预算（设置页“通用”分区用）：上限、本月已花、是否已明确选定、下次重置日。
+      // 本月花费（设置页“通用”分区用）：本月已花、下次重置日（仅记账，无月度上限）。
       budget: this.budgetSummary(),
       paths: { home: this.home, config: configPath(this.home), keys: keysPath(this.home) },
     };
@@ -1646,24 +1600,10 @@ export class Gateway {
       const model = typeof body.default_model === "string" && body.default_model.trim() ? body.default_model.trim().slice(0, 180) : presets[name].defaultModel ?? null;
       patch.model = model;
     }
-    if ("monthly_cost_limit_usd" in body) {
-      // P0-3：月度上限必选其一——数字（≥0）或明确的 null（不设上限）。
-      // 只要这个键出现，就算“已明确选定”（monthly_cost_limit_decided 记
-      // true）；不传这个键时不改旧值、不算选过。空串、NaN、负数都拒绝。
-      const v = body.monthly_cost_limit_usd;
-      if (v !== null) {
-        const n = Number(v);
-        if (v === "" || !Number.isFinite(n) || n < 0) throw new Error("monthly_cost_limit_usd 必须是大于等于 0 的数字，或 null（不设上限）");
-        patch.monthly_cost_limit_usd = n;
-      } else {
-        patch.monthly_cost_limit_usd = null;
-      }
-      patch.monthly_cost_limit_decided = true;
-    }
     const unknown = Object.keys(body).filter((k) => ![
       "default_mode", "max_turns", "reasoning_effort", "language", "auto_compact_enabled", "auto_compact_threshold",
       "tool_search_enabled", "mcp_enabled", "default_provider", "default_model",
-      "monthly_cost_limit_usd", "update_check_enabled",
+      "update_check_enabled",
     ].includes(k));
     if (unknown.length) throw new Error(`不支持的设置项：${unknown.join(", ")}`);
     if (!Object.keys(patch).length) throw new Error("没有要保存的设置");

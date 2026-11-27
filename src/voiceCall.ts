@@ -4,8 +4,8 @@
 //   - 通话状态机（建立 / 接听 / 拒绝 / 挂断）+ 账本落盘；
 //   - 通话中一段一段喂音频：VAD 门控（静音段不转写、不花钱）→ 转写
 //     （本地 whisper.cpp 优先；云端只在用户显式配了 call_cloud_enabled
-//     才走，且过月度硬顶）→ 转写文本交给调用方处理；
-//   - agent 的回读文字可合成语音读出来（云端 TTS，同样过硬顶）；
+//     才走，云端花费照常记账）→ 转写文本交给调用方处理；
+//   - agent 的回读文字可合成语音读出来（云端 TTS，花费同样记账）；
 //   - 语音不碰支付与对外发送：转写文本命中支付/外发意图时该段被扣下，
 //     须回文字确认（confirm），确认只记“含义已确认”，不执行动作——
 //     要执行请把文字当普通任务跑。
@@ -23,8 +23,7 @@ import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { dirname, join } from "node:path";
 import { RunStore } from "./runs.ts";
-import { UsageLedger, monthKeyString } from "./usageLedger.ts";
-import { checkMonthlyCap, resolveMonthlyLimit } from "./cost.ts";
+import { UsageLedger } from "./usageLedger.ts";
 import { loadConfig, resolveProvider } from "./config.ts";
 import { Provider } from "./providers.ts";
 import {
@@ -631,26 +630,9 @@ function recordVoiceSpend(home: string, costUsd: number | null, engine: string, 
   } catch { /* 账本写失败不破坏通话 */ }
 }
 
-/**
- * 云端语音前的月度硬顶判定（与 cost.ts 同口径：本月已花是下界，只会晚
- * 触发、不会误触发；没配上限不挡人；算不出金额时不假装封顶）。
- */
-export function checkCallCloudCap(home: string, config: Record<string, unknown>, additionalUsd: number | null): { allowed: boolean; reason: string | null } {
-  const limit = resolveMonthlyLimit(config);
-  if (limit === null) return { allowed: true, reason: null };
-  const spentBefore = new UsageLedger(home).monthTotal(monthKeyString(new Date())).spentUsd;
-  const check = checkMonthlyCap(spentBefore, additionalUsd, limit);
-  if (!check.exceeded) return { allowed: true, reason: null };
-  const spent = check.monthSpentUsd !== null ? `$${check.monthSpentUsd.toFixed(4)}` : "未知";
-  return {
-    allowed: false,
-    reason: `本月已花 ${spent}，超过月度上限 $${limit.toFixed(2)}，云端语音已停（本地 whisper.cpp 不受影响）`,
-  };
-}
-
 function cloudSttUnavailableMessage(callCloudEnabled: boolean): string {
   if (!callCloudEnabled) {
-    return "没有可用的转写路：本地 whisper.cpp 没装或没配模型文件，且通话里的云端转写默认关闭。两条路任选其一：1）装 whisper.cpp 并在 config.json 的 voice.stt_local_model 里填模型文件路径；2）在 config.json 的 voice.call_cloud_enabled 设为 true 才走云端（云端要花钱，且过月度硬顶）。详见 docs/voice.md";
+    return "没有可用的转写路：本地 whisper.cpp 没装或没配模型文件，且通话里的云端转写默认关闭。两条路任选其一：1）装 whisper.cpp 并在 config.json 的 voice.stt_local_model 里填模型文件路径；2）在 config.json 的 voice.call_cloud_enabled 设为 true 才走云端（云端要花钱）。详见 docs/voice.md";
   }
   return "没有可用的转写路：本地 whisper.cpp 没装或没配模型文件，且当前 provider 没有 HTTP 音频接口或未配密钥。换一个支持语音接口的 HTTP provider（--provider 指定）并配好密钥，或装本地 whisper.cpp。详见 docs/voice.md";
 }
@@ -730,8 +712,9 @@ export async function feedCallSegment(opts: {
 
   // 转写：走实时语音插件层（第 1 批 G-P1-36，默认 local：whisper.cpp
   // 优先、云端兜底；换实时语音服务只换 voice.realtime_provider，通话
-  // 逻辑不用动）。云端开关仍归通话管：没开 call_cloud_enabled / 没过
-  // 月度硬顶时 endpoint 传 null，provider 只能走本地，绝不悄悄花云端钱。
+  // 逻辑不用动）。云端开关仍归通话管：没开 call_cloud_enabled 时 endpoint
+  // 传 null，provider 只能走本地，绝不悄悄花云端钱（月度上限已移除，
+  // 不再有月度硬顶这一关；云端花费照常记账）。
   let text: string;
   let seconds: number | null;
   let engine: string;
@@ -744,9 +727,6 @@ export async function feedCallSegment(opts: {
   }
   let endpoint: HttpEndpoint | null = null;
   if (local === null && opts.callCfg.callCloudEnabled && opts.endpoint !== null) {
-    const est = estimateSttCostUsd(input.durationSeconds, opts.voiceCfg);
-    const cap = checkCallCloudCap(opts.home, opts.config, est);
-    if (!cap.allowed) throw new VoiceCallError(cap.reason ?? "月度硬顶已触发，云端转写已停");
     endpoint = opts.endpoint;
   }
   const provider = resolveRealtimeVoiceProvider(opts.config);
@@ -809,8 +789,6 @@ export async function feedCallSegment(opts: {
     if (opts.endpoint === null) {
       throw new VoiceCallError("回读失败：当前 provider 没有 HTTP 音频接口或未配密钥（回读只有云端 TTS，本地没有可靠的 TTS 引擎）");
     }
-    const cap = checkCallCloudCap(opts.home, opts.config, estimateTtsCostUsd(replyText.length, opts.voiceCfg));
-    if (!cap.allowed) throw new VoiceCallError(cap.reason ?? "月度硬顶已触发，云端回读已停");
     const out = await synthesizeSpeech(replyText, opts.voiceCfg, opts.endpoint, opts.fetchFn);
     const replyCost = estimateTtsCostUsd(out.chars, opts.voiceCfg);
     recordVoiceSpend(opts.home, replyCost, out.engine, opts.agentId ?? call.agent);

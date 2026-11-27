@@ -406,7 +406,7 @@ export interface ToolContext {
    * 没有时只走本地 whisper，本地也没有直接报错、不静默降级）。 */
   sttEndpoint?: HttpEndpoint | null;
   /** 候选提案 4：media_ingest 的云端转写花费回调——主循环把花费记进同一本
-   * 硬顶账（voiceSpentUsd），月度硬顶在下次模型调用前的 checkCost 强制执行；
+   * 硬顶账（voiceSpentUsd），单次硬顶在下次模型调用前的 checkCost 强制执行；
    * 不传时工具只记事件里的 cost_usd。 */
   onVoiceCost?: ((costUsd: number) => void) | null;
   /** 候选提案 4：media_ingest 用的 yt-dlp 命令执行器（只供测试注入假实现）。 */

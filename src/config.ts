@@ -113,7 +113,6 @@ export const DEFAULT_CONFIG: Record<string, unknown> = {
       heartbeat_interval_ms: 300000,
       notify_cooldown_ms: 3600000,
       notify_tasks: "failures",
-      monthly_spend_warn_ratio: 0.8,
       queue_depth_warn: 5,
       pending_approval_warn_minutes: 10,
       watches: [],
@@ -132,10 +131,6 @@ export const DEFAULT_CONFIG: Record<string, unknown> = {
   // true（fail-closed）：配了上限却算不出金额时暂停任务等人工处理，
   // 而不是继续跑；显式设 false 回到旧行为（算不出就继续跑、不假装封顶）。
   budget: { strict_unknown_amount: true },
-  // 缺口 29：月度支出上限（美元）。默认 null = 不设上限（不挡老用户）；
-  // 一旦配了就是硬停（与 --max-cost 同级，无豁免口子）；0 = 锁死一切计价花费。
-  // 自然月累计 = 本月 LLM 花费（用量账本）+ 本月 MCP 花费；每月 1 日重置。
-  monthly_cost_limit_usd: null,
   // 辅助任务走便宜模型（对齐 Alma 的 Tool Model）：压缩摘要与子 Agent 默认模型。
   // 与主模型相同时会被忽略（等于没配）。
   compact_model: null,
