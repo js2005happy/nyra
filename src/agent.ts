@@ -23,6 +23,7 @@ import {
   READONLY_TOOLS,
   type ToolContext, type DelegateOptions, type ApproveResult,
 } from "./tools.ts";
+import { TrifectaTracker } from "./lethalTrifecta.ts";
 import { RepeatGuard } from "./repeatGuard.ts";
 import { SessionRules } from "./approvalRules.ts";
 import { loadSkills, canonicalSkillDirs, matchSkills, matchSkillsByPaths, parseSkillText, renderSkill, skillIndex, skillRenderOptionsFor, type Skill } from "./skills.ts";
@@ -892,6 +893,9 @@ export class Agent {
         }
       }
     }
+    // 十年清单第 5 项：致命三元组——本 Agent 本轮三条腿的行使记录，挂进
+    // ToolContext（tracker 活在 ctx 里，每轮开始前 runLoopInner 里 reset）。
+    const trifectaTracker = new TrifectaTracker((kind, data) => this.emit(kind, data));
     this.ctx = newToolContext({
       workdir: this.workdir,
       mode: this.mode,
@@ -922,6 +926,8 @@ export class Agent {
       contentLabel: this.origin === "peer"
         ? { integrity: "untrusted", confidentiality: "internal", principal: "peer", reason: "对端发来的任务按不可信输入处理" }
         : { integrity: "verified", confidentiality: "internal", principal: "owner", reason: "机主任务" },
+      // 十年清单第 5 项：致命三元组行使记录（见上面 trifectaTracker）。
+      trifectaTracker,
       sessionId: this.sessionId,
       skillsDir: join(this.home, "skills"),
       // 调研报告第 2 项：技能渐进披露——read_skill 按需读全文时用 Agent 当前
@@ -2132,6 +2138,9 @@ export class Agent {
   }
 
   private async runLoopInner(task: string, resume: boolean): Promise<string> {
+    // 十年清单第 5 项：新一轮任务开始，三元组行使记录清零（上一轮的三条腿
+    // 不带到这一轮）。
+    this.ctx.trifectaTracker?.reset();
     if (!resume && this.voiceInputs.length > 0) {
       // 缺口 15：首轮带语音——先转写（本地 whisper 优先、云端兜底；失败直接
       // 报错，不静默降级），转写文本当任务文本；转写只记元数据与文本指纹进证据链。

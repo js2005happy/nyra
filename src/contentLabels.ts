@@ -40,7 +40,7 @@ const SECRET_PATTERNS: RegExp[] = [
   /xox[baprs]-[A-Za-z0-9-]{10,}/,
 ];
 
-function looksSecret(text: string): boolean {
+export function looksSecret(text: string): boolean {
   return SECRET_PATTERNS.some((re) => re.test(text));
 }
 

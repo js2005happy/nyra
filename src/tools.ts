@@ -21,6 +21,7 @@ import { createGmailTransport, GmailError, GMAIL_DEFAULT_SEARCH_RESULTS, formatG
 import { createShopifyClient, formatShopifyProducts, formatShopifyOrders, formatShopifyInventoryLevels, type ShopifyApiClient } from "./connectors/shopify.ts";
 import { createSlackClient, SlackError, formatSlackChannels, formatSlackMessages, type SlackApiClient } from "./connectors/slack.ts";
 import { frameUntrusted, sanitizeUntrustedText, wrapUntrusted } from "./untrusted.ts";
+import { isExternalCommsTool, TrifectaTracker, trifectaGuardEnabled } from "./lethalTrifecta.ts";
 import { CheckpointStore, CheckpointError } from "./checkpoints.ts";
 import type { ShadowSnapshotNotice } from "./shadowSnapshots.ts";
 import { research as multiModelResearch } from "./multiModel.ts";
@@ -438,6 +439,12 @@ export interface ToolContext {
    * peer 来源的写操作进提议门，不直接执行。 */
   origin?: TaskOrigin;
   contentLabel?: ContentLabel;
+  /**
+   * 致命三元组（十年清单第 5 项）：本轮三条腿的行使记录。Agent 在构造时
+   * 挂一个 TrifectaTracker，每轮开始前 reset；没挂时守卫不生效（网关直调
+   * 工具、老调用方的行为不变）。checkApproval 按它强制审批＋默认只读。
+   */
+  trifectaTracker?: TrifectaTracker | null;
   /** 第 2 批 G-P1-10：对方的身份名（提议账本里记谁发的；MCP 派发默认
    * mcp-peer，session 委派由调用方传真实好友名）。 */
   peerName?: string;
@@ -1105,6 +1112,14 @@ export async function checkApproval(
   opts?: { command?: string; cwd?: string; fileTarget?: string; timeout?: number },
 ): Promise<void> {
   if (!MUTATING_TOOLS.has(toolName)) return;
+  // 十年清单第 5 项：致命三元组——先记第三条腿。本次调用本身就是一次对外
+  // 通信（只认真的对外工具：shell/http_post/发邮件/拉网页……本地写文件不算）。
+  // 三项齐全的任务里，所有写操作强制走人工审批：下面各快路径（allow 快路、
+  // 幂等短路、脚本快路径、记住的规则、approveFnGrants 缓存）都要跳过；“始终
+  // 允许”不记录；full 模式下无人可问就直接拒绝（默认只读）。
+  if (isExternalCommsTool(toolName)) ctx.trifectaTracker?.noteExternalAttempt(toolName);
+  const trifectaForceAsk =
+    trifectaGuardEnabled() && (ctx.trifectaTracker?.isComplete() ?? false);
   // G-P2-4：纵深防御——写工具配了 never_require 也直接拒绝（resolveApprovalMode
   // 本就只对只读工具返回 never_require，这里是第二道门，防配置被绕过）。
   if (ctx.approvalMode?.(toolName) === "never_require") {
@@ -1258,9 +1273,11 @@ export async function checkApproval(
   ctx.heuristicEscalation = null;
   const escalated = judgeEscalated ?? heuristicEscalated;
   const escalationLabel = judgeEscalated ? "意向验证 judge" : heuristicEscalated ? "启发式检查" : "";
-  const escalationNote = escalated
-    ? `[${escalationLabel}：风险 ${escalated.riskScore} 分，${escalated.reason}——本次须人工确认]`
-    : null;
+  const escalationNote = trifectaForceAsk
+    ? `[致命三元组：本轮既接触了隐私数据、又收到了不可信内容，还能对外通信——本次写操作须人工确认]`
+    : escalated
+      ? `[${escalationLabel}：风险 ${escalated.riskScore} 分，${escalated.reason}——本次须人工确认]`
+      : null;
 
   // O1：CEL 风格策略网关——在权限规则之前拦：deny 直接拒绝（命中记事件
   // 与审计），ask 强制走人工审批链（不走 allow 快路与幂等短路），allow 与
@@ -1330,7 +1347,7 @@ export async function checkApproval(
         ? isProtectedWritePath(relative(resolve(ctx.workdir), resolve(String(opts.fileTarget))))
         : isProtectedWriteTarget(ctx.workdir, String(opts.fileTarget))
       : false;
-  if (preApproved && !escalated && !policyForceAsk && !protectedFileTarget) {
+  if (preApproved && !escalated && !policyForceAsk && !trifectaForceAsk && !protectedFileTarget) {
     // 规则显式 allow：跳过弹窗，但仍然记录一次审批事件，便于审计。
     observeApproval(ctx, toolName, true);
     return;
@@ -1342,7 +1359,7 @@ export async function checkApproval(
   // 只读拒绝与权限规则 deny 之后：重试仍受这两条硬控制约束，跳过的只是
   // 人工弹窗 / approveFn 这一层。judge 转人工时不走这条短路：首次调用被转
   // 人工还没批过，重试不能当成“已批”直接执行。
-  if (ctx.idempotentRetry === true && !escalated && !policyForceAsk) return;
+  if (ctx.idempotentRetry === true && !escalated && !policyForceAsk && !trifectaForceAsk) return;
 
   // Pi Bot 借鉴第 1 条：纯脚本 + 摘要预授权快路径——只在例行上下文里
   // 生效（ctx.routineId 已设，工作流步骤）；聊天/单次运行不设 routineId，
@@ -1351,7 +1368,7 @@ export async function checkApproval(
   // 变了则直接拒绝（fail-closed：非交互例行里没人可问，停下比悄悄跑
   // 改过的脚本安全）。判定结果走 ctx.onEvent 进证据链（script_pure /
   // script_preauth_used），预授权的使用与拒绝另记脚本审计。
-  if (toolName === "shell" && opts?.command !== undefined && ctx.routineId && !escalated && !policyForceAsk) {
+  if (toolName === "shell" && opts?.command !== undefined && ctx.routineId && !escalated && !policyForceAsk && !trifectaForceAsk) {
     const fast = checkScriptFastPath({
       home: ctx.home ?? null,
       routineId: ctx.routineId,
@@ -1380,7 +1397,7 @@ export async function checkApproval(
     // 已记下的“允许并不再询问”规则：匹配时会重新做简单命令检查，
     // `; && | $() 反引号 换行` 一律匹配不上（见 approvalRules.prefixMatches）。
     const ruleHit = findApprovalRule(ctx, toolName, opts?.command);
-    if (ruleHit && !escalated && !policyForceAsk && !protectedFileTarget) {
+    if (ruleHit && !escalated && !policyForceAsk && !trifectaForceAsk && !protectedFileTarget) {
       observeApproval(ctx, toolName, true);
       try { ctx.onEvent?.("approval_rule_applied", { tool: toolName, rule: ruleHit.label, scope: ruleHit.scope, id: ruleHit.id }); } catch { /* ignore */ }
       return;
@@ -1399,7 +1416,7 @@ export async function checkApproval(
 
     if (ctx.approveFn) {
       const grant = fileScope ?? shellScope;
-      if (grant !== null && ctx.approveFnGrants?.has(grant) && !escalated && !policyForceAsk && !protectedFileTarget) return;
+      if (grant !== null && ctx.approveFnGrants?.has(grant) && !escalated && !policyForceAsk && !trifectaForceAsk && !protectedFileTarget) return;
       observeApproval(ctx, toolName, null);
       // 第 3 阶段 smart approvals 需要命令原文做静态规则与评审：
       // 把 opts 原样透传给 approveFn（旧调用方忽略第 3 个参数）。
@@ -1415,11 +1432,11 @@ export async function checkApproval(
       }
       observeApproval(ctx, toolName, Boolean(approved));
       if (!approved) throw new ToolError("用户拒绝执行");
-      if (approved === APPROVE_ALWAYS && grant !== null && !protectedFileTarget) ctx.approveFnGrants?.add(grant);
+      if (approved === APPROVE_ALWAYS && grant !== null && !trifectaForceAsk && !protectedFileTarget) ctx.approveFnGrants?.add(grant);
       return;
     }
-    if (fileScope !== null && ctx.approvedFileTools?.has(fileScope) && !escalated && !policyForceAsk && !protectedFileTarget) return;
-    if (shellScope !== null && ctx.approvedShellCommands?.has(shellScope) && !escalated && !policyForceAsk) return;
+    if (fileScope !== null && ctx.approvedFileTools?.has(fileScope) && !escalated && !policyForceAsk && !trifectaForceAsk && !protectedFileTarget) return;
+    if (shellScope !== null && ctx.approvedShellCommands?.has(shellScope) && !escalated && !policyForceAsk && !trifectaForceAsk) return;
 
     console.log(approvalSummary);
     observeApproval(ctx, toolName, null);
@@ -1443,17 +1460,30 @@ export async function checkApproval(
     observeApproval(ctx, toolName, choice === "yes" || choice === "always");
     if (choice === "yes") return;
     if (choice === "always" && !protectedFileTarget) {
-      if (fileScope !== null) { ctx.approvedFileTools?.add(fileScope); return; }
-      if (shellScope !== null && suggestion !== null) { rememberApprovalRule(ctx, toolName, opts?.command, "session"); return; }
-      if (shellScope !== null) { ctx.approvedShellCommands?.add(shellScope); return; }
+      // 十年清单第 5 项：三项齐全时逼出来的“始终允许”不记账——这次执行，
+      // 下次再问（否则一张卡就把本轮的强制审批全放掉了）。
+      if (!trifectaForceAsk) {
+        if (fileScope !== null) { ctx.approvedFileTools?.add(fileScope); return; }
+        if (shellScope !== null && suggestion !== null) { rememberApprovalRule(ctx, toolName, opts?.command, "session"); return; }
+        if (shellScope !== null) { ctx.approvedShellCommands?.add(shellScope); return; }
+      }
+      return;
     }
     throw new ToolError("用户拒绝执行");
   }
-  // judge/启发式转人工 + full 模式：没人可问，转人工等于拒绝（fail-closed）。
-  // 委派审批回调例外：子 agent 在 full 模式下被 judge/启发式转人工时，先问父级。
-  if (escalated) {
+  // judge/启发式转人工 + 致命三元组 + full 模式：没人可问，转人工等于拒绝（fail-closed）。
+  // 委派审批回调例外：子 agent 在 full 模式下被转人工时，先问父级。
+  if (escalated || trifectaForceAsk) {
     if (await consultDelegateCallback(ctx, toolName, escalationNote ? `${summary}\n${escalationNote}` : summary)) return;
-    throw new ToolError(`${escalationLabel}认为 ${toolName} 风险 ${escalated.riskScore} 分须人工确认，full 模式下无人可问，拒绝执行`);
+    if (trifectaForceAsk) {
+      // 三项齐全时无人可问就拒绝（默认只读），并记一条 trifecta_blocked
+      // 事件（只记工具名与原因，不记内容）。
+      try { ctx.onEvent?.("trifecta_blocked", { tool: toolName, reason: "no-approver" }); } catch { /* 记账失败不破坏审批 */ }
+      throw new ToolError(`致命三元组三项齐全：本轮既接触了隐私数据、又收到了不可信内容，还能对外通信，${toolName} 须人工确认，full 模式下无人可问，拒绝执行`);
+    }
+    if (escalated) {
+      throw new ToolError(`${escalationLabel}认为 ${toolName} 风险 ${escalated.riskScore} 分须人工确认，full 模式下无人可问，拒绝执行`);
+    }
   }
   // full 模式：直接放行（denylist 仍在 shell 入口先行检查）。
 }
@@ -4316,6 +4346,12 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
     // 工具执行成功后跑 PostToolUse：只通知、不拦截，失败只警告（PostToolUse 是只通知事件）。
     // 幂等重试不重跑 PostToolUse（同 PreToolUse 的理由：首次调用已通知过）。
     if (HOOKED_TOOLS.has(name) && ctx.idempotentRetry !== true) await runPostToolHook(ctx, name, args);
+    // 十年清单第 5 项：致命三元组——工具执行成功后记账。只读工具读了隐私
+    // 数据记腿 1；结果里带结构化不可信标记记腿 2（来源取标签里的 source）。
+    // 失败的结果不记——没拿到的东西不算接触。记账失败绝不破坏工具结果。
+    if (!isToolErrorResult(result)) {
+      try { ctx.trifectaTracker?.noteToolExecuted(name, result); } catch { /* 记账失败不破坏结果 */ }
+    }
     return result;
   } catch (err: unknown) {
     if (err instanceof ApprovalRequired) throw err;

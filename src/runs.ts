@@ -38,6 +38,10 @@ approval_done: ["tool", "approved"],
 policy_denied: ["tool", "rule", "action"],
 policy_ask: ["tool", "rule"],
 policy_dry_run: ["tool", "rule", "would"],
+// 十年清单第 5 项：致命三元组——三条腿在本轮齐全时记一条（哪几条腿、哪
+// 个工具补齐了第三条）；齐全后被拦下的写操作记一条（哪个工具、为什么拦）。
+trifecta_completed: ["legs", "tool"],
+trifecta_blocked: ["tool", "reason"],
 // O6：例行连续失败满 10 次自动关闭（或间隔低于下限被停用），镜像进那次运行。
 routine_auto_disabled: ["workflow", "trigger_index", "failures"],
 // 缺口 9：影子快照与联合回滚进证据链——snapshot 记哪次批准写操作前拍了

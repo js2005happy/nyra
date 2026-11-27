@@ -1,7 +1,8 @@
 // src/doctor.ts — `nyra doctor` 中文自检。
 // 检查项（每项中文说明 + 故障给中文修复步骤，最多 8 项）：
 // 1）运行时（含版本下限：Bun >= 1.4 或 Node >= 24；Node 22 及以下没有开箱即用的
-// node:sqlite，示例任务跑不起来）2）配置文件 3）配置目录（存在 + 0700）
+// node:sqlite，示例任务跑不起来）2）配置文件 2b）隔离级别 2c）致命三元组
+// （十年清单第 5 项：三条腿静态画像 + 强制审批守卫开关）3）配置目录（存在 + 0700）
 // 3b）脑文件夹结构（H10：~/.nyra 的版本化 schema 校验）
 // 4）provider 与 Key 5）网络 6）磁盘空间 7）写权限 8）vault.json 权限（存在时）。
 // vault.json 不存在时只有 7 项；配置文件损坏或 provider 未知时提前返回，
@@ -19,6 +20,9 @@ import { vaultExists, vaultMode } from "./vault/index.ts";
 import { getSandboxStatus, sandboxLevelText } from "./sandbox.ts";
 // H10：脑文件夹结构校验（~/.nyra 的版本化 schema）。
 import { summarizeBrainSchema, validateBrainSchema } from "./brainSchema.ts";
+// 十年清单第 5 项：致命三元组——doctor 加一项三元组检查（静态画像 + 守卫开关）。
+import { assessTrifecta, TRIFECTA_LEG_NAMES, trifectaGuardEnabled } from "./lethalTrifecta.ts";
+import { TOOL_SCHEMAS } from "./tools.ts";
 
 export interface DoctorCheck {
   name: string;
@@ -120,6 +124,27 @@ export async function runDoctor(opts: DoctorOptions): Promise<{ checks: DoctorCh
   checks.push({
     name: "隔离级别", ok: true,
     detail: `沙箱后端 ${sandboxStatus.backend}，模式 ${sandboxStatus.mode}，隔离级别 ${levelText}，可用后端：bwrap ${sandboxStatus.bwrapAvailable ? "可用" : "不可用"}、Seatbelt ${sandboxStatus.seatbeltAvailable ? "可用" : "不可用"}、Job Object ${sandboxStatus.jobObjectAvailable ? "可用" : "不可用"}——${sandboxStatus.detail}；seccomp 拒单（M4，只 Linux x86-64）${sandboxStatus.seccompAvailable ? "可用" : "不可用"}，出口代理与凭证经纪人在代码里（默认不开，用时由调用方起）。`,
+  });
+
+  // 2c）致命三元组（十年清单第 5 项，Simon Willison 2025-06，OWASP ASI01）。
+  // 静态画像：内置工具占了三条腿里的哪几条。三项齐全是预期内的——Nyra
+  // 本来就要读用户自己的东西、看网上的东西、往外发东西；齐全本身不判失败，
+  // 判的是守卫开没开：守卫开着，三项齐全的任务里写操作强制走人工审批、没人
+  // 可问就默认只读，这一顶就通过；守卫关了（NYRA_TRIFECTA_GUARD=0）才失败，给修复。
+  const trifectaAssessment = assessTrifecta(TOOL_SCHEMAS.map((s) => (s.function as { name: string }).name));
+  const trifectaGuard = trifectaGuardEnabled();
+  const trifectaLegDetail = (["private_data", "untrusted_content", "external_comms"] as const)
+    .map((leg) => `${TRIFECTA_LEG_NAMES[leg]} ${trifectaAssessment.legs[leg].length} 个工具`)
+    .join("、");
+  checks.push({
+    name: "致命三元组",
+    ok: !trifectaAssessment.complete || trifectaGuard,
+    detail: trifectaAssessment.complete
+      ? `三项齐全（${trifectaLegDetail}）：三项齐全的任务里所有写操作强制走人工审批，没人可问就默认只读；守卫${trifectaGuard ? "已开启" : "已关闭"}。`
+      : `三项没齐全（${trifectaLegDetail}），没有一条能偷数据的完整路径。`,
+    fix: trifectaAssessment.complete && !trifectaGuard
+      ? "删掉环境变量 NYRA_TRIFECTA_GUARD=0（或改成 1），再跑一次 nyra doctor。"
+      : undefined,
   });
 
   // 3）配置目录（loadConfig 已建好；这里只验存在与 0700）
