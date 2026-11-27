@@ -142,6 +142,10 @@ Nyra 是一个**开源**、**跑在你自己电脑上**的 AI Agent：**桌面�
 
 ## 更新了什么
 
+**群聊向 Hermes Bot Mode 靠齐（2026-11-27）**：群聊会话补了六件小改动，都是 Hermes Bot Mode 那边有的做法。`@所有人` / `@all` 一喊，房间里所有 Bot 按顺序各说一轮，不建指派；一场会话里 Bot 成员 2–6 个，多了进不来；每条消息最多 10 条发言，以前默认 3 轮 × 20 条能跑到 60 条，现在收紧了；新 Bot 进群先自我介绍一条；每个成员能带自己的技能，轮次里按技能过滤它能用的工具（没技能或技能没声明工具时不限，跟以前一样）；本地建房间和邀请时也能顺带指定 provider/model，不给就走默认链。工具总数没变，还是 54。
+
+- 诚实边界：只在临时 home / 假 provider 上验过；真模型没跑；Windows/macOS 真机未验证。
+
 **别家连接对齐：GitHub 只读、RSS、本地 MCP、Telegram 与 GitHub 远程 MCP（2026-11-27）**：先看别的智能体都接什么，Nyra 一样接上——五个最小连接里三个已真接口跑通，两个的接线与验证步骤写好了，等一个你的一次性步骤。本地 MCP 预置（memory / filesystem / fetch）本来就有，补了文档和测试：fetch 只能走 uvx——官方没有出过这个服务器的 npm 包。两个新的只读工具：`github_repo_read`（读仓库的 README 或指定文件）和 `github_search`（搜仓库和 issue），都不用 token；`feed_read`（读 RSS/Atom，内置 GitHub Blog、Hacker News、Nyra Releases 三个源，也能自己加订阅）。Telegram 那边：适配器早就在了，验证步骤写进了文档——你在 @BotFather 建个测试 bot、把 token 给我，我就按步骤跑通；GitHub 官方远程 MCP（只读）也接好了预置，等你生成一个只读 PAT。工具总数 51 → 54。
 
 - GitHub 两个工具和 RSS 工具都在真实接口上验过：读 Nyra 仓库的 README、搜仓库、读三个源的首条都对；限额耗尽、404、坏输入都按规矩报错，不编造。
