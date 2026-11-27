@@ -10,6 +10,15 @@ export interface McpPreset {
   requires_args: boolean;
   description: string;
   note: string;
+  /** http 预置才填：stdio 预置留空（默认 stdio）。 */
+  transport?: "stdio" | "http";
+  /** http 预置的端点。 */
+  url?: string;
+  /**
+   * http 预置的请求头模板：值里的 ${ENV_NAME} 在解析时换成同名环境变量的值。
+   * 秘密值只出现在解析后的配置里，绝不写进日志与事件。
+   */
+  headers?: Record<string, string>;
 }
 
 export const MCP_PRESETS: Record<string, McpPreset> = {
@@ -73,13 +82,26 @@ export const MCP_PRESETS: Record<string, McpPreset> = {
     description: "浏览器自动化：用无头浏览器打开网页、截图、点页面元素。",
     note: "首次使用会下载 Chromium（约 100MB 以上），比较慢。官方已归档，不再维护。",
   },
+  // Cue A 批 5.5：GitHub 官方远程 MCP（只读）。不是本地子进程，走
+  // Streamable HTTP；授权先用 PAT（GITHUB_MCP_TOKEN），OAuth 2.1 落地后
+  // 再改走 OAuth，PAT 方案届时降级为备用。只开只读端点，写操作会被
+  // 服务器拒绝（验证拒绝链路是验收的一部分）。
+  "github-remote": {
+    command: "", args: [], env: {},
+    requires_env: ["GITHUB_MCP_TOKEN"], requires_args: false,
+    description: "GitHub 官方远程 MCP（只读）：读仓库、issue、PR、用户，不写。",
+    note: "需要在 GitHub 上生成一个只读 PAT（fine-grained，只给读权限），放到 GITHUB_MCP_TOKEN 环境变量。默认不开（不在 DEFAULT_MCP_PRESETS 里）。",
+    transport: "http",
+    url: "https://api.githubcopilot.com/mcp/readonly",
+    headers: { "Authorization": "Bearer ${GITHUB_MCP_TOKEN}" },
+  },
 };
 
 export const DEFAULT_MCP_PRESETS = ["memory", "sequential-thinking", "fetch", "time"] as const;
 
 export function getPreset(name: string): McpPreset | null {
   const preset = MCP_PRESETS[name];
-  return preset ? { ...preset, args: [...preset.args], env: { ...preset.env }, requires_env: [...preset.requires_env] } : null;
+  return preset ? { ...preset, args: [...preset.args], env: { ...preset.env }, requires_env: [...preset.requires_env], headers: preset.headers ? { ...preset.headers } : undefined } : null;
 }
 
 export function listPresets(): (McpPreset & { name: string })[] {
@@ -109,6 +131,16 @@ export function resolvePreset(
       return [null, `MCP 预置 ${name} 需要在 mcp_preset_args 里提供路径，如 {"mcp_preset_args": {"${name}": ["<路径>"]}}，已跳过`];
     }
     args.push(...(supplied as string[]));
+  }
+  // http 预置：不启子进程，请求头模板里的 ${ENV_NAME} 换成环境变量的值
+  // （requires_env 已保证它们存在）；缺 url 的 http 预置是配置错误。
+  if (preset.transport === "http") {
+    if (!preset.url) return [null, `MCP 预置 ${name} 是 http 传输但没有配 url，已跳过`];
+    const headers: Record<string, string> = {};
+    for (const [k, v] of Object.entries(preset.headers ?? {})) {
+      headers[k] = v.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, varName: string) => env[varName] ?? "");
+    }
+    return [{ transport: "http", url: preset.url, headers }, ""];
   }
   const raw: Record<string, unknown> = {
     command: preset.command, args, env: { ...preset.env },
