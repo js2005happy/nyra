@@ -68,6 +68,11 @@ test("全绿对照：有 Key + 网络通 + 目录 0700，全部通过", async ()
     expect(allOk).toBe(true);
     expect(checks.every((c) => c.ok)).toBe(true);
     expect(checks.map((c) => c.name)).toContain("写权限");
+    // 十年清单第 5 项：三项齐全 + 守卫开着，这一顶通过。
+    const trifecta = checks.find((c) => c.name === "致命三元组")!;
+    expect(trifecta.ok).toBe(true);
+    expect(trifecta.detail).toContain("三项齐全");
+    expect(trifecta.detail).toContain("强制走人工审批");
   } finally {
     delete process.env.DEEPSEEK_API_KEY;
   }
@@ -117,5 +122,24 @@ test("隔离级别行列出 bwrap/Seatbelt/Job Object 三后端可用性", async
     expect(sb.detail).toMatch(`Job Object ${s.jobObjectAvailable ? "可用" : "不可用"}`);
   } finally {
     delete process.env.DEEPSEEK_API_KEY;
+  }
+});
+
+test("致命三元组：守卫关了（三项齐全 + NYRA_TRIFECTA_GUARD=0）时失败，给出修复", async () => {
+  // 不设 Key：模型配置项本来就会失败，但三元组检查在它之前跑，不影响本用例。
+  const home = tmpHome();
+  const prevGuard = process.env.NYRA_TRIFECTA_GUARD;
+  process.env.NYRA_TRIFECTA_GUARD = "0";
+  try {
+    saveConfig(home, {});
+    const { checks } = await runDoctor({ home, fetchFn: okFetch });
+    const trifecta = checks.find((c) => c.name === "致命三元组")!;
+    expect(trifecta.ok).toBe(false);
+    expect(trifecta.detail).toContain("三项齐全");
+    expect(trifecta.detail).toContain("守卫已关闭");
+    expect(trifecta.fix).toMatch("NYRA_TRIFECTA_GUARD");
+  } finally {
+    if (prevGuard === undefined) delete process.env.NYRA_TRIFECTA_GUARD;
+    else process.env.NYRA_TRIFECTA_GUARD = prevGuard;
   }
 });
