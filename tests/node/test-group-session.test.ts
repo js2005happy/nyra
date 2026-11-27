@@ -551,7 +551,7 @@ test("GroupSession.test_tool_schemas", () => {
   expect(names).toContain("group_session_create");
   expect(names).toContain("group_session_send");
   expect(names).toContain("group_session_assign");
-  expect(names.length).toBe(51);
+  expect(names.length).toBe(54);
 });
 
 // ---- CLI 冒烟：子进程跑真 CLI，建房间 → 建会话 → 列表/展示/发送/指派/完成/presence/结束 ----

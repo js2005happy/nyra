@@ -14,7 +14,7 @@ import {
 } from "../../src/tools.ts";
 
 const TOOL_NAMES = ["read_file", "write_file", "edit_file", "apply_patch", "list_dir", "shell",
-  "web_fetch", "web_search", "browser_navigate", "browser_click", "browser_screenshot",
+  "web_fetch", "web_search", "github_repo_read", "github_search", "feed_read", "browser_navigate", "browser_click", "browser_screenshot",
   "computer_screenshot", "computer_click", "computer_type", "computer_key", "computer_windows", "describe_image", "export_office", "media_ingest",
   "multi_model_research", "memory_append", "memory_search", "knowledge_search", "session_search", "editor_context", "usage", "render_component", "memory_forget", "memory_delete", "gmail_search", "gmail_read", "gmail_send", "shopify_products", "shopify_orders", "shopify_inventory", "slack_channels", "slack_history", "slack_send", "save_skill", "read_skill", "delegate", "delegate_parallel", "plan",
   "grep_search", "git_status", "http_post", "lsp_diagnostics", "lsp_symbols",
@@ -27,7 +27,7 @@ function fullCtx(workdir: string, extra: Partial<ToolContext> = {}): ToolContext
 test("ToolsTest.test_schema_names_match_python_24_plus_read_skill", () => {
   const names = TOOL_SCHEMAS.map((s) => (s.function as Record<string, unknown>).name as string);
   expect(names).toEqual(TOOL_NAMES);
-  expect(TOOL_SCHEMAS.length).toBe(51); // 缺口 1 + 缺口 2：新增 memory_search / memory_forget / memory_delete；缺口 3a：新增 delegate_parallel；缺口 6：新增 gmail_search / gmail_read / gmail_send；缺口 24：新增 lsp_diagnostics / lsp_symbols；缺口 16：新增 describe_image；缺口 23：新增 export_office；候选提案 4：新增 media_ingest；缺口 33：新增 knowledge_search；G-P1-14：新增 session_search；G-P0-3：新增 editor_context；缺口 44 深化：新增 shopify_products / shopify_orders / shopify_inventory / slack_channels / slack_history / slack_send；M1：新增 usage；O7：新增 render_component；Bot 群聊会话：新增 group_session_create / group_session_send / group_session_assign。
+  expect(TOOL_SCHEMAS.length).toBe(54); // 缺口 1 + 缺口 2：新增 memory_search / memory_forget / memory_delete；缺口 3a：新增 delegate_parallel；缺口 6：新增 gmail_search / gmail_read / gmail_send；缺口 24：新增 lsp_diagnostics / lsp_symbols；缺口 16：新增 describe_image；缺口 23：新增 export_office；候选提案 4：新增 media_ingest；缺口 33：新增 knowledge_search；G-P1-14：新增 session_search；G-P0-3：新增 editor_context；缺口 44 深化：新增 shopify_products / shopify_orders / shopify_inventory / slack_channels / slack_history / slack_send；M1：新增 usage；O7：新增 render_component；Bot 群聊会话：新增 group_session_create / group_session_send / group_session_assign；Cue A 批 5.2：新增 github_repo_read / github_search；Cue A 批 5.3：新增 feed_read。
   const poppy = [POPPY_TOOL_SCHEMA, POPPY_IDENTITY_SCHEMA, POPPY_PERMISSION_SCHEMA]
     .map((s) => (s.function as Record<string, unknown>).name as string);
   expect(poppy).toEqual(["poppy_discover", "poppy_identity_check", "poppy_permission_check"]);
@@ -397,6 +397,38 @@ test("Tools041Test.test_web_fetch_and_http_post_block_private_urls", async () =>
   expect(out).toContain("已拦截内网");
   const out2 = await executeTool("http_post", { url: "http://10.0.0.5/hook", body: "{}" }, ctx);
   expect(out2).toContain("已拦截内网");
+});
+
+test("ToolsTest.test_github_tools_validate_input_offline", async () => {
+  // 只测不联网就能判定的入参校验；真接口验收走探针（见 docs/github-tools.md）。
+  const wd = mkdtempSync(join(tmpdir(), "nyra-tools-"));
+  const ctx = fullCtx(wd);
+  expect(await executeTool("github_repo_read", { repo: "not-a-repo" }, ctx)).toContain("repo 格式不对");
+  expect(await executeTool("github_repo_read", { repo: "owner/" }, ctx)).toContain("repo 格式不对");
+  expect(await executeTool("github_repo_read", { repo: "  " }, ctx)).toContain("repo 格式不对");
+  expect(await executeTool("github_search", { query: "  " }, ctx)).toContain("query 不能为空");
+});
+
+test("ToolsTest.test_feed_read_builtin_list_and_add_remove_offline", async () => {
+  // 只测不联网就能判定的部分；真接口拉取走探针（见 docs/feeds.md）。
+  const wd = mkdtempSync(join(tmpdir(), "nyra-tools-"));
+  const home = mkdtempSync(join(tmpdir(), "nyra-home-"));
+  const noHomeCtx = fullCtx(wd);
+  const list = await executeTool("feed_read", { action: "list" }, noHomeCtx);
+  expect(list).toContain("GitHub Blog");
+  expect(list).toContain("Hacker News");
+  expect(list).toContain("Nyra Releases");
+  const ctx = fullCtx(wd, { home });
+  expect(await executeTool("feed_read", { action: "add", name: "Test Feed", url: "https://example.com/rss" }, ctx)).toContain("已订阅");
+  expect(await executeTool("feed_read", { action: "add", name: "Test Feed", url: "https://example.com/rss" }, ctx)).toContain("已经订阅过了");
+  expect(await executeTool("feed_read", { action: "list" }, ctx)).toContain("Test Feed");
+  expect(await executeTool("feed_read", { action: "add", name: "Bad", url: "ftp://example.com/rss" }, ctx)).toContain("只支持 http(s)");
+  expect(await executeTool("feed_read", { action: "remove", feed: "不存在的源" }, ctx)).toContain("没有这个订阅");
+  expect(await executeTool("feed_read", { action: "remove", feed: "Test Feed" }, ctx)).toContain("已取消订阅");
+  expect(await executeTool("feed_read", { action: "bogus" }, ctx)).toContain("action 只能是");
+  // 内网地址在发请求前就拦住，不会真的连过去。
+  await executeTool("feed_read", { action: "add", name: "Inner", url: "http://10.0.0.5/rss" }, ctx);
+  expect(await executeTool("feed_read", { action: "read", feed: "Inner" }, ctx)).toContain("已拦截内网");
 });
 
 test("Tools041Test.test_read_tools_confined_to_workdir", async () => {

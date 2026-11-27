@@ -16,9 +16,9 @@ import { McpCostTracker, estimateToolCost, costLimitUsd } from "../../src/mcpCos
 
 
 
-test("McpPresetsTest.test_ten_presets_and_defaults", () => {
-  expect(Object.keys(MCP_PRESETS).length).toBe(10);
-  expect(listPresets().length).toBe(10);
+test("McpPresetsTest.test_eleven_presets_and_defaults", () => {
+  expect(Object.keys(MCP_PRESETS).length).toBe(11);
+  expect(listPresets().length).toBe(11);
   expect([...DEFAULT_MCP_PRESETS]).toEqual(["memory", "sequential-thinking", "fetch", "time"]);
   expect(getPreset("memory")?.command).toBe("npx");
   expect(getPreset("nope")).toBe(null);
@@ -30,6 +30,51 @@ test("McpPresetsTest.test_ten_presets_and_defaults", () => {
   const [raw3, reason3] = resolvePreset("filesystem", {}, {});
   expect(raw3).toBe(null);
   expect(reason3).toContain("mcp_preset_args");
+});
+
+test("McpPresetsTest.test_local_stdio_presets_filesystem_fetch_memory", () => {
+  // 三个本地 stdio 预置（Cue A 批 5.1）：memory 与 filesystem 走 npx，
+  // fetch 只能走 uvx——官方没有出过这个服务器的 npm 包。
+  const memory = getPreset("memory")!;
+  expect(memory.command).toBe("npx");
+  expect(memory.args).toContain("@modelcontextprotocol/server-memory");
+  expect(memory.requires_env).toEqual([]);
+  expect(memory.requires_args).toBe(false);
+  const fetch = getPreset("fetch")!;
+  expect(fetch.command).toBe("uvx");
+  expect(fetch.args).toContain("mcp-server-fetch");
+  expect(fetch.requires_env).toEqual([]);
+  const fs = getPreset("filesystem")!;
+  expect(fs.command).toBe("npx");
+  expect(fs.args).toContain("@modelcontextprotocol/server-filesystem");
+  expect(fs.requires_args).toBe(true);
+  // memory 与 fetch 不用额外条件就能解析；filesystem 必须给目录。
+  const [mRaw] = resolvePreset("memory", {}, {});
+  expect((mRaw as { command: string }).command).toBe("npx");
+  const [fRaw] = resolvePreset("fetch", {}, {});
+  expect((fRaw as { command: string }).command).toBe("uvx");
+  const [fsRaw] = resolvePreset("filesystem", { filesystem: ["/tmp/docs"] }, {});
+  expect((fsRaw as { args: string[] }).args.slice(-1)).toEqual(["/tmp/docs"]);
+});
+
+test("McpPresetsTest.test_github_remote_http_preset_needs_pat", () => {
+  // Cue A 批 5.5：GitHub 官方远程 MCP（只读）是 http 预置，不在默认里。
+  const preset = getPreset("github-remote")!;
+  expect(preset.transport).toBe("http");
+  expect(preset.url).toBe("https://api.githubcopilot.com/mcp/readonly");
+  expect(preset.requires_env).toEqual(["GITHUB_MCP_TOKEN"]);
+  expect([...DEFAULT_MCP_PRESETS]).not.toContain("github-remote");
+  // 没 PAT 就跳过，不编造。
+  const [noRaw, noReason] = resolvePreset("github-remote", {}, {});
+  expect(noRaw).toBe(null);
+  expect(noReason).toContain("GITHUB_MCP_TOKEN");
+  // 有 PAT 就解析成 http 配置：url 对、Authorization 带上 token。
+  const [raw] = resolvePreset("github-remote", {}, { GITHUB_MCP_TOKEN: "ghp_testtoken123" });
+  expect((raw as { transport: string }).transport).toBe("http");
+  expect((raw as { url: string }).url).toBe("https://api.githubcopilot.com/mcp/readonly");
+  const headers = (raw as { headers: Record<string, string> }).headers;
+  expect(headers.Authorization).toBe("Bearer ghp_testtoken123");
+  expect(JSON.stringify(raw)).not.toContain("${GITHUB_MCP_TOKEN}");
 });
 
 test("McpClientTest.test_modern_discover_and_paginated_tools", async () => {
