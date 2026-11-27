@@ -138,8 +138,9 @@ Nyra 的三层存储正好对得上，写清分工、不要混用：
 
 ## 缺口 2：删除与控制
 
-- 工具 `memory_forget` / `memory_delete`（同义，两个名字都留着：
-  别家 MCP 叫 `forget_session`，用户口语也常说“忘记这条”）：
+- 工具 `memory_forget`（删记忆；`memory_delete` 曾与它同义，工具检索批
+  已合并：模型只看得到 `memory_forget`，`memory_delete` 仍是分派别名，
+  老脚本按旧名调仍能执行、审批与钩子名单里也还认它）：
   `ids`（记忆 id 列表）或 `session_id`（删掉该会话写下的全部记忆）
   至少给一个，`owner` 与 `reason` 可选。
 - **审批与 `write_file` 同级**：进 `MUTATING_TOOLS`，走
