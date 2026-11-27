@@ -984,13 +984,9 @@ function renderStatus(){
   const u = v && v.usage;
   if (u && u.last_prompt_tokens && u.context_window_tokens) add('pie', t('d.context', { n: Math.round(100 * u.last_prompt_tokens / u.context_window_tokens) }));
   if (u && (u.prompt_tokens || u.completion_tokens)) add('', t('d.tokens', { i: fmtK(u.prompt_tokens || 0), o: fmtK(u.completion_tokens || 0) }));
-  // P0-3：花钱前见上限——本次金额、金额未知、月度上限状态都写在状态栏里；警告项点一下进设置。
-  const b = (v && v.budget) || (S.info && S.info.budget) || null;
-  if (b && !b.monthly_cost_limit_decided) { const c = add('', t('d.budgetUndecided'), 'warn'); c.style.cursor = 'pointer'; c.title = t('d.budget.undecided'); c.onclick = () => openSettings('general'); }
+  // 花钱前见上限——本次金额、金额未知写在状态栏里（月度限额已移除，不再有“未选月度上限”提示）。
   if (v && v.cost && v.cost.status === 'priced' && typeof v.cost.spent_usd === 'number') add('', t('d.cost', { n: fmtUsd(v.cost.spent_usd) }));
   else if (v && v.cost && (v.cost.status === 'unpriced' || v.cost.status === 'missing') && (v.events || []).some(e => e.type === 'budget_paused')) add('', t('d.costUnknown'), 'warn');
-  // 触顶：预留失败文案里只有月度层被绑住时才带“月度支出上限”这句，按它认，不猜。
-  if (v && v.status === 'error' && typeof v.error === 'string' && v.error.includes('月度支出上限')) { const c = add('', t('d.budgetHit'), 'warn'); c.style.cursor = 'pointer'; c.title = t('d.budgetHit'); c.onclick = () => openSettings('general'); }
   if (v && Array.isArray(v.messages) && v.messages.length) add('undo', t('d.rewindTip'));
   const n = S.info.mcp_tools || 0;
   const right = el('span', 'r'); right.appendChild(el('span', 'dot ' + (n ? 'ok' : 'off'))); right.appendChild(document.createTextNode(n ? t('d.mcpOn', { n }) : t('d.mcpOff'))); st.appendChild(right);
@@ -1246,31 +1242,13 @@ async function secGeneral(sec){
     renderTop(); renderThreads(); tick();
   };
   sec.appendChild(srow(t('d.gen.lang'), t('d.gen.langHint'), lg));
-  // P0-3：月度上限——必须明确选一个（数字或不设上限），没选时这里亮着“还没选”，保存才放行。
-  sec.appendChild(el('h3', '', t('d.budget.title')));
+  // 本月花费（仅记账展示，无月度上限）：本月已花 + 重置日。
+  sec.appendChild(el('h3', '', t('d.spend.title')));
   const b = st.budget || {};
   const bstat = el('p', 'hint2');
   if (b.monthly_spent_usd == null) bstat.textContent = t('d.budget.spentUnknown');
-  else if (typeof b.monthly_cost_limit_usd === 'number') bstat.textContent = t(b.monthly_spent_incomplete ? 'd.budget.spentPartial' : 'd.budget.spent', { spent: fmtUsd(b.monthly_spent_usd), limit: fmtUsd(b.monthly_cost_limit_usd), reset: String(b.monthly_reset_at || '') });
-  else bstat.textContent = t('d.budget.spentNoCap', { spent: fmtUsd(b.monthly_spent_usd) }) + (b.monthly_spent_incomplete ? t('d.budget.partialNote') : '');
+  else bstat.textContent = t('d.spend.line', { spent: fmtUsd(b.monthly_spent_usd), reset: String(b.monthly_reset_at || '') }) + (b.monthly_spent_incomplete ? t('d.budget.partialNote') : '');
   sec.appendChild(bstat);
-  const brow = el('div', 'srow');
-  const bk = el('div', 'k'); bk.appendChild(el('b', '', t('d.budget.title'))); bk.appendChild(el('small', '', t('d.budget.hint'))); brow.appendChild(bk);
-  const ctl = el('div'); ctl.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap';
-  const capIn = el('input', 'fld'); capIn.type = 'number'; capIn.min = '0'; capIn.step = 'any'; capIn.style.width = '110px';
-  if (typeof b.monthly_cost_limit_usd === 'number') capIn.value = String(b.monthly_cost_limit_usd);
-  const noCap = el('label', ''); const noCapCb = document.createElement('input'); noCapCb.type = 'checkbox'; noCapCb.checked = !!b.monthly_cost_limit_decided && b.monthly_cost_limit_usd == null; noCap.appendChild(noCapCb); noCap.appendChild(document.createTextNode(' ' + t('d.budget.noCap')));
-  const saveCap = el('button', 'tbtn p', t('d.budget.save'));
-  const syncCap = () => { capIn.disabled = noCapCb.checked; };
-  noCapCb.onchange = syncCap; syncCap();
-  saveCap.onclick = async () => {
-    if (noCapCb.checked) { await saveSettings({ monthly_cost_limit_usd: null }); return; }
-    const n = Number(capIn.value);
-    if (capIn.value.trim() === '' || !Number.isFinite(n) || n < 0) { toast(t('d.budget.needNumber')); return; }
-    await saveSettings({ monthly_cost_limit_usd: n });
-  };
-  ctl.appendChild(capIn); ctl.appendChild(noCap); ctl.appendChild(saveCap); brow.appendChild(ctl); sec.appendChild(brow);
-  if (!b.monthly_cost_limit_decided) sec.appendChild(el('p', 'bad-t', t('d.budget.undecided')));
   sec.appendChild(el('h3', '', t('d.gen.context')));
   sec.appendChild(srow(t('d.gen.autoCompact'), t('d.gen.autoCompactHint', { n: Math.round(c.auto_compact_threshold * 100) }), sw(c.auto_compact_enabled, v => saveSettings({ auto_compact_enabled: v }), 'sw-compact')));
   const th = el('select', 'fld'); [0.6, 0.7, 0.8, 0.9].forEach(v => { const o = el('option', '', Math.round(v * 100) + '%'); o.value = v; if (Math.abs(c.auto_compact_threshold - v) < 0.001) o.selected = true; th.appendChild(o); });
