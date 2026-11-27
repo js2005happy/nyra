@@ -7,12 +7,12 @@
 ## 房间与发言模式
 
 ```sh
-nyra group room create <房间 id> <名字> --bot <机器人 id> [--bot ...]
+nyra group room create <房间 id> <名字> --bot <机器人 id> [--bot ...] [--provider <服务商>] [--model <模型>]
 nyra group room list
 nyra group room show <房间 id>
 ```
 
-每个机器人用默认模型跑，说明走默认提示词。三种发言模式：
+每个机器人默认走默认模型；建房时给了 `--provider` / `--model`，房间里所有机器人都用它（进会话后成员也带着走）。三种发言模式：
 
 - `round-robin`：按建房时的顺序轮流说。
 - `selector`：上一条消息 `@` 点了谁就谁说，没点名按顺序来。
@@ -97,19 +97,25 @@ nyra group session create room-1 --name "周会"        # 开会话（同一房�
 nyra group session list                                # 列会话
 nyra group session show gs-xxxxxxxx                    # 看成员、轮次、指派
 nyra group session send gs-xxxxxxxx "大家先看这个报错" # 发一轮（默认 3 轮）
+nyra group session send gs-xxxxxxxx "@所有人 大家先看这个报错" # @ 所有人：全体按轮询各说一轮
 nyra group session send gs-xxxxxxxx "@bot-a 你先查" --rounds 5
 nyra group session members gs-xxxxxxxx                 # 看成员与在线状态
 nyra group session assign gs-xxxxxxxx @bot-a "写一份复盘"  # 指派
 nyra group session done gs-xxxxxxxx asg-xxxxxxxx       # 指派完成
 nyra group session presence gs-xxxxxxxx                # 机主与各 Bot 在不在线
-nyra group session invite gs-xxxxxxxx --card <URL|好友名>  # 名片邀请成员进会话
+nyra group session invite gs-xxxxxxxx --card <URL|好友名> [--provider <服务商>] [--model <模型>]  # 名片邀请成员进会话
 nyra group session end gs-xxxxxxxx                     # 结束会话
 ```
 
 - 轮次规矩：@ 点名 > 交接（上一条 Bot 消息里写 `HANDOFF: 某 Bot`）
-  > 指派 > 路由 > 轮询；同一台 Bot 连续最多 2 轮；每轮最多 20 条；
-  机主一提问（以 ? 或 ？结尾，或含 @owner）只跑 1 轮；空回复与
-  重复回复算 pass，该 Bot 本轮不再被选中。
+  > 指派 > 路由 > 轮询；同一台 Bot 连续最多 2 轮；每条机主消息最多
+  10 条（`--rounds` 给再大也只跑 10 条）；机主一提问（以 ? 或 ？
+  结尾，或含 @owner）只跑 1 轮；空回复与重复回复算 pass，该 Bot
+  本轮不再被选中。`@所有人` / `@all` 是向整个房间简要说明：全体按
+  轮询顺序各说一轮，不建指派。一场会话里 Bot 成员 2–6 个（房间建
+  时就卡这个数，邀请再多也进不来）。
+- 每个成员可带自己的 provider/model：本地建房间时 `--provider` /
+  `--model` 一次给全房，邀请时也可顺带指定；不给就走默认链。
 - 每台 Bot 的账分开记：发言前按 `group:<会话>:<bot>` 预留预算，
   某台触顶只跳过它自己；批准按（Bot，工具）记，一次性消耗，别台
   的批准不能复用。指派轮与 @ 点名轮发言前须有该 Bot 未消耗的
@@ -124,7 +130,11 @@ nyra group session end gs-xxxxxxxx                     # 结束会话
   一次看全。
 - 名片邀请：好友名走好友账本 + `fetchAgentCard` + `parseAgentCard`
   复验，URL 直接取卡；拉黑的好友拒绝；邀请进来的成员只读、Key
-  为空走默认链，回复必过拦截器；房间创建时只许 readonly Bot 的
+  为空走默认链，回复必过拦截器；新成员进群先自我介绍一条（描述
+  优先，没有描述就用 role）；名片上的 skills 记到成员身上，轮次
+  里按技能过滤该成员的可用工具（技能在本地技能索引里找到、且声明
+  了 allowed-tools 时才限，没技能或没声明时不限，与以前一致）；
+  邀请时可顺带给 `--provider` / `--model`；房间创建时只许 readonly Bot 的
   规矩不变，会话不放宽执行型能力。
 - 模型工具（工具总数 48→51）：`group_session_create`（room 必填）、
   `group_session_send`（session/message 必填）、`group_session_assign`
