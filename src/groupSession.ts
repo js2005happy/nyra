@@ -22,7 +22,7 @@ import { BudgetLedger, estimateCallUsd, type ReserveLimit } from "./budget.ts";
 import type { Pricing } from "./cost.ts";
 import { findCircle, loadCircleBook, memberCircles, OWNER_IDENTITY } from "./circles.ts";
 import { isDesktopActive } from "./gatewayPresence.ts";
-import { handoffTarget, mentionedBot } from "./groupChat.ts";
+import { handoffTarget, mentionedAll, mentionedBot } from "./groupChat.ts";
 import {
   GroupError,
   GroupStore,
@@ -41,6 +41,8 @@ import {
 import { applyInterventions, newBusMessageId } from "./interventions.ts";
 import { loadSession, resolveNyraHome } from "./memory.ts";
 import { formatModelSwitchNotice } from "./modelSwitch.ts";
+import { canonicalSkillDirs, loadSkills, type Skill } from "./skills.ts";
+import { pluginSkillDirs } from "./plugins.ts";
 import {
   fetchAgentCard,
   findFriend,
@@ -70,6 +72,11 @@ export const GROUP_SESSION_MAX_CONSECUTIVE = 2;
 export const GROUP_SESSION_STALE_TURNS = 5;
 /** send 不给 rounds 时默认跑几轮 Bot 发言。 */
 export const GROUP_SESSION_DEFAULT_ROUNDS = 3;
+/** 一个群聊会话里 Bot 成员数（与 groups.ts 的 MAX_BOTS 同值：2–6 个）。 */
+export const GROUP_SESSION_MAX_BOTS = 6;
+export const GROUP_SESSION_MIN_BOTS = 2;
+/** 一条机主消息最多触发几条 Bot 回复（Hermes Bot Mode 是 10 条）。 */
+export const GROUP_SESSION_MAX_TURNS_PER_MESSAGE = 10;
 
 export type GroupSessionStatus = "open" | "paused" | "ended";
 export type GroupMemberKind = "owner" | "bot";
@@ -79,6 +86,10 @@ export interface GroupSessionMember {
   id: string;
   name: string;
   role?: string;
+  /** 自我介绍用的描述（名片的 description，房间成员用 role）。 */
+  description?: string;
+  /** 该成员的技能名（名片的 skills 列表；轮次里按技能过滤可用工具）。 */
+  skills?: string[];
   /** 名片邀请加入的成员才有 provider/model（卡片上没有就走默认链）。 */
   provider?: string | null;
   model?: string | null;
@@ -130,7 +141,7 @@ export interface GroupSession {
   endedAt?: string | null;
 }
 
-export type TurnMode = "mention" | "handoff" | "assignment" | "router" | "round-robin";
+export type TurnMode = "mention" | "handoff" | "assignment" | "router" | "round-robin" | "broadcast";
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -213,6 +224,10 @@ export function parseSession(raw: unknown): GroupSession {
       id: asString(m.id),
       name: asString(m.name),
       ...(typeof m.role === "string" ? { role: m.role } : {}),
+      ...(typeof m.description === "string" ? { description: m.description } : {}),
+      ...(Array.isArray(m.skills)
+        ? { skills: m.skills.filter((s): s is string => typeof s === "string").slice(0, 50) }
+        : {}),
       ...(typeof m.provider === "string" || m.provider === null ? { provider: m.provider as string | null } : {}),
       ...(typeof m.model === "string" || m.model === null ? { model: m.model as string | null } : {}),
       ...(typeof m.circle === "string" || m.circle === null ? { circle: m.circle as string | null } : {}),
@@ -321,6 +336,7 @@ export function isOwnerQuestion(text: string): boolean {
  * 轮次决策（纯函数）：按 @ 点名 > 交接 > 指派 > 路由 > 轮询的顺序取第一个命中。
  * 同一 Bot 连续发言到顶（2 轮）时跳过它、往下一优先级落；excludeBots 里的
  * 成员本轮不再被选中（预算触顶 / 批准缺失 / 空回复 pass 时用）。
+ * broadcast（@所有人 / @all）时不走点名与指派那套：全体按轮询顺序各说一轮。
  */
 export function nextSpeaker(
   session: GroupSession,
@@ -328,6 +344,7 @@ export function nextSpeaker(
     ownerMessage?: string;
     lastBotMessage?: string;
     routerPick?: string | null;
+    broadcast?: boolean;
     excludeBots?: Set<string>;
   } = {},
 ): { speaker: string; mode: TurnMode } | null {
@@ -338,6 +355,22 @@ export function nextSpeaker(
     !!id && !excluded.has(id) && bots.some((b) => b.id === id);
   const atCap = (id: string) =>
     session.lastSpeaker === id && session.consecutiveTurns >= GROUP_SESSION_MAX_CONSECUTIVE;
+  // 0. @所有人：全体轮询，各说一轮（不建指派、不走点名优先级）。
+  if (opts.broadcast) {
+    const order = bots.map((b) => b.id);
+    let start = 0;
+    if (session.lastSpeaker) {
+      const idx = order.indexOf(session.lastSpeaker);
+      if (idx >= 0) start = (idx + 1) % order.length;
+    }
+    for (let i = 0; i < order.length; i++) {
+      const id = order[(start + i) % order.length];
+      if (excluded.has(id)) continue;
+      if (atCap(id)) continue;
+      return { speaker: id, mode: "broadcast" };
+    }
+    return null;
+  }
   // 1. 机主上一条消息里 @ 了某 Bot → 该 Bot。
   if (opts.ownerMessage) {
     const m = mentionedBot(opts.ownerMessage);
@@ -392,7 +425,11 @@ export function createGroupSession(
   const h = resolveNyraHome(home);
   const store = opts.store ?? new GroupStore(join(h, "groups"), { home: h });
   const room = store.get(roomId);
-  if (!room.bots.length) throw new GroupSessionError(`房间 ${roomId} 里没有机器人，先加机器人再开会话`);
+  if (room.bots.length < GROUP_SESSION_MIN_BOTS || room.bots.length > GROUP_SESSION_MAX_BOTS) {
+    throw new GroupSessionError(
+      `房间 ${roomId} 里有 ${room.bots.length} 个机器人，一个群聊会话要 ${GROUP_SESSION_MIN_BOTS}–${GROUP_SESSION_MAX_BOTS} 个`,
+    );
+  }
   const circle = opts.circle ?? null;
   if (circle && circle !== "default") {
     const book = loadCircleBook(h);
@@ -420,6 +457,7 @@ export function createGroupSession(
         id: b.id,
         name: b.name,
         role: b.role,
+        description: b.role,
         provider: b.provider,
         model: b.model,
         circle: circle ?? null,
@@ -693,11 +731,25 @@ export async function inviteToSession(
   home: string,
   sessionId: string,
   cardRef: string,
-  opts: { fetchDeps?: CardFetchDeps; now?: () => Date; emit?: (type: string, fields: Record<string, unknown>) => void } = {},
+  opts: {
+    fetchDeps?: CardFetchDeps;
+    now?: () => Date;
+    emit?: (type: string, fields: Record<string, unknown>) => void;
+    /** 邀请时顺带指定该成员的 provider/model（不给就走默认链）。 */
+    provider?: string | null;
+    model?: string | null;
+    store?: GroupStore;
+  } = {},
 ): Promise<GroupSessionMember> {
   const h = resolveNyraHome(home);
   const session = getGroupSession(h, sessionId);
   if (session.status !== "open") throw new GroupSessionError("会话不是进行中，不能邀请成员");
+  const botCount = session.members.filter((m) => m.kind === "bot").length;
+  if (botCount >= GROUP_SESSION_MAX_BOTS) {
+    throw new GroupSessionError(`会话已有 ${GROUP_SESSION_MAX_BOTS} 个机器人，到上限了（2–${GROUP_SESSION_MAX_BOTS} 个）`);
+  }
+  const provider = typeof opts.provider === "string" && opts.provider.trim() ? opts.provider.trim().slice(0, 80) : null;
+  const model = typeof opts.model === "string" && opts.model.trim() ? opts.model.trim().slice(0, 180) : null;
   let card: AgentCard;
   if (/^https?:\/\//.test(cardRef)) {
     ({ card } = await fetchAgentCard(cardRef, opts.fetchDeps));
@@ -722,13 +774,17 @@ export async function inviteToSession(
   }
   const at = (opts.now?.() ?? new Date()).toISOString();
   const role = (parsed.description || parsed.skills[0]?.name || "群聊成员").slice(0, 200);
+  const description = (parsed.description || "").trim().slice(0, 200);
+  const skills = parsed.skills.map((s) => s.name.trim()).filter(Boolean).slice(0, 50);
   const member: GroupSessionMember = {
     kind: "bot",
     id,
     name: parsed.name.slice(0, 60),
     role,
-    provider: null,
-    model: null,
+    ...(description ? { description } : {}),
+    ...(skills.length ? { skills } : {}),
+    provider,
+    model,
     circle: session.circle ?? null,
     joinedAt: at,
     lastActiveAt: at,
@@ -736,6 +792,16 @@ export async function inviteToSession(
   };
   session.members.push(member);
   saveSessionFile(h, session);
+  // 新成员进群先自我介绍一条（描述优先，没有描述就用 role）。
+  try {
+    const store = opts.store ?? new GroupStore(join(h, "groups"), { home: h });
+    const intro = description || role;
+    await store.appendTranscript(session.roomId, [
+      { sender: id, content: `大家好，我是${member.name}。${intro}。`, time: stamp() },
+    ]);
+  } catch {
+    /* 自我介绍写不进群记录不拦邀请本身，成员已经进了会话 */
+  }
   recordSessionEvent(
     h,
     "group_member",
@@ -750,6 +816,40 @@ export interface SessionBotTurn {
   content: string;
   error?: boolean;
   mode: TurnMode;
+}
+
+/**
+ * 成员技能 → 工具白名单：拿成员 skills 里的名字去本地技能索引里找
+ * allowed-tools，拼成并集。成员没技能、名字本地没有、或命中的技能都
+ * 没声明工具时返回 null——不限工具，行为与以前一致。名字大小写不
+ * 敏感；工具名原样拼（工具名本身是小写下划线）。
+ */
+export function memberToolAllowlist(member: GroupSessionMember, skills: Skill[]): string[] | null {
+  const names = (member.skills ?? []).map((s) => s.trim().toLowerCase()).filter(Boolean);
+  if (!names.length) return null;
+  const byName = new Map<string, Skill>();
+  for (const s of skills) {
+    const key = s.name.trim().toLowerCase();
+    if (key && !byName.has(key)) byName.set(key, s);
+  }
+  const allowed = new Set<string>();
+  for (const n of names) {
+    for (const t of byName.get(n)?.allowedTools ?? []) {
+      const name = t.trim();
+      if (name) allowed.add(name);
+    }
+  }
+  return allowed.size ? [...allowed].sort() : null;
+}
+
+/** 按该成员的技能从本地技能目录里算白名单（读盘失败不拦轮次，返回 null）。 */
+export function loadMemberToolAllowlist(member: GroupSessionMember, home: string, workdir: string): string[] | null {
+  try {
+    const skills = loadSkills(canonicalSkillDirs(workdir, home, pluginSkillDirs(home)));
+    return memberToolAllowlist(member, skills);
+  } catch {
+    return null;
+  }
 }
 
 export interface SessionRoundResult {
@@ -820,6 +920,8 @@ async function runInvitedBotTurn(
   transcript: RoomMessage[],
   home: string,
   opts: RunSessionRoundOptions,
+  /** 该成员按技能算出的工具白名单（null = 不限）。 */
+  allowedTools?: string[] | null,
 ): Promise<RoomMessage> {
   const h = resolveNyraHome(home);
   const bot: Bot = {
@@ -848,7 +950,14 @@ async function runInvitedBotTurn(
         ...room,
         bots: room.bots.map((pb) => ({ ...pb, api_keys: null, api_keys_enc: null })),
       };
-      const ctx: BotTurnContext = { room: roomData, transcript, workdir, memoryPath, sessionId };
+      const ctx: BotTurnContext = {
+        room: roomData,
+        transcript,
+        workdir,
+        memoryPath,
+        sessionId,
+        ...(allowedTools ? { allowedTools } : {}),
+      };
       const r = await withTimeout(
         opts.botRunner(bot, prompt, ctx),
         BOT_TIMEOUT_SECONDS * 1000,
@@ -871,6 +980,7 @@ async function runInvitedBotTurn(
         maxTurns: MAX_BOT_TURNS,
         sessionId,
         interactive: false,
+        ...(allowedTools ? { allowedTools } : {}),
         messages: recentMessages(previous),
         systemInstructions:
           `你是群聊 ${room.name} 中的独立 AI 机器人（@${bot.id}）。` +
@@ -920,8 +1030,10 @@ async function runInvitedBotTurn(
 
 /**
  * 跑一轮群聊会话：机主发消息，Bot 们按轮次规则接话。
- * 防抢答/防死循环硬顶：同一 Bot 连续最多 2 轮、每轮最多 20 条、空回复与
- * 重复回复算 pass、机主提问只跑 1 轮、每轮发言前查外部停表。
+ * 防抢答/防死循环硬顶：同一 Bot 连续最多 2 轮、每条机主消息最多 10 条、
+ * 空回复与重复回复算 pass、机主提问只跑 1 轮、每轮发言前查外部停表。
+ * @所有人 时全体按轮询各说一轮（不建指派）。成员有技能时按技能过滤
+ * 该轮可用工具（没技能或技能没声明工具时不限，与以前一致）。
  * 任一 Bot 预算触顶只停该 Bot（记 skipped，不拖垮整轮）。
  */
 export async function runSessionRound(
@@ -941,9 +1053,12 @@ export async function runSessionRound(
   if (text.length > MAX_INPUT_CHARS) throw new GroupSessionError(`消息太长（最多 ${MAX_INPUT_CHARS} 字）`);
   const nowFn = opts.now ?? (() => new Date());
   const ownerQuestion = isOwnerQuestion(text);
+  const broadcast = mentionedAll(text);
   let maxTurns = opts.rounds ?? GROUP_SESSION_DEFAULT_ROUNDS;
   if (!Number.isInteger(maxTurns) || maxTurns < 1) maxTurns = 1;
   if (maxTurns > GROUP_SESSION_MAX_TURNS) maxTurns = GROUP_SESSION_MAX_TURNS;
+  // 每条机主消息的总上限（Hermes 是 10 条）：rounds 给再大也只跑这么多。
+  if (maxTurns > GROUP_SESSION_MAX_TURNS_PER_MESSAGE) maxTurns = GROUP_SESSION_MAX_TURNS_PER_MESSAGE;
   if (ownerQuestion) maxTurns = 1;
   await store.appendTranscript(session.roomId, [{ sender: "user", content: text, time: stamp() }]);
   // @ 点名 → 建一条指派（任务就是去掉 @ 点名后的消息）。
@@ -978,6 +1093,17 @@ export async function runSessionRound(
   const turns: SessionBotTurn[] = [];
   const skipped: { bot: string; reason: string }[] = [];
   const excluded = new Set<string>();
+  // 成员技能 → 工具白名单：每 Bot 一轮里只算一次（技能目录读盘不便宜）。
+  const allowlistCache = new Map<string, string[] | null>();
+  const allowlistFor = (member: GroupSessionMember): string[] | null => {
+    if (allowlistCache.has(member.id)) return allowlistCache.get(member.id) ?? null;
+    const workdir = member.invited
+      ? join(h, GROUP_SESSIONS_DIR, session.roomId, "bots", member.id, "workspace")
+      : join(store.root, session.roomId, "bots", member.id, "workspace");
+    const list = loadMemberToolAllowlist(member, h, workdir);
+    allowlistCache.set(member.id, list);
+    return list;
+  };
   let stoppedBy = "轮次跑完";
   let lastBotMessage: string | null = null;
   for (let i = 0; i < maxTurns; i++) {
@@ -989,6 +1115,7 @@ export async function runSessionRound(
       ownerMessage: i === 0 ? text : undefined,
       lastBotMessage: lastBotMessage ?? undefined,
       routerPick,
+      broadcast,
       excludeBots: excluded,
     });
     if (!pick) {
@@ -1038,13 +1165,14 @@ export async function runSessionRound(
     }
     // 跑一轮：房间成员走 store.runOneBot；名片邀请成员走会话内跑法。
     const member = session.members.find((m) => m.id === botId);
+    const allowedTools = member ? allowlistFor(member) : null;
     let entry: RoomMessage;
     try {
       const currentRoom = store.get(session.roomId);
       if (member?.invited) {
-        entry = await runInvitedBotTurn(store, currentRoom, member, [...currentRoom.messages], h, opts);
+        entry = await runInvitedBotTurn(store, currentRoom, member, [...currentRoom.messages], h, opts, allowedTools);
       } else {
-        entry = await store.runOneBot(session.roomId, botId);
+        entry = await store.runOneBot(session.roomId, botId, { ...(allowedTools ? { allowedTools } : {}) });
       }
     } catch (exc) {
       entry = {

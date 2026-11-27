@@ -476,6 +476,12 @@ export interface AgentOptions {
   modelSwitchAllowlist?: string[] | null;
   /** 父级禁用的工具名；委派时子级工具集 = 父级减禁用。 */
   disabledTools?: string[] | null;
+  /**
+   * 本次运行的工具白名单（只发名单里的工具给模型；null/不给 = 不限）。
+   * 群聊里按成员技能算出来传进来；与 disabledTools 取严（白名单之外
+   * 的工具即使不在 disabledTools 里也不发）。MCP 工具同样按名单过滤。
+   */
+  allowedTools?: string[] | null;
   /** MCP 工具执行器（第 3 阶段前为 null，走 worker 桥）。 */
   mcpManager?: {
     hasTools(): boolean;
@@ -770,6 +776,8 @@ export class Agent {
   ctx: ToolContext;
   home: string;
   disabledTools: Set<string>;
+  /** 本次运行的工具白名单（null = 不限；给了就只发名单里的工具）。 */
+  allowedTools: Set<string> | null = null;
   /**
    * 第 1 批 G-P0-5：零工具编排者加进 disabledTools 的那部分（参谋长角色
    * 专属）。委派时不继承给子 agent——限制是参谋长这个角色的，成员
@@ -890,6 +898,7 @@ export class Agent {
     // disabledTools 过滤，拿掉的工具模型根本调不到；显式传的
     // disabledTools 也一并保留（两边取并集，不互相覆盖）。
     this.disabledTools = new Set(opts.disabledTools ?? []);
+    if (opts.allowedTools?.length) this.allowedTools = new Set(opts.allowedTools);
     if (opts.teamRole === "chief") {
       for (const s of TOOL_SCHEMAS) {
         const name = (s.function as Record<string, unknown>).name as string;
@@ -1347,6 +1356,7 @@ export class Agent {
     const schemas = TOOL_SCHEMAS.filter((s) => {
       const name = (s.function as Record<string, unknown>).name as string;
       if (this.disabledTools.has(name)) return false;
+      if (this.allowedTools && !this.allowedTools.has(name)) return false;
       if (this.backend !== null && name === "apply_patch") return false;
       return true;
     });
@@ -1355,7 +1365,11 @@ export class Agent {
     if (this.poppyEnabled && this.teamRole !== "chief") schemas.push(POPPY_TOOL_SCHEMA, POPPY_PERMISSION_SCHEMA, POPPY_IDENTITY_SCHEMA);
     // 第 1 批 G-P0-5：参谋长连 MCP 工具也不给——编排者只剩委派工具，MCP
     // 不在 TOOL_SCHEMAS 里，构造时的 disabledTools 拦不住它，这里直接不发。
-    const mcpSchemas = this.teamRole === "chief" ? [] : (this.mcpManager?.hasTools() ? [...this.mcpManager.toolSchemas] : []);
+    let mcpSchemas = this.teamRole === "chief" ? [] : (this.mcpManager?.hasTools() ? [...this.mcpManager.toolSchemas] : []);
+    // 工具白名单同样拦 MCP 工具（名单里没有的 MCP 工具不发）。
+    if (this.allowedTools) {
+      mcpSchemas = mcpSchemas.filter((s) => this.allowedTools!.has((s.function as Record<string, unknown>).name as string));
+    }
     // 延迟加载的开关：默认开，NYRA_LAZY_TOOLS=0 显式关闭（逃生口）。
     // 三个来源，优先级：NYRA_LAZY_TOOLS=0（显式关）> tool_search 开关/配置（显式开）> MCP 数量阈值。
     const envOff = (process.env.NYRA_LAZY_TOOLS ?? "").trim() === "0";

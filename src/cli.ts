@@ -2694,8 +2694,10 @@ async function handleGroupChat(argv: string[], home: string, args: CliArgs): Pro
         const roomId = argv[2];
         const name = argv[3];
         const bots = getAll("--bot");
+        const provider = get("--provider");
+        const model = get("--model");
         if (!roomId || !name || !bots.length) {
-          process.stderr.write("错误：用法：nyra group room create <房间 id> <名字> --bot <机器人 id> [--bot <机器人 id> ...]（每个机器人用默认模型跑，说明走默认提示词）\n");
+          process.stderr.write("错误：用法：nyra group room create <房间 id> <名字> --bot <机器人 id> [--bot <机器人 id> ...] [--provider <服务商>] [--model <模型>]（不给 provider/model 就走默认链；给了则房间里所有机器人都用它）\n");
           return 2;
         }
         const created = store.create(roomId, name, bots.map((id) => ({
@@ -2703,6 +2705,8 @@ async function handleGroupChat(argv: string[], home: string, args: CliArgs): Pro
           name: id,
           role: "群聊成员",
           instructions: `你是群聊里的机器人 ${id}。按群聊里的讨论发言；被 @ 到或被交接时回应；分工任务完成时说一声“完成”并写清你做了什么。`,
+          ...(provider ? { provider } : {}),
+          ...(model ? { model } : {}),
         })));
         process.stdout.write(`群聊已建：${created.id}（${created.name}），机器人：${created.bots.map((b) => b.id).join("、")}\n`);
         return 0;
@@ -2790,7 +2794,7 @@ async function handleGroupChat(argv: string[], home: string, args: CliArgs): Pro
     if (action === "session") {
       const sub = argv[1];
       const sessMod = await import("./groupSession.ts");
-      const sessionUsage = "用法：nyra group session <create|list|show|send|members|assign|done|presence|invite|end> ...（create <房间 id> [--name <名>] [--circle <圈>]；send <会话> <消息> [--rounds <轮数>]；assign <会话> @<bot> <任务>；done <会话> <指派 id>；invite <会话> --card <URL|好友名>；详见 docs/group-chat.md）\n";
+      const sessionUsage = "用法：nyra group session <create|list|show|send|members|assign|done|presence|invite|end> ...（create <房间 id> [--name <名>] [--circle <圈>]；send <会话> <消息> [--rounds <轮数>]；assign <会话> @<bot> <任务>；done <会话> <指派 id>；invite <会话> --card <URL|好友名> [--provider <服务商>] [--model <模型>]；详见 docs/group-chat.md）\n";
       if (sub === "--help") {
         process.stdout.write(sessionUsage);
         return 0;
@@ -2930,11 +2934,16 @@ async function handleGroupChat(argv: string[], home: string, args: CliArgs): Pro
       if (sub === "invite") {
         const sessionId = argv[2];
         const card = get("--card");
+        const provider = get("--provider");
+        const model = get("--model");
         if (!sessionId || !card) {
-          process.stderr.write("错误：用法：nyra group session invite <会话> --card <名片 URL|好友名>\n");
+          process.stderr.write("错误：用法：nyra group session invite <会话> --card <名片 URL|好友名> [--provider <服务商>] [--model <模型>]\n");
           return 2;
         }
-        const member = await sessMod.inviteToSession(home, sessionId, card);
+        const member = await sessMod.inviteToSession(home, sessionId, card, {
+          ...(provider ? { provider } : {}),
+          ...(model ? { model } : {}),
+        });
         process.stdout.write(`成员已邀请：${member.id}（${member.name}，名片邀请加入，只读）\n`);
         return 0;
       }

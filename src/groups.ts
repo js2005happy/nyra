@@ -451,6 +451,8 @@ export interface BotTurnContext {
   workdir: string;
   memoryPath: string;
   sessionId: string;
+  /** 该 Bot 按技能算出的工具白名单（不给 = 不限，与以前一致）。 */
+  allowedTools?: string[] | null;
 }
 
 export interface BotTurnResult {
@@ -1010,6 +1012,7 @@ export class GroupStore {
       maxTurns: MAX_BOT_TURNS,
       sessionId: ctx.sessionId,
       interactive: false,
+      ...(ctx.allowedTools ? { allowedTools: ctx.allowedTools } : {}),
       messages: recentMessages(previous),
       systemInstructions:
         `你是群聊 ${ctx.room.name} 中的独立 AI 机器人（@${bot.id}）。` +
@@ -1050,6 +1053,7 @@ export class GroupStore {
     room: RoomData,
     bot: Bot,
     transcript: RoomMessage[],
+    allowedTools?: string[] | null,
   ): Promise<RoomMessage> {
     const botHome = join(this.root, room.id, "bots", bot.id);
     const ctx: BotTurnContext = {
@@ -1058,6 +1062,7 @@ export class GroupStore {
       workdir: join(botHome, "workspace"),
       memoryPath: join(botHome, "MEMORY.md"),
       sessionId: `group-${room.id}-${bot.id}`,
+      ...(allowedTools ? { allowedTools } : {}),
     };
     const runner =
       this.botRunner ?? ((b, p, c) => this.defaultBotRunner(b, p, c));
@@ -1156,13 +1161,13 @@ export class GroupStore {
   async runOneBot(
     roomId: string,
     botId: string,
-    opts: { emit?: (type: string, fields: Record<string, unknown>) => void } = {},
+    opts: { emit?: (type: string, fields: Record<string, unknown>) => void; allowedTools?: string[] | null } = {},
   ): Promise<RoomMessage> {
     return this.runSerialized(roomId, async () => {
       const room = this.readRoom(roomId);
       const bot = room.bots.map((raw) => parseBot(raw)).find((b) => b.id === botId);
       if (!bot) throw new GroupError(`机器人不存在：${botId}`);
-      const entry = await this.runBot(room, bot, [...room.messages]);
+      const entry = await this.runBot(room, bot, [...room.messages], opts.allowedTools ?? null);
       // G-P2-1：bot 的回复是总线上的 publish 消息，先过拦截器再进群记录。
       // 丢弃时不进群记录，返回空 error 条目——chiefGroup 按失败计、groupChat
       // 按丢弃计（runBot 的失败条目总有正文，空 error 条目只可能是被丢弃）。

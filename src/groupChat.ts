@@ -93,6 +93,11 @@ export function handoffTarget(text: string): string | null {
   return m ? m[1] : null;
 }
 
+/** 是不是 @ 了整个房间（@所有人 或 @all，@all-bot 这类具体 id 不算）。 */
+export function mentionedAll(text: string): boolean {
+  return /(?<![A-Za-z0-9_])@(?:所有人|all(?![a-z0-9_-]))/.test(text);
+}
+
 function validateCondition(cond: TerminationCondition): void {
   switch (cond.kind) {
     case "max-messages":
