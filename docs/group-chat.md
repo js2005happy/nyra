@@ -153,3 +153,18 @@ nyra group session end gs-xxxxxxxx                     # 结束会话
   分开记账与触顶只停该 Bot 的逻辑是假账本验的，生产上限未接真数）。
 - 只在临时 home / 假 provider 上验过；真模型没跑；Windows/macOS
   真机未验证。
+
+## Bot Mode 开关（Cue B 批，Hermes 缺口 7）
+
+群聊会话的启用 / 停用配置，CLI 与手机端共用同一个配置源
+`~/.nyra/group-bot-mode.json`（0600、原子写；缺文件或坏文件时 fail-open，
+默认开，与 Hermes 默认开启一致）。
+
+- CLI：`nyra group bot-mode <on|off|status>`。
+- 手机端：设置页“群聊”分区里的开关（网关 `GET|POST /api/mobile/bot-mode`）。
+- 关了拦两个入口：群聊会话轮次 `runSessionRound`（CLI `group session send` +
+  `group_session_send` 工具）与房间 swarm 聊天 `GroupStore.send`（CLI
+  `group chat send` + 网关 /m 群聊页）——手机上“群聊”就是房间，只拦会话
+  会让手机上的开关看起来是假的。关了时两处都抛同一句
+  （`BOT_MODE_OFF_MESSAGE`，见 `src/groupBotMode.ts`）。
+- 详见 `docs/mobile-cue.md`。
