@@ -1,7 +1,7 @@
 // tests/node/test-group-session.test.ts — Bot 群聊会话批。
 // 全部用临时 home 与假 runner/假账本，不调真实模型、不联网。
 import { test, expect } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { GroupStore, type Bot, type BotRunner, type BotTurnContext } from "../../src/groups.ts";
@@ -16,6 +16,7 @@ import {
   getGroupSession,
   inviteToSession,
   listGroupSessions,
+  memberToolAllowlist,
   nextSpeaker,
   recordSessionApproval,
   runSessionRound,
@@ -23,6 +24,7 @@ import {
   staleAssignments,
   type GroupSession,
 } from "../../src/groupSession.ts";
+import type { Skill } from "../../src/skills.ts";
 import { recordPresenceHeartbeat } from "../../src/gatewayPresence.ts";
 import { createCircle } from "../../src/circles.ts";
 import { RunStore } from "../../src/runs.ts";
@@ -152,6 +154,40 @@ test("GroupSession.test_create_rejects_bad_room_and_circle", () => {
   }
 });
 
+test("GroupSession.test_create_member_cap_two_to_six", async () => {
+  const home = tmpHome();
+  try {
+    const store = makeStore(home, scriptRunner({}));
+    makeRoom(home, store, ["bot-a", "bot-b", "bot-c", "bot-d", "bot-e", "bot-f"]);
+    const session = createGroupSession(home, "room-1", { store }).session;
+    expect(session.members.filter((m) => m.kind === "bot").length).toBe(6);
+    // 第 7 个邀请直接拒绝。
+    const card = {
+      name: "Extra",
+      description: "多余的",
+      version: "1.0",
+      skills: [],
+      authentication: { schemes: ["bearer"] },
+      endpoints: { mcp: null },
+    };
+    await expect(inviteToSession(home, session.id, "https://example.com/card.json", {
+      fetchDeps: {
+        fetchFn: async () => ({ ok: true, status: 200, text: async () => JSON.stringify(card) }),
+      },
+    })).rejects.toThrow("到上限了");
+    // 房间只有 1 个机器人时建会话也拒绝（手写 room.json 绕过房间创建的守卫）。
+    const soloDir = join(home, "groups", "room-solo");
+    mkdirSync(soloDir, { recursive: true });
+    const soloRoom = JSON.parse(readFileSync(join(home, "groups", "room-1", "room.json"), "utf-8"));
+    soloRoom.id = "room-solo";
+    soloRoom.bots = soloRoom.bots.slice(0, 1);
+    writeFileSync(join(soloDir, "room.json"), JSON.stringify(soloRoom, null, 2));
+    expect(() => createGroupSession(home, "room-solo", { store })).toThrow("2–6");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("GroupSession.test_next_speaker_priority", () => {
   const home = tmpHome();
   try {
@@ -182,6 +218,33 @@ test("GroupSession.test_next_speaker_priority", () => {
     const s4: GroupSession = { ...session, lastSpeaker: "bot-a", consecutiveTurns: 2 };
     expect(nextSpeaker(s4, { ownerMessage: "@bot-a 再说" })).toEqual({ speaker: "bot-b", mode: "round-robin" });
     expect(nextSpeaker(s4, {})).toEqual({ speaker: "bot-b", mode: "round-robin" });
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("GroupSession.test_broadcast_mention_all", async () => {
+  const home = tmpHome();
+  try {
+    const store = makeStore(home, scriptRunner({}));
+    makeRoom(home, store);
+    const session = createGroupSession(home, "room-1", { store }).session;
+    // broadcast 走轮询、mode 是 broadcast；@all 不算点名（"all" 不是成员）。
+    expect(nextSpeaker(session, { broadcast: true })).toEqual({ speaker: "bot-a", mode: "broadcast" });
+    const s2: GroupSession = { ...session, lastSpeaker: "bot-a", consecutiveTurns: 1 };
+    expect(nextSpeaker(s2, { broadcast: true })).toEqual({ speaker: "bot-b", mode: "broadcast" });
+    expect(nextSpeaker(session, { ownerMessage: "@all 大家说说" })).toEqual({ speaker: "bot-a", mode: "round-robin" });
+    // 整轮：@所有人 让全体各说一轮，mode 都是 broadcast，不建指派。
+    const runner = scriptRunner({ "bot-a": ["a1"], "bot-b": ["b1"] });
+    const store2 = makeStore(home, runner);
+    makeRoom(home, store2, ["bot-a", "bot-b"], "room-2");
+    const s3 = createGroupSession(home, "room-2", { store: store2 }).session;
+    const result = await runSessionRound(home, s3.id, "@所有人 大家说说想法", {
+      store: store2, botRunner: runner, ledger: fakeLedger(), rounds: 2,
+    });
+    expect(result.turns.map((t) => t.speaker)).toEqual(["bot-a", "bot-b"]);
+    expect(result.turns.map((t) => t.mode)).toEqual(["broadcast", "broadcast"]);
+    expect(result.session.assignments).toEqual([]);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
@@ -255,7 +318,7 @@ test("GroupSession.test_round_reserves_conservative_estimate_without_estimate_us
   }
 });
 
-test("GroupSession.test_max_turns_cap", async () => {
+test("GroupSession.test_per_message_cap", async () => {
   const home = tmpHome();
   try {
     const script: Record<string, string[]> = {
@@ -266,10 +329,11 @@ test("GroupSession.test_max_turns_cap", async () => {
     const store = makeStore(home, runner);
     makeRoom(home, store);
     const session = createGroupSession(home, "room-1", { store }).session;
+    // rounds 给 99 也只跑 10 条：每条机主消息有总上限（Hermes 对齐取 10）。
     const result = await runSessionRound(home, session.id, "长讨论", {
       store, botRunner: runner, ledger: fakeLedger(), rounds: 99,
     });
-    expect(result.turns.length).toBe(20);
+    expect(result.turns.length).toBe(10);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
@@ -506,6 +570,139 @@ test("GroupSession.test_invited_member_can_speak_via_injected_runner", async () 
   }
 });
 
+test("GroupSession.test_invite_posts_self_intro", async () => {
+  const home = tmpHome();
+  try {
+    const store = makeStore(home, scriptRunner({}));
+    makeRoom(home, store);
+    const session = createGroupSession(home, "room-1", { store }).session;
+    const goodCard = {
+      name: "Card Bot",
+      description: "受邀测试机器人",
+      version: "1.0",
+      skills: [{ id: "chat", name: "聊天", description: "聊天" }],
+      authentication: { schemes: ["bearer"] },
+      endpoints: { mcp: null },
+    };
+    const member = await inviteToSession(home, session.id, "https://example.com/.well-known/agent-card.json", {
+      fetchDeps: {
+        fetchFn: async () => ({ ok: true, status: 200, text: async () => JSON.stringify(goodCard) }),
+      },
+      store,
+    });
+    expect(member.description).toBe("受邀测试机器人");
+    expect(member.skills).toEqual(["聊天"]);
+    const room = store.get("room-1");
+    const intro = room.messages.find((m) => m.sender === "card-bot");
+    expect(intro?.content).toContain("大家好，我是Card Bot");
+    expect(intro?.content).toContain("受邀测试机器人");
+    // 邀请后会话文件里也能读回描述与技能。
+    const back = getGroupSession(home, session.id).members.find((m) => m.id === "card-bot");
+    expect(back?.description).toBe("受邀测试机器人");
+    expect(back?.skills).toEqual(["聊天"]);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("GroupSession.test_member_tool_allowlist", () => {
+  const member = {
+    kind: "bot",
+    id: "card-bot",
+    name: "Card Bot",
+    skills: ["聊天", "不存在的技能"],
+  } as GroupSessionMember;
+  const skills: Skill[] = [
+    { name: "聊天", description: "", when: "", keywords: [], allowedTools: ["read_file", "grep_search"], instructions: "", path: "/tmp/chat.md" },
+    { name: "搜索", description: "", when: "", keywords: [], allowedTools: ["web_search"], instructions: "", path: "/tmp/search.md" },
+  ];
+  expect(memberToolAllowlist(member, skills)).toEqual(["grep_search", "read_file"]);
+  expect(memberToolAllowlist({ ...member, skills: ["搜索"] }, skills)).toEqual(["web_search"]);
+  // 没技能、或技能本地没有、或命中的技能没声明工具时都不限。
+  expect(memberToolAllowlist({ ...member, skills: [] }, skills)).toBeNull();
+  expect(memberToolAllowlist({ ...member, skills: ["不存在的技能"] }, skills)).toBeNull();
+  expect(memberToolAllowlist({ ...member, skills: ["聊天"] }, [{ ...skills[0], allowedTools: undefined }])).toBeNull();
+});
+
+test("GroupSession.test_invited_member_tools_filtered_by_skills", async () => {
+  const home = tmpHome();
+  try {
+    // 本地技能：聊天技能只声明 read_file。
+    mkdirSync(join(home, "skills"), { recursive: true });
+    writeFileSync(
+      join(home, "skills", "chat.md"),
+      "---\nname: 聊天\ndescription: 聊天\nallowed-tools: read_file\n---\n聊天技能。\n",
+    );
+    const seen: { id: string; allowedTools: string[] | null }[] = [];
+    const runner = (async (bot: Bot, _prompt: string, ctx: BotTurnContext) => {
+      seen.push({ id: bot.id, allowedTools: ctx.allowedTools ?? null });
+      return { text: `${bot.id} 回复` };
+    }) as BotRunner;
+    const store = makeStore(home, runner);
+    makeRoom(home, store);
+    const session = createGroupSession(home, "room-1", { store }).session;
+    const goodCard = {
+      name: "Card Bot",
+      description: "受邀测试机器人",
+      version: "1.0",
+      skills: [{ id: "chat", name: "聊天", description: "聊天" }],
+      authentication: { schemes: ["bearer"] },
+      endpoints: { mcp: null },
+    };
+    await inviteToSession(home, session.id, "https://example.com/.well-known/agent-card.json", {
+      fetchDeps: {
+        fetchFn: async () => ({ ok: true, status: 200, text: async () => JSON.stringify(goodCard) }),
+      },
+      store,
+    });
+    await runSessionRound(home, session.id, "@card-bot 你好", {
+      store, botRunner: runner, ledger: fakeLedger(), rounds: 2,
+    });
+    expect(seen.find((s) => s.id === "card-bot")?.allowedTools).toEqual(["read_file"]);
+    // 没技能的本地成员不限工具。
+    expect(seen.find((s) => s.id === "bot-a")?.allowedTools ?? null).toBeNull();
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("GroupSession.test_local_member_provider_model", async () => {
+  const home = tmpHome();
+  try {
+    // 本地建房间时指定 provider/model：会话成员带上它。
+    const store = makeStore(home, scriptRunner({}));
+    store.create("room-1", "测试房间", [
+      { id: "bot-a", name: "bot-a", role: "测试", instructions: "你是测试机器人。", provider: "openlux", model: "deepseek-v4.1-flash" },
+      { id: "bot-b", name: "bot-b", role: "测试", instructions: "你是测试机器人。" },
+    ]);
+    const session = createGroupSession(home, "room-1", { store }).session;
+    const a = session.members.find((m) => m.id === "bot-a");
+    expect(a?.provider).toBe("openlux");
+    expect(a?.model).toBe("deepseek-v4.1-flash");
+    expect(session.members.find((m) => m.id === "bot-b")?.model).toBeNull();
+    // 邀请时顺带指定 provider/model。
+    const card = {
+      name: "Card Bot",
+      description: "受邀",
+      version: "1.0",
+      skills: [],
+      authentication: { schemes: ["bearer"] },
+      endpoints: { mcp: null },
+    };
+    const member = await inviteToSession(home, session.id, "https://example.com/card.json", {
+      fetchDeps: {
+        fetchFn: async () => ({ ok: true, status: 200, text: async () => JSON.stringify(card) }),
+      },
+      provider: "deepseek",
+      model: "deepseek-flash",
+    });
+    expect(member.provider).toBe("deepseek");
+    expect(member.model).toBe("deepseek-flash");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("GroupSession.test_circle_visibility", () => {
   const home = tmpHome();
   try {
@@ -604,6 +801,34 @@ test("GroupSession.test_cli_smoke", async () => {
     expect(r.out).toContain("会话已结束");
     r = await runCli(["group", "session", "list"], home, workdir);
     expect(r.out).toContain("ended");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(workdir, { recursive: true, force: true });
+  }
+}, 60_000);
+
+test("GroupSession.test_cli_room_create_provider_model", async () => {
+  const home = tmpHome();
+  const workdir = tmpHome();
+  try {
+    // 本地建房间时 --provider/--model 落到会话成员身上。
+    let r = await runCli(
+      ["group", "room", "create", "room-1", "测试房间", "--bot", "bot-a", "--bot", "bot-b",
+        "--provider", "openlux", "--model", "deepseek-v4.1-flash"],
+      home, workdir,
+    );
+    expect(r.code).toBe(0);
+    r = await runCli(["group", "session", "create", "room-1"], home, workdir);
+    expect(r.code).toBe(0);
+    const id = r.out.match(/gs-[0-9a-f]+/)?.[0];
+    expect(id).toBeTruthy();
+    const member = getGroupSession(home, id!).members.find((m) => m.id === "bot-a");
+    expect(member?.provider).toBe("openlux");
+    expect(member?.model).toBe("deepseek-v4.1-flash");
+    // invite 没给 --card 时报用法错，不崩。
+    r = await runCli(["group", "session", "invite", id!, "--provider", "deepseek"], home, workdir);
+    expect(r.code).toBe(2);
+    expect(r.out).toContain("用法");
   } finally {
     rmSync(home, { recursive: true, force: true });
     rmSync(workdir, { recursive: true, force: true });
