@@ -147,7 +147,7 @@ test("SecurityP0.mcp_summary_shows_tool_args", async () => {
       type: "function",
       function: {
         name: "mcp__mail__send", description: "发送邮件",
-        parameters: { type: "object", properties: { body: { type: "string" } } },
+        parameters: { type: "object", properties: { to: { type: "string" }, body: { type: "string" } } },
       },
     }],
     execute: async (name: string, args: Record<string, unknown>) => {
