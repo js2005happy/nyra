@@ -72,7 +72,7 @@ nyra interrupt resume <中断单 id> [--decision accept|ignore] [--set 键=值 .
 
 - `resume`：已回过的单直接续跑；没回的单加 `--decision accept|ignore` 一次性回掉，或加 `--set` 当 respond 一次性回掉（`--decision edit` 须配 `--set`）。
 - `nyra workflow resume` 只接审批挂起（`awaiting_approval`），人工回环挂起（`awaiting_interrupt`）走 `nyra interrupt resume`，混用会直接报错。
-- 续跑是真跑工作流：写 / 发动作都会真发生，审批节点照常挂起，`--max-cost` / 月度硬顶重新核，不绕审批、不绕成本硬顶。
+- 续跑是真跑工作流：写 / 发动作都会真发生，审批节点照常挂起，`--max-cost` / 分层每日上限重新核，不绕审批、不绕成本硬顶。
 
 ## 中断单与证据链
 

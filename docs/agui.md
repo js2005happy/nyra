@@ -134,7 +134,7 @@ nyra agui serve token revoke <token-id>    # 吊销 token（立即失效）
    授权时写工具直接从工具表里拿掉，模型连提议都提不出来；有授权
    时才能提议，执行仍须机主逐条批。——写操作分两层：提议权与执行权，
    本批只做到提议权。
-5. 成本硬顶照常（单次 `max_cost_usd` + 月度上限，网关同款口径），
+5. 成本硬顶照常（单次 `max_cost_usd` + 分层每日上限，网关同款口径），
    超支停下；服务端不自动换模型（只用主 provider，不接 fallback 链）。
 6. 证据链：9 个新运行事件（`agui_server_started` /
    `agui_server_run_started` / `agui_server_run_finished` /

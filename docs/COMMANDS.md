@@ -29,7 +29,7 @@
 
 | 命令 | 作用 |
 |---|---|
-| `nyra cost --show` | 定价、单次上限、月度上限与本月已花 |
+| `nyra cost --show` | 定价、单次上限与本月已花（月度上限已移除） |
 | `nyra cost --estimate "<任务>"` | 成本预估（含回忆感知的下调） |
 | `nyra savings [任务]` | 省钱机制汇总 + 辅助模型实测节省 + 逐模型明细 |
 | `nyra stats [--heatmap]` | 本月用量与每日热力图 |
@@ -123,7 +123,7 @@
 | `nyra side-effects <list\|show\|record\|mark\|recover>` | DSH-4：先存后做的副作用队列——执行前先落库，重启按年龄恢复、带 recovery note（详见 `docs/kanban.md`） |
 | `nyra heartbeat <add\|list\|remove\|enable\|disable\|run\|commitments\|check-script\|wake\|seen-clear>` | 缺口 31：静默巡查——无事安静、有发现先记证据再写收件箱；推断承诺须用户确认一次、过期自动失效；零 Token 值守：巡检脚本预检（只跑本地只读命令，命中才通知/唤醒）、指纹去重（重复异常不重复通知）、唤醒入队只读任务、模型回 NO_REPLY 静默收敛（详见 `docs/heartbeat.md`） |
 | `nyra governance <policy\|mandate\|mode\|dry-runs>` | 缺口 43：企业治理——版本化策略 + 不可变授权 + observe/auto 接单模式 + 干跑记录（详见 `docs/governance.md`） |
-| `nyra governance caps <set\|list\|show\|check\|assign-team\|pause\|resume\|discard\|pauses>` | 缺口 43 第三批：分层成本上限——按 Bot/角色/团队/人设设月度美元与 token 上限，触顶进可恢复暂停态，放宽留痕（详见 `docs/governance.md`） |
+| `nyra governance caps <set\|list\|show\|check\|pause\|resume\|discard\|pauses>` | 缺口 43 第三批：分层成本上限——只 agent 层可设每日美元与 token 上限，触顶进可恢复暂停态，放宽留痕；月度上限与 org/team/role/persona 层已移除（详见 `docs/governance.md`） |
 | `nyra governance audit <export\|verify>` | 缺口 43 第三批：审计导出——治理审计日志导出给 SIEM（JSONL + 哈希链，可验证；详见 `docs/governance.md`） |
 | `nyra governance audit export [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--source <来源>] [--actor <主体>] [--type <事件类型>] [--scope <deployment\|org>] [--initiator <触发方>]` | O2：审计导出——按时间/主体/事件类型/范围/触发方过滤导出给 SIEM（详见 `docs/governance.md`） |
 | `nyra governance audit deployment [--all] [--json]` | O2：部署级审计——部署/升级/回滚记录（详见 `docs/governance.md`） |

@@ -1,74 +1,59 @@
 # 成本：用量、硬顶与热力图
 
 > 缺口 20（用量热力图 + 429 冷却显示 + 运行级统计头）与缺口 29（月度支出硬顶），2026-11-20。
+> **2026-11-27：月度上限已全部移除（见下“月度上限已移除”一节），缺口 29 废止。**
 > 定位锚点不变：**跑完能自证、成本有硬顶、权限有边界**。本页只讲成本那条。
 
 ## 一句话
 
 - 单次运行上限 `--max-cost` / `max_cost_usd`：一次运行花超即停。
-- 月度上限 `--monthly-max-cost` / `monthly_cost_limit_usd`：自然月累计花超即停。
-- 用量账本 `~/.nyra/usage_daily.jsonl`：两个上限与热力图共用同一份数，
+- 本月花费只记账、只展示，不再有月度上限（2026-11-27 移除）。
+- 用量账本 `~/.nyra/usage_daily.jsonl`：单次上限、分层每日上限与热力图共用同一份数，
   只记 provider 实报的 token 与已算出的金额，不估算、不补编。
 
-## 月度支出硬顶（缺口 29）
+## 月度上限已移除（缺口 29 废止，2026-11-27）
 
-按**本地自然月**累计全部花费后判定：
+月度上限（`--monthly-max-cost` / `config.json` 的 `monthly_cost_limit_usd`、
+`resolveMonthlyLimit` / `checkMonthlyCap` / `monthlyCapDecided`）已全部拿掉，
+包括首次花钱必选上限的那道门（网关 `requireMonthlyCapDecision`）。
+旧配置里写了月度上限也不再生效；设置端点再收到该键会报“不支持的设置项”；
+`nyra cost --show --json` 与 `nyra stats --json` 不再输出 `limit_usd` /
+`monthly_limit_usd` 字段。
 
-```
-本月已花 = 本月 LLM 花费（用量账本）+ 本月 MCP 花费（mcp_spend.jsonl）+ 本次运行进行中的花费
-```
+留下的只有两样：
 
-- 超限即停：与 `--max-cost` 同一级的硬停语义，每次上报用量后检查，
-  超限抛错中止运行；报错里写清已花多少、上限多少、哪天（下月 1 日）重置、
-  怎么放宽（调高 `monthly_cost_limit_usd` 或 `--monthly-max-cost`）。
-- 子任务同样受限：子任务继承单价与两个上限，且子任务的“本月已花”
-  里把父级进行中的花费也算进去；子任务花的钱同时进账本与父级的单次
-  硬顶合计——委派不是旁路。
-- 0 美元即锁死一切计价花费；把值设为 `null` 取消上限。
-
-### “默认最严”到底是什么意思
-
-**配置默认值是不设上限（`null`）。** 这是 deliberate 的选择，不是没做完：
-
-- Nyra 没有 Zed 那种“$10 订阅含 $5 额度”的价格锚——任何默认美元数
-  都是凭空编的；默认开启低限额会挡住从没配过月度上限的老用户。
-- “最严”落在**机制**上：一旦配了，就是硬停，没有豁免口子、不因
-  `--max-cost` 更大而放宽、子任务同样受限、失败子任务已花的部分
-  也照样记账。
-- 所以：**没配过月度上限的老用户不会被新默认挡住**；想被挡住，
-  显式配一个上限即可。
+- **本月花费记账与展示**：`本月已花 = 本月 LLM 花费（用量账本）+ 本月 MCP 花费（mcp_spend.jsonl）+ 本次运行进行中的花费`，照常能看见；有未计价记录时本月合计只是**下界**（实际花费只会更高），只用于展示，不触发任何判定。
+- **每条任务自身的硬顶**：单次运行上限 `--max-cost` / `max_cost_usd`（一次运行花超即停）与分层每日上限（见下）不动。子任务继承单价与单次上限，子任务花的钱同时进账本与父级的单次硬顶合计——委派不是旁路。
 
 ### 诚实边界（与 `--max-cost` 同一条）
 
-- 未配单价 / provider 未报用量时算不出金额：**有美元上限（单次/月度）且严格模式开（默认开）时暂停运行**等人工处理（可靠性打磨第 2 项，详见 `docs/budget.md`）；没配上限、或严格模式已关时才不抛错、不假装封顶，只把状态留在 `lastCost` 里。分层回调的 token 层不需要单价，单价未知时仍照常判 token 层。
-- 月度累计里有未计价的记录时，本月合计只是**下界**（实际花费只会更高），
-  硬顶按下界判定——只会晚触发、绝不会误触发。
+- 未配单价 / provider 未报用量时算不出金额：**有美元上限（单次）且严格模式开（默认开）时暂停运行**等人工处理（可靠性打磨第 2 项，详见 `docs/budget.md`）；没配任何美元上限、或严格模式已关时才不抛错、不假装封顶，只把状态留在 `lastCost` 里。分层回调的 token 层不需要单价，单价未知时仍照常判 token 层。
 - 与 #61 回忆感知的成本估算的关系：**月度累计只计实际花费**（上报用量
   × 单价）。回忆下调只影响 `nyra cost --estimate` 事前估算的悲观档，
-  是“有历史可复用时可能少跑几轮”的投影，不进实际累计、不影响硬顶判定。
+  是“有历史可复用时可能少跑几轮”的投影，不进实际累计。
 
 ### 查看
 
 ```
-nyra cost --show        # 定价、单次上限、月度上限与本月已花
+nyra cost --show        # 定价、单次上限与本月已花
 nyra stats              # 本月累计 + 今日 + 最近 7 天
 ```
 
 ## 分层成本上限（缺口 43 第三批）
 
-月度硬顶是组织级上限，分层上限是叠加在它之上的第二道门——
-按 Bot / 角色 / 团队 / 人设分层设上限，默认最严的还是组织级那条。
+分层上限只剩 **agent 每日层**（美元与 token 两维，本地自然日 0 点重置）。
+月度上限已移除，组织级 / 团队 / 角色 / 人设层与月度维一律不再接受，
+旧 caps 文件读时迁移（剥月度字段、丢无剩余限额的层）。
 详见 `docs/governance.md` 的「分层成本上限」一节；这里只讲成本口径：
 
-- **组织级没有第二套数字**：组织级上限就是月度硬顶
-  （`monthly_cost_limit_usd`），`caps set org` 直接拒绝。
-  子层上限超过组织级时拒绝设置——要先显式抬组织级。
+- **没有组织级上限**：`caps set org` / `team:` / `role:` / `persona:` 直接拒绝；
+  只 `agent:<id>` 可设每日上限。
 - **同一份数**：分层花费按用量账本的 `agent` 归属拆分（定时任务
   `--agent` 与 Bot 的运行按 agent 记账；CLI 交互运行没有 agent id，
   不记归属）；MCP 花费没有 agent 归属，只在组织级计入。
 - **分层花费是下界**：未归属的行分不下去，只会晚触发、不会误触发；
   美元算不出时该层只判 token。
-- **触顶是可恢复暂停**：运行中触顶先建暂停记录再抛错中止（与月度
+- **触顶是可恢复暂停**：运行中触顶先建暂停记录再抛错中止（与单次
   硬顶同级硬停）；暂停记录带 runId / taskId 引用，任务板多一个
   `paused` 状态（`nyra kanban pause` / `resume`，恢复回 queued，
   attempts 不动）。放行前先重判，还超就拒绝。
@@ -76,7 +61,7 @@ nyra stats              # 本月累计 + 今日 + 最近 7 天
   什么时候、从多少到多少），进治理审计链。
 
 ```bash
-nyra governance caps set agent:nyra --usd 5 --tokens 100000 --yes
+nyra governance caps set agent:nyra --day-usd 5 --day-tokens 100000 --yes
 nyra governance caps check --agent nyra
 nyra governance caps pauses
 ```
@@ -133,15 +118,14 @@ nyra stats heatmap [--weeks N]   # 默认 8 周；N 为 1–52
 
 ### 已补：网关入口的成本口径
 
-- 网关（`nyra ui`）的 agent 现在接同一套 `maxCostUsd` / `pricing` /
-  `monthlyCostLimitUsd` / `monthlySpentBeforeUsd`（见 `Gateway.costOptions()`），
+- 网关（`nyra ui`）的 agent 现在接同一套 `maxCostUsd` / `pricing`
+  （见 `Gateway.costOptions()`；月度上限已移除，不再透传），
   `send()` 与定时任务两个入口都接；运行中的 `usage` / `cost_update` 事件
   由 `Gateway.flushUsageToLedger()` 增量写账本。
-- **已知边界**：多会话并发时每个 agent 拿的是创建时刻的本月已花快照，
-  并发会话之间不保证严格互斥（要严格需给账本写入加锁）。并发预算预留
+- **已知边界**：多会话并发时并发会话之间不保证严格互斥（要严格需给账本写入加锁）。并发预算预留
   （可靠性打磨第 2 项，详见 `docs/budget.md`）给在途花费上了一把锁：
   同一本预留账本跨会话共享，调用前先预留、在途预留计入上限判定——
-  但网关 agent 的月度“已花”仍是创建时刻快照，预留只锁增量，不是全量串行化。
+  但预留只锁增量，不是全量串行化。
 
 ### 已补：看板成本段含委派花费
 
@@ -210,7 +194,7 @@ nyra savings --json
   "pricing": [{ "model": "…", "input_per_1m": 1, "output_per_1m": 2 }],
   "invalid_pricing": ["配置无效的模型名"],
   "max_cost_usd": 5,
-  "monthly": { "limit_usd": 50, "spent_usd": 1.2, "mcp_usd": 0.2, "month": "2026-11", "reset_at": "2026-12-01" },
+  "monthly": { "spent_usd": 1.2, "mcp_usd": 0.2, "month": "2026-11", "reset_at": "2026-12-01" },
   "budget": { "active_reserved_usd": 0.05, "strict_unknown_amount": true }
 }
 ```
@@ -232,7 +216,6 @@ nyra savings --json
   "month_spent_usd": 1.5,
   "incomplete": false,
   "mcp_spent_usd": 0.2,
-  "monthly_limit_usd": 50,
   "reset_at": "2026-12-01",
   "today": { "date": "2026-11-20", "tokens": 800, "spent_usd": 0.1, "calls": 3 },
   "days": [{ "date": "2026-11-19", "tokens": 900, "spent_usd": 0.2, "calls": 2 }]

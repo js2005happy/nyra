@@ -77,8 +77,8 @@ nyra team writer <status|transfer <文件> <成员>|release <文件>> # 单写�
 - 下游之间不直接互发指令：只有参谋长能分派（`delegateDetailed` 的团队门：非参谋长调 delegate 直接拒绝；分派须指定 `agent`，只认团队成员；成员接单须有完整 Charter）；成员之间要交接只通过参谋长或 beads 交接。**例外（H-7 嵌套编排）**：被参谋长授予 `orchestrator` 角色的成员也能再往下分派（委派时传 `orchestrator: true`，仍须指定 `agent`、仍须完整 Charter；没授予的成员调 delegate 仍被团队门拒绝，收到的还是这条团队门文案）。
 - 分派是 `delegate` 工具的 `agent` 参数（只认团队成员）与 `delegate_parallel` 每条线程的 `agent` 参数；内部机械步（H-5 合并子 agent）走 `internal` 旁路，不走分派门。
 - 参谋长的上下文是瓶颈：只收摘要不收全文。`buildChiefTask` 给参谋长的任务文本写明了这六条（拆解、分派、汇总；只派给名单里的成员；下游不互发指令；只收简报；对外动作回参谋长/人批；拆错了全队白跑，不能拆就直接说）。
-- 分派前三道门（`planTeamDispatch`，不调模型、不花 token）：团队须 active、参谋长与每个成员的 Charter 须完整、月度硬顶（组织级 + 分层，`checkAutoAllowed`）须没触顶；不过直接拒绝，连参谋长都不起。`--dry-run` 只出计划，不跑模型。
-- 参谋长是单点瓶颈与单点故障，拆错了全队白跑；本身也要受月度硬顶约束。分派跑的是一个 chief run（工作目录落在参谋长自己的电脑 workspace 里），有运行记录可查。
+- 分派前三道门（`planTeamDispatch`，不调模型、不花 token）：团队须 active、参谋长与每个成员的 Charter 须完整、分层每日上限（`checkAutoAllowed`）须没触顶；不过直接拒绝，连参谋长都不起。`--dry-run` 只出计划，不跑模型。
+- 参谋长是单点瓶颈与单点故障，拆错了全队白跑；本身也要受分层每日上限约束。分派跑的是一个 chief run（工作目录落在参谋长自己的电脑 workspace 里），有运行记录可查。
 - 叫法按 Nyra 自己的 Soul / peer / kanban 词汇来，不抄“参谋长—经理—工作者”叫法与 GrokBot 名字（Soul 身份名用“参谋长”可以，那是 Nyra 自己的 Soul 命名）。
 
 ### 4. 外发审批门进团队模式（GROK-3，缺口 51 + 43 接线）

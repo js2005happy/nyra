@@ -68,7 +68,7 @@ nyra checkpoint replay <运行 id> <步骤 id> [--dry-run] [--yes]
 - **只认 fixed 形态**：coordinator / dynamic 的重放计划直接返回不支持（协调者的下一步是运行中决定的，没法从中间接）。
 - **for_each**：检查点是 `loop[1]` 这种轮次节点时，重放从所属的循环步骤 `loop` 的下一条开始（整段循环重跑，不单跑某一轮）。
 - **花钱 / 审批的步骤**：后面有调模型（llm / delegate / skill）或审批（approve）步骤时，`--dry-run` 只看计划（列每步的分类：deterministic / costed / approval），不加 `--yes` 直接拒绝（退出码 2）。审批节点重放时重新问人，不复用旧批复。
-- **红线不动**：重放不绕审批、不绕成本硬顶——月度硬顶与 `--max-cost` 照常（前缀已花的钱算进新运行），重放事件 `step_checkpoint_replayed` 进新运行的事件链。
+- **红线不动**：重放不绕审批、不绕成本硬顶——单次硬顶与分层每日上限照常（前缀已花的钱算进新运行），重放事件 `step_checkpoint_replayed` 进新运行的事件链。
 
 ## 诚实边界
 

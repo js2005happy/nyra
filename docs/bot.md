@@ -148,7 +148,7 @@ Telegram getUpdates 长轮询 / Discord Gateway 事件 / Slack Socket Mode 事�
   → 群聊 @ 过滤（mentionOnly 默认开，没 @ 直接忽略；指令同样要过这道门）
   → 确定性指令优先（/help、/status、/new、/stop、/model、/approve、/reject、/computer-shell）
   → 配额（单用户/天、单群聊/分钟、当天 token 预算）
-  → 月度硬顶预检（超了直接回绝，不调模型）
+  → 分层每日上限预检（agent 每日上限超了直接回绝，不调模型；月度上限已移除）
   → 附件处理（Phase 3：文本文档提取进上下文，图片只记元信息）
   → 会话排队（同一 sessionKey 串行，不同会话并行）
   → 先发“处理中…”占位 → Agent 执行（画像定 mode）→ 分片回发（编辑占位 + 续发）
@@ -228,7 +228,7 @@ Bot 人设。画像变了重建 Agent（会话记忆还在，换的是 mode 与�
 
 ### 用量硬顶（审批绕不过配额）
 
-- 执行前先做月度硬顶预检（本月已花 ≥ 上限直接回绝，不调模型）；
+- 执行前先做分层每日上限预检（agent 每日上限超了直接回绝，不调模型）；
   单次硬顶走 Agent 自带的 checkCost；高频触发仍走 Phase 1 的三档配
   额（单用户/天、单群聊/分钟、当天 token 预算），审批放行不绕过配额。
 - 拒绝的审批不扣 token（只记审计与事件）；放行后执行的花费照常进
@@ -291,7 +291,7 @@ id，群聊填群 id）。推三类东西，内容只写结论与数字，不含
 - 当天 token 预算默认不设（`daily_token_budget_usd: null`）。
 
 用量记进现有用量账本（与 CLI 同口径：provider 实报 token + 已配单价
-才算钱，算不出不挡人）；月度硬顶与单次硬顶走 Agent 自带的 checkCost，
+才算钱，算不出不挡人）；分层每日上限与单次硬顶走 Agent 自带的 checkCost，
 超了直接中止（与 CLI 同一条诚实边界）。模型兜底链不进 Bot：只用主
 provider，绝不自动换模型。
 

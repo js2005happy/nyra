@@ -73,7 +73,7 @@ nyra media ingest <链接> [--out 转写.txt] [--scope <范围卡名>] [--langs 
 - 字幕与自动字幕：免费、零 token。
 - 本地 whisper.cpp：零 token（模型文件须自己下，见 docs/voice.md）。
 - 云端 STT：按分钟计价（`voice.stt_price_per_min_usd`，默认不配、花费记 null）；
-  花费记进同一本硬顶账（voiceSpentUsd），月度硬顶在下次模型调用前强制执行。
+  花费记进同一本硬顶账（voiceSpentUsd），单次硬顶在下次模型调用前强制执行。
 - 事件 `media_ingested`（host、标题指纹、时长、下载字节数、转写来源、转写文本
   指纹、云端花费）：只记元数据与 SHA-256 前 12 位指纹，不记字幕/转写原文、
   不记完整 URL、不记 cookies；`nyra timeline` 能读出“抓了哪条视频、怎么转的”。

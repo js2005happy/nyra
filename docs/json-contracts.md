@@ -30,7 +30,6 @@
 |---|---|---|
 | `savings.lines[].tokens_per_turn_saved` | 算不出 | 确实不省 |
 | `cost.max_cost_usd` | 没设上限 | 上限为 0 美元 |
-| `cost.monthly.limit_usd` | 没设月度上限 | 月度上限 0 |
 | `stats.month_spent_usd` | 本月有调用但没配单价（`incomplete: true`） | 本月真没花钱 |
 
 把"不知道"写成 0，看板会画出**假的下降曲线**，CI 会漏报"没有硬顶"。

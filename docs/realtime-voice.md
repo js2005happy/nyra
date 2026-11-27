@@ -27,7 +27,7 @@ nyra voice realtime status   # 看当前用哪个
 
 默认 `local`，走现有 `transcribeAudio`：本地 whisper.cpp 优先、云端兜底，
 与原来同一条路、同一套门禁（云端只在 `voice.call_cloud_enabled` 显式设为
-true 时才走，默认关；走之前先套月度硬顶；本地不可用、云端又没开时直接
+true 时才走，默认关；云端花费照常记账（月度上限已移除）；本地不可用、云端又没开时直接
 报错指路，不静默降级）。
 
 “没路”由 provider 自己判：内置 local 没路时调用方保持老文案

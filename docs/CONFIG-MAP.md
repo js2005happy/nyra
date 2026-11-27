@@ -60,7 +60,6 @@ CLI 覆盖  >  config.json  >  环境变量（仅个别能力）  >  默认值
 | `deny_read_globs` | `tools.ts` 的禁读清单（清空顶层也拦得住） |
 | `permissions` | `tools.ts` 的权限规则解析（改 config 放不开 deny） |
 | `sandbox` / `sandbox_mode` | `config.ts` 的 `resolveSandbox`（改不回 local / danger-full-access） |
-| `monthly_cost_limit_usd` | `cost.ts` 的 `resolveMonthlyLimit`（改 config 或加 CLI 参数都放宽不了） |
 | `verify_command` | `runs.ts` 的 `resolveVerifyOrigin`（config 里的校验命令被顶掉） |
 | `disabled_tools` | `cli.ts` 建 agent / savings / tools / redlines 四处（禁用工具不可被改 config 绕过） |
 | 其余 `ENFORCEABLE_KEYS` | 只在 `config import` 与展示层生效，运行时暂未消费 |

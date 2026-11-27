@@ -97,20 +97,20 @@ nyra governance mode set --agent <名字> auto --yes   # 切 auto 须 --yes
 
 - **observe**：Bot 主动工作先默认这档。评估通过只记干跑记录，不真干。
   人看过记录没问题，再显式切 auto。
-- **auto**：评估通过可执行，但仍受月度硬顶与审批约束——auto 不是免审批，
+- **auto**：评估通过可执行，但仍受分层每日上限与审批约束——auto 不是免审批，
   只是“评估通过不用先记干跑”。
 
-**月度硬顶门**（接单前先套）：`checkAutoAllowed` 读本月用量账本（LLM +
-MCP）与 `config.json` 的 `monthly_cost_limit_usd`，已触顶就不接。没配上限
-就不挡人（`checkMonthlyCap` 的语义：上限为 null 时不超）。
+**分层每日上限门**（接单前先套）：`checkAutoAllowed` 套分层判定
+（只剩 agent 每日层），已触顶就不接。没配上限就不挡人；本月已花只当
+记账信息返回，不参与判定。（月度上限已移除：以前这里是月度硬顶门。）
 
 **“would accept”评估**（`evaluateProactiveAction`，只判定、不执行）：
 
-1. 月度硬顶已触顶 → `would-deny`；
+1. 分层每日上限已触顶 → `would-deny`；
 2. 工具命中红线表 never 档 → `would-deny`；命中 approve 档 →
    `would-accept` 但 `requiresApproval: true`；
 3. observe 模式 → `would-accept`（只记干跑，不真干）；
-4. auto 模式 → `would-accept`（可执行，仍受月度硬顶与审批约束）。
+4. auto 模式 → `would-accept`（可执行，仍受分层每日上限与审批约束）。
 
 ## 干跑记录
 
@@ -131,7 +131,7 @@ nyra governance dry-runs discard <记录 id> --yes
   操作。干跑记录是“人看过、没问题”的凭证，不是执行器。
 - 两处自动记干跑（都是 observe 模式下）：
   - 启动扫荡的自动续跑（`sweepSubagents`，`auto: true`）：observe 模式或
-    月度硬顶挡下的续跑，只记干跑、不真干（`SweepReport.dryRuns`）；
+    分层每日上限挡下的续跑，只记干跑、不真干（`SweepReport.dryRuns`）；
   - Heartbeat：巡查发现待续跑子 agent 时，observe 模式只记干跑。
 
 ## 自优化环（G-4）
@@ -208,22 +208,15 @@ nyra optimize arms [--json]
 
 ## 分层成本上限（缺口 43 第三批）
 
-组织级上限就是已有的月度硬顶（`config.json` 的
-`monthly_cost_limit_usd`，本月 LLM + MCP 花费；见 `docs/cost.md`）——
-**组织级没有第二套数字**，`caps set org` 直接拒绝。分层是叠加在
-它之上的第二道门，只在它下面分：
+分层上限只剩 **agent 每日层**（美元与 token 两维，本地自然日 0 点重置）。
+月度上限已移除（2026-11-27）：组织级 / 团队 / 角色 / 人设层与月度维
+一律不再接受，`caps set org` / `team:` / `role:` / `persona:` 直接拒绝；
+旧 caps 文件读时迁移（剥月度字段、丢无剩余限额的层；放宽历史不重写）。
+见 `docs/cost.md`。
 
 | 层 | 范围 | 花费怎么算 |
 |---|---|---|
-| `org` | 组织级 | 本月 LLM + MCP（唯一含 MCP 的层） |
-| `team:<id>` | 团队 | 成员 agent 的花费之和 |
-| `role:owner` / `role:user` | 角色 | 请求方账号的角色（Bot 侧 `this.agent` 归属的账号角色） |
-| `agent:<id>` | 单个 Bot agent | 该 agent 自己的花费 |
-| `persona:<id>` | 人设（Soul） | 该 Soul 的花费（与 agent 层同一份数） |
-
-多层同时设了，取最严的一层（先超的先触发）。子层上限超过组织级
-上限时直接拒绝设置——要先显式抬组织级。没配组织级上限时子层各自
-生效。
+| `agent:<id>` | 单个 Bot agent | 该 agent 当日的花费（美元与 token） |
 
 - **账本**：`~/.nyra/cost-caps.json`（上限 + 团队归属 + 放宽记录，
   0600、原子写）与 `~/.nyra/cost-pauses.json`（暂停记录，0600、
@@ -231,8 +224,7 @@ nyra optimize arms [--json]
 - **归属**：用量账本每行多一个可选 `agent` 字段（`src/usageLedger.ts`
   的 `recordDelta` 末参）。CLI 定时任务 `--agent` 与 Bot（`this.agent`）
   的运行按 agent 记账；CLI 交互运行没有 agent id，不记归属——
-  分层分不下去，但组织级月度硬顶照样管它。MCP 花费没有 agent
-  归属，只在组织级计入。
+  分层分不下去。MCP 花费没有 agent 归属，不进分层判定。
 - **分层花费是下界**：未归属的行分不下去，只会晚触发、不会误触发。
   账本里有未归属/未计价的行时判定结果带 `incomplete: true`，
   美元算不出时该层只判 token。
@@ -241,9 +233,9 @@ nyra optimize arms [--json]
   有运行上下文时镜像运行事件；设置记 `cost_cap_set`。
 - **触顶是可恢复暂停，不是丢弃**：运行中触顶（`Agent.checkCost`
   的分层回调，`makeTieredCapCheck`）先建暂停记录再抛错中止
-  （与月度硬顶同级硬停）；暂停记录带 runId / taskId 引用——
+  （与单次硬顶同级硬停）；暂停记录带 runId / taskId 引用——
   运行记录与任务板行就是检查点，不另写检查点文件。同 agent
-  同层同月只留一条暂停记录。任务板多一个 `paused` 状态：
+  同层同日只留一条暂停记录。任务板多一个 `paused` 状态：
   `nyra kanban pause <id> "<原因>"` / `resume <id>`（恢复回
   queued，attempts 不动、不进熔断计数）；`kanban sweep` 扫到
   因分层上限已超而失败的运行，走暂停路径不是 fail 路径。
@@ -251,15 +243,14 @@ nyra optimize arms [--json]
 - **金额未知暂停**：未配单价或调用缺用量时，严格模式（默认开）下建一条
   scope 为 `unknown-amount` 的暂停记录（不是分层触顶，不走分层重判；
   恢复条件见 `docs/budget.md`：严格模式已关、或该模型现在能解析出单价时放行）。
-- **接单门**：`checkAutoAllowed` 在月度硬顶之后再套分层判定
+- **接单门**：`checkAutoAllowed` 就是分层判定
   （observe/auto 接单前都判，触顶不接单）。分层判定本身出问题
-  （账本损坏等）不拦接单——月度硬顶已在前面判过，分层是叠加
-  的第二道门，不是第一道门的替代。
+  （账本损坏等）不拦接单。
 
 CLI（`nyra governance caps …`）：
 
 ```
-nyra governance caps set <范围> [--usd <美元>] [--tokens <数>] [--yes]
+nyra governance caps set <范围> [--day-usd <美元>] [--day-tokens <数>] [--yes]
 nyra governance caps list [--json]
 nyra governance caps show <范围>
 nyra governance caps check [--agent <名字>] [--run-usd <美元>] [--run-tokens <数>] [--json]

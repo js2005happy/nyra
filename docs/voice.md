@@ -113,8 +113,7 @@ nyra voice call hooks [list|enable <名>|disable <名>|on|off]  # 通话钩子�
   默认 `local`（本地 whisper.cpp 优先、云端兜底，与原来同一条路）；
   `nyra voice realtime use <名字>` 切换，名字没注册直接报错、不静默回退。
   云端仍比缺口 15 更严：只在 `voice.call_cloud_enabled` 显式设为 true 时
-  才走（默认关），且走之前先套月度硬顶（本月已花是下界，只会晚触发、不会
-  误触发；没配上限不挡人）。本地不可用、云端又没开时直接报错指路，不静默降级。
+  才走（默认关）；云端花费照常进用量账本（月度上限已移除，不再有月度硬顶这一关）。本地不可用、云端又没开时直接报错指路，不静默降级。
   事件 `voice_call_transcribed` 多一个 `realtime_provider` 字段。
 - **语音不碰支付与对外发送**：转写文本命中支付类（转账、付款……）或对外
   发送类（发消息、发邮件……）关键词时，该段被扣下（`held`），不回读、不
@@ -122,7 +121,7 @@ nyra voice call hooks [list|enable <名>|disable <名>|on|off]  # 通话钩子�
   不落盘：账本（`~/.nyra/voice-calls.json`，0600、损坏先备份再抛错）与
   审计（`~/.nyra/voice-call-audit.jsonl`）只记时长、字数、引擎、花费与
   文本指纹，原文只在喂段落时打印一次，确认时凭段落 id 与指纹核对。
-- **回读**：`--speak-reply "<文字>"` 才合成（云端 TTS，同样过月度硬顶；
+- **回读**：`--speak-reply "<文字>"` 才合成（云端 TTS，花费同样记账；
   超 `call_reply_max_chars` 截断）；mp3 存 `~/.nyra/voice/call-<通话 id>-<段落 id>.mp3`
   （0600），配了播放器才播。被扣下的段落不回读。
 - **证据链**：10 个新事件已注册进 EVENT_FIELDS（`voice_call_started` /
@@ -172,7 +171,7 @@ nyra voice call hooks [list|enable <名>|disable <名>|on|off]  # 通话钩子�
 
 - STT 按分钟、TTS 按字数计价（`voice.stt_price_per_min_usd` /
   `voice.tts_price_per_1k_chars_usd`，默认不配、花费记 null，不编数字），
-  进用量账本：单次硬顶与月度硬顶都含语音花费，超限时报错文案带“其中语音
+  进用量账本：单次硬顶与分层每日上限都含语音花费，超限时报错文案带“其中语音
   $X”；时间线与 `nyra verdict --run <运行 ID>` 的花费合计含语音。
 - 证据链：新事件 `voice_input`（seconds、chars、engine、cost_usd、
   text_hash）与 `voice_speak`（chars、engine、cost_usd），均已注册进

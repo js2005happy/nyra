@@ -6,7 +6,7 @@
 
 复用已有的东西，不另起一套：四个适配器是 `src/bot/channels/` 的四个
 （Phase 1–3 的 Telegram 骨架 + Discord/Slack/WhatsApp），执行是
-`BotRunner`（会话队列、幂等去重、角色路由、审批桥、配额、月度硬顶），
+`BotRunner`（会话队列、幂等去重、角色路由、审批桥、配额、分层每日上限预检），
 沙箱是 `src/sandbox.ts` 的分级沙箱，语音转写是缺口 15 的 `src/voice.ts`。
 本批新写的只有三层：kind 协议（`src/channels/kind.ts`）、bindings 路由
 （`src/channels/bindings.ts`）、常驻网关（`src/channels/gateway.ts` +

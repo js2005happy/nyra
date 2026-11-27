@@ -63,7 +63,7 @@ resource 直接 -32602（能力里没广告 image/audio，收了就是失信）�
   服务端跑着的时候改开关，下一轮生效。
 - 两个 mode：`default`（完整工具，受写开关管）与 `readonly`
   （写工具直接从工具表里拿掉，模型连提议都提不出来）。
-- 成本硬顶照常（单次 + 月度上限，AG-UI 服务端同款口径），
+- 成本硬顶照常（单次硬顶 + 分层每日上限，AG-UI 服务端同款口径），
   服务端不自动换模型（只用主 provider）。
 - 证据链：4 个新运行事件 `acp_session_created` / `acp_session_loaded` /
   `acp_prompt_finished` / `acp_blocked`（已注册进 EVENT_FIELDS），

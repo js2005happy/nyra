@@ -13,7 +13,7 @@ Promise.race 决出胜负就当停了，底层模型调用、工具、子进程�
 | `/stop`（Bot） | Bot 队列 abort 该会话在跑任务的信号，`Agent.run(text, { signal })` 一路往下传 | 队列信号 → 模型请求 abort → 运行收敛成“已取消” |
 | `/stop`（子 agent） | `nyra subagent stop <运行 id> --yes` 在注册表记请求；子 agent 主循环每 500ms 的监视器看到请求就 abort 本轮信号 | 注册表请求 → 监视器 abort → 子 agent 行自己标 `stopped`（`markSubagentStopped`） |
 | 超时 | 并行线程到点先发取消信号，再等宽限期确认；单任务超时同理 | 超时 → 线程信号 abort → 宽限内确认停下才标 `stopConfirmed: true` |
-| 预算触顶 | 主循环每 500ms 的监视器跑 `costCapTripped()`（与 `checkCost` 同口径的只读判定：单次上限 + 月度上限），触顶就 abort 本轮信号 | 月度账超限 → 监视器 abort → 运行收敛成“已取消（成本上限已触顶）” |
+| 预算触顶 | 主循环每 500ms 的监视器跑 `costCapTripped()`（与 `checkCost` 同口径的只读判定：单次上限），触顶就 abort 本轮信号 | 单次上限超限 → 监视器 abort → 运行收敛成“已取消（成本上限已触顶）” |
 
 “金额未知则暂停”已落地（可靠性打磨第 2 项，并发预算预留，详见 `docs/budget.md`）：`costCapTripped`
 算不出金额时仍返回 false，不 abort——金额未知由请求前预留门（`reserveNextCall`）

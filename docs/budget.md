@@ -16,7 +16,7 @@
 
 ## 账本：`~/.nyra/budget-ledger.json`
 
-- 格式：`{version: 1, reservations: [...]}`，每行一笔预留：`id`（`rsv_<12 位 hex>`）、`owner`（谁预留的：子 agent 用注册表行 id，主 agent 用会话 id，都没有时是 `cli`）、`amountUsd`、`reason`（`next-call` / `parallel-thread` / `manual` / `group-turn`）、`bindingScope`（撞上的是哪层上限：`run` / `monthly` / `tiered:<层>`，没撞上时为 null）、`createdAt` / `expiresAt`、`pid`、`status`（`reserved` / `settled` / `released`）、`settledUsd`（结算时的实际花费，没结算时为 null）。
+- 格式：`{version: 1, reservations: [...]}`，每行一笔预留：`id`（`rsv_<12 位 hex>`）、`owner`（谁预留的：子 agent 用注册表行 id，主 agent 用会话 id，都没有时是 `cli`）、`amountUsd`、`reason`（`next-call` / `parallel-thread` / `manual` / `group-turn`）、`bindingScope`（撞上的是哪层上限：`run` / `tiered:<层>`，没撞上时为 null）、`createdAt` / `expiresAt`、`pid`、`status`（`reserved` / `settled` / `released`）、`settledUsd`（结算时的实际花费，没结算时为 null）。
 - 只记用量数字，不记任务文本、不记模型回答、不记绝对路径。
 - 权限 0600，原子写（先写临时文件再改名）；文件损坏时先备份成 `budget-ledger.json.corrupt-<时间戳>` 再抛错，不静默丢账。
 - 每次读写都重新读文件，不在内存里缓存——跨会话、跨进程共享靠文件本身。写操作（reserve/settle/release/pruneExpired）的读-改-写一段由 `.budget-ledger.lock` 目录锁串行化（mkdir 原子创建；锁主进程已死或锁超 30 秒未放算 stale、可抢走；10 秒拿不到锁抛错）；读侧不加锁（写盘是 rename 原子写，读不到撕裂内容）。
@@ -26,13 +26,13 @@
 
 每次模型调用发出前（`Agent.reserveNextCall`，在 `actModel.chat` 之前）：
 
-1. 没有美元上限（单次 `--max-cost` / 月度上限）且没有分层回调 → 不预留，直接发请求。
+1. 没有美元上限（单次 `--max-cost`）且没有分层回调 → 不预留，直接发请求。
 2. 未配单价：有美元上限要守且严格模式开 → 暂停（见下），调用不发出；非严格模式 → 继续跑（旧行为）；只有分层回调时 → 先判一次分层（USD 传 null，只判 token 层），判不过直接抛分层文案。
 3. 已有调用未报用量（`missing_calls > 0`）：同上——有美元上限且严格模式 → 暂停，不再发下一轮调用。
 4. 预估本次调用：`estimateCallUsd(prompt 字符数, 单价)`，输入按提示字符 / 2.5 折 token，补全默认按 2000 token 算（保守值，不是典型值：典型回复约 400 token，但预留要拦超支，按 400 算时长回复的结算会顶穿预留；调用方知道本次输出上限时显式传 `completionTokens`）。
 5. 分层预判：把“本次运行已花 + 在途预留 + 本次预留”当在途花费传给分层回调，超了直接抛它的文案（回调里已按现有口径建暂停记录）。
 6. 只有分层回调、没有美元上限时到此为止（不预留，没上限可守）。
-7. 拼 limits 逐层算 `已花 + 在途预留 + 本次 <= 上限`：单次层（已花 = 本次运行已计价合计：主 agent + 已完成子任务 + 语音）、月度层（已花 = 账本里本月已落盘的 + 本次运行进行中）。任一层不够 → 拒绝，调用不发出，发 `budget_rejected` 事件。
+7. 拼 limits 算 `已花 + 在途预留 + 本次 <= 上限`：单次层（已花 = 本次运行已计价合计：主 agent + 已完成子任务 + 语音）。不够 → 拒绝，调用不发出，发 `budget_rejected` 事件。（月度上限已移除：预留不再有月度层。）
 8. 成功 → 写盘，发 `budget_reserved` 事件，返回预留记录。
 
 调用返回后：按实际增量结算（新已花 − 预留时已花），发 `budget_settled` 事件；本次调用没报用量、算不出实际花费 → 释放预留（不编结算数），随后 `checkCost` 的严格分支暂停。调用抛错（取消、provider 报错等）→ 释放预留，发 `budget_released` 事件（reason 记 `call-failed` / `cancelled`）。
@@ -85,17 +85,17 @@ nyra budget release <预留 id>
 nyra budget strict [--on | --off] [--yes]
 ```
 
-金额单位是美元。手动预留只对月度上限（配了才查：本月已花 + 在途预留 + 本次 <= 上限）；单次运行上限没有运行上下文，查不了。`strict` 不带 `--on/--off` 时只显示当前状态；改开关须 `--yes`。
+金额单位是美元。手动预留只记账、不查上限（月度上限已移除；单次运行上限没有运行上下文，查不了）。`strict` 不带 `--on/--off` 时只显示当前状态；改开关须 `--yes`。
 
 `nyra cost --show` 同样多一行在途预留 + 严格模式；`--show --json` 的 `budget` 字段（追加在 `monthly` 之后）：`active_reserved_usd`、`strict_unknown_amount`。
 
 ## 每日上限与用量仪表（M1：学 OMB 的 usage_limits）
 
 只借“按 Bot 分 + 界面可见”，不借 OMB 的宽松语义——Nyra 的硬顶不变：
-调用前预留、未知单价暂停、日/月上限触顶就停。
+调用前预留、未知单价暂停、每日上限触顶就停。（月度上限已移除。）
 
-- 每 Bot 每天也能单独设上限：`nyra governance caps set --scope agent:<id> --day-usd <美元> --day-tokens <token 数> --reason <原因>`（与月上限 `--usd` / `--tokens` 同款，只 agent 层可用；其他层传了直接拒绝）。每日上限在本地自然日 0 点重置，触顶时的恢复办法写“等明天 0 点重置”。
-- 用到 80% 就告警：每日/每月任一窗口的美元或 token 用到 80% 以上，`nyra governance caps eval` 与用量仪表都会标出来（分层判定里的 `warnings`，kind 是 `approaching_limit`）；没超限只是提醒，不停。
+- 每 Bot 每天也能单独设上限：`nyra governance caps set --scope agent:<id> --day-usd <美元> --day-tokens <token 数> --reason <原因>`（只 agent 层可用；其他层传了直接拒绝；月度维已移除，`--usd` / `--tokens` 不再接受）。每日上限在本地自然日 0 点重置，触顶时的恢复办法写“等明天 0 点重置”。
+- 用到 80% 就告警：每日窗口的美元或 token 用到 80% 以上，`nyra governance caps eval` 与用量仪表都会标出来（分层判定里的 `warnings`，kind 是 `approaching_limit`）；没超限只是提醒，不停。
 - 用量仪表：`nyra usage [--agent <id>] [--json]`，按 Bot 列当日/当月两行用量条（已花/上限、百分比、80% 告警、触顶暂停状态）。`usage` 模型工具是同一份数，Bot 自己查还剩多少额度，不用问机主。数字只来自用量账本与分层判定；没设上限的窗口写“不限”，不编数；美元数是下界——未归属（CLI 交互运行与网关会话的花费，分不下去，只算组织级总数）与未计价的调用不摊到任何 Bot。
 
 ## 事件
