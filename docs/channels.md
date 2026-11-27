@@ -215,10 +215,36 @@ nyra channels explain --channel ... --chat ... --sender ... [--mention] [--group
 notifier（Phase 3 主动推送）只在默认绑定的 runner 上开——同一渠道多个
 runner 各起一个推送巡查会重复推送。
 
+## 5.4 Telegram 真接口验证（Cue A 批，待 token）
+
+适配器与网关都已实现（`src/bot/channels/telegram.ts`、`src/channels/gateway.ts`），
+假 transport 上的测试都过了（`tests/node/test-bot-telegram.test.ts`：收发归一化、
+@ 判定、审批按钮回调、API 失败不含 token、空 token 拒绝构造）。只差在真实
+Bot 账号上跑通一次。
+
+**用户只需做一步（免费、一次性）**：在 Telegram 里找 @BotFather，`/newbot`
+建一个测试 bot，拿到 token（形如 `123456:ABC...`），交给 Nyra 三种方式任选
+其一：环境变量 `TELEGRAM_BOT_TOKEN`、密码箱同名条目、或同名文件
+（解析顺序就是这个顺序，见 `src/bot/index.ts` 的 `resolveTelegramToken`）。
+token 只存密码箱/环境变量，不进日志与事件。
+
+**验证步骤（拿到 token 后）**：
+
+1. `nyra channels health`：Telegram 三项全 ok（token / adapter / poll）。
+2. `nyra channels start` 起网关（长轮询，不需要公网入口）。
+3. 在 Telegram 私聊里给测试 bot 发一条消息 → 网关路由到指定 Bot → 回一条
+   消息，全程进运行记录。
+4. 触发一次审批：在 Telegram 里点一次通过、一次拒绝，审批卡闭环。
+
+**当前状态（2026-11-27）**：token 未到。无 token 时 `nyra channels health`
+已实测干净报错（Telegram token/adapter 两项 error、poll 一项 ok、exit 0，
+不崩溃），不是未验证的空白——缺的是第 1–4 步的真接口跑通。
+
 ## 诚实边界
 
 - 真实 Telegram/Discord/Slack/WhatsApp Bot 未接通（token 仍等用户），
-  只在假 transport 上验证过；不要催 token。
+  只在假 transport 上验证过；不要催 token。Telegram 真接口验证步骤见上节，
+  token 一到就按步骤跑。
 - WhatsApp 收消息须公网回调 URL 转发进适配器的 `handleWebhook`，
   网关不内置 webhook 服务器；没配好之前 WhatsApp 只发不收。
 - WhatsApp 默认不启用（用户 2026-11-04 已要求关闭），真接通等用户另行点头。

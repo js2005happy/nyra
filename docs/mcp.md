@@ -34,6 +34,48 @@ Nyra 的 MCP 分两半：**客户端**（Nyra 调别人的 MCP 服务器）与**
 - 成本与上限不变：`cost_per_call_usd` / `mcp_cost_limit_usd` 对两种传输都生效
   （见 `GET /api/mcp/spend`）。
 
+## 客户端：本地 stdio 预置（filesystem / fetch / memory）
+
+三个开箱即用的本地 stdio 服务器预置，跑在 `mcpPresets` 里，与其余 7 个
+内置预置同处（共 10 个，见 `src/mcpPresets.ts`）。MCP 默认关闭，服务器只在
+用户启用（`mcp_enabled: true`）后才启动；需要 Key/路径的预置缺条件时跳过，
+绝不用假值启动。
+
+| 预置 | 启动 | 说明 |
+|---|---|---|
+| `memory` | `npx -y @modelcontextprotocol/server-memory` | 知识图谱记忆：长期记住对话里的事实、偏好和关系。默认已开（在 `DEFAULT_MCP_PRESETS` 里）。 |
+| `fetch` | `uvx mcp-server-fetch` | 抓网页内容：把网页取回并转成干净的 Markdown。默认已开。**注意：官方没有出过这个服务器的 npm 包**（npm 注册表上查不到 `@modelcontextprotocol/server-fetch`），所以只能走 `uvx`，不能走 `npx`；本机须装好 uv（提供 `uvx` 命令）。另有两处环境特性（只影响本机沙箱验证，预置本身不改）：① 运行时 `NO_PROXY` 里带方括号的 IPv6（如 `[::1]`）会让它用的 httpx 解析代理时报错（`Invalid port: ':1]'`），去掉方括号形式（保留 `::1` 本身）就正常；② 本机 DNS 拦截让公开域名都解析到 198.18.x.x，服务器的 SSRF 守卫会拒绝抓取，验证时才临时加 `--allow-private-ips`，**预置里绝不带这个开关**（守卫要留着，正常机器上 DNS 是真实公网 IP，不需要它）。 |
+| `filesystem` | `npx -y @modelcontextprotocol/server-filesystem <目录…>` | 文件系统：只在用户允许的目录里读写、移动、搜索文件。须在 `mcp_preset_args` 里写要开放的目录，如 `{"filesystem": ["/home/you/docs"]}`；不在允许目录里的文件读不到（服务器自己拒绝越界读）。 |
+
+- 工具经 `search_tools` 延迟加载；每次 `tools/call` 都进成本账本与运行记录，
+  与普通 MCP 服务器同口径。
+- 子进程默认进沙箱（现有规则）；`--sandbox local` 时原样 spawn。
+- 已验证（2026-11-27，本机真接口）：三台服务器 `tools/list` 均真实返回工具
+  清单；`memory` 建实体后能读回，`fetch` 抓 `example.com` 拿到正文（内容抓取
+  是直接拉起服务器验证的——经 MCP 客户端派生的子进程拿不到出口代理凭据，
+  详见上表 `fetch` 行的说明），`filesystem` 界内读到文件、界外读 `/etc/passwd` 被拒绝。
+
+### GitHub 官方远程 MCP（只读，Cue A 批 5.5）
+
+第 11 个预置 `github-remote`，不是本地子进程：走 Streamable HTTP
+（2026-07-28 无状态，与客户端 http 传输同款），端点
+`https://api.githubcopilot.com/mcp/readonly`，只开只读模式。调用走现有
+MCP 成本上限与审批；不新开协议。
+
+**用户只需做一步（免费、一次性）**：在 GitHub 上生成一个只读 PAT
+（fine-grained，只给读仓库/issue/PR 的权限），放到 `GITHUB_MCP_TOKEN`
+环境变量。预置默认不开（不在 `DEFAULT_MCP_PRESETS` 里）；没配 PAT 时
+解析直接跳过并报缺什么，不编造。PAT 只出现在解析后的请求头里，绝不写进
+日志与事件。OAuth 2.1 落地后再改走 OAuth，PAT 方案届时降级为备用。
+
+**验证步骤（拿到 PAT 后）**：`tools/list` 真实返回 GitHub MCP 的工具清单；
+真实调一次只读调用（列 Nyra 仓库的 open issues 或读一次 PR 评论）；
+写操作在只读模式下被服务器拒绝（验证拒绝链路）；调用进成本账本与运行记录。
+
+**当前状态（2026-11-27）**：PAT 未到。无 PAT 时的跳过逻辑与 http 配置解析
+已有测试覆盖（`test_github_remote_http_preset_needs_pat`），缺的是真接口
+跑通。
+
 ## 对外服务：Nyra 当 MCP 服务器
 
 **默认关闭。** 开启后，别的 agent 可以通过网关的 `POST /mcp` 调 Nyra 的
