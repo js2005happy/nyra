@@ -45,6 +45,7 @@ import { estimateCost, estimateRunCost, type CostEstimate, type Pricing } from "
 import { t } from "./i18n.ts";
 import type { AuxTask } from "./modelRouting.ts";
 import { selectTools, describeDeferred, searchDeferredTools, formatSearchResults, SEARCH_TOOLS_SCHEMA, CORE_BUILTIN_TOOLS, BUILTIN_LAZY_LOAD_THRESHOLD } from "./toolSearch.ts";
+import { validateToolCalls, buildToolArgRepairMessage } from "./toolStrict.ts";
 
 /**
  * G-P2-4：从 TOOL_SCHEMAS 现场拼某工具的参数 schema（校验中间件用）。
@@ -91,6 +92,7 @@ import {
   defaultMiddlewareConfig,
   resolveApprovalMode,
   runMiddlewareChain,
+  validateToolArgs,
   type FunctionResultCache,
   type MiddlewareSet,
   type ToolArgSchema,
@@ -2327,9 +2329,69 @@ export class Agent {
       // unpriced/missing、金额为 null，CLI/JSON 侧显示"未知"，不编造。
       this.emitCostUpdate();
       const choices = (resp.choices as Record<string, unknown>[]) ?? [];
-      const msg = (choices[0]?.message ?? {}) as Record<string, unknown>;
+      let msg = (choices[0]?.message ?? {}) as Record<string, unknown>;
       const assistantMsg: Record<string, unknown> = { role: "assistant", content: (msg.content as string) || "" };
-      const toolCalls = (msg.tool_calls as Record<string, unknown>[]) ?? [];
+      let toolCalls = (msg.tool_calls as Record<string, unknown>[]) ?? [];
+      // 严格模式二次校验（十年清单第 4 项）：不管 provider 有没有开 strict，
+      // 工具参数都按 schema 验一遍——strict provider 上不能 strict 化的工具
+      // （自由格式对象等）与忽略 strict 的服务端仍可能吐出坏参数。校验失败
+      // 只重试一次：把坏的 assistant 消息与修复说明推进上下文再调一次；
+      // 重试仍失败时 invalidArgs 留给执行循环，按原有错误路径当工具结果回填
+      // （不执行、不静默吞）。本轮重试不占新一轮 maxTurns；重试的用量与
+      // 预算走首轮同款预留/结算/记账（重试不单独记一轮 LLM span）。
+      let invalidArgs = validateToolCalls(toolCalls, schemas);
+      const origInvalidArgs = invalidArgs;
+      if (invalidArgs.size > 0) {
+        const badAssistant: Record<string, unknown> = { role: "assistant", content: (msg.content as string) || "" };
+        if (toolCalls.length) badAssistant.tool_calls = toolCalls;
+        if (typeof msg.reasoning_content === "string") badAssistant.reasoning_content = msg.reasoning_content;
+        messages.push(badAssistant);
+        messages.push({ role: "user", content: buildToolArgRepairMessage(invalidArgs) });
+        const retrySpentBefore = this.currentRunSpentUsd();
+        const retryReservation = this.reserveNextCall(current);
+        let retryResp: Record<string, unknown>;
+        try {
+          retryResp = await this.runChatMiddleware(
+            actModel.model,
+            turnOffset + i + 1,
+            () => actModel.chat(current as never, schemas as never, undefined, { signal: this.runSignal ?? undefined }),
+          );
+        } catch (err: unknown) {
+          this.releaseReservation(retryReservation, isCancelError(err) ? "cancelled" : "call-failed");
+          if (err instanceof ProviderError) throw new AgentError(String(err));
+          throw err;
+        }
+        this.usage.record(retryResp as never);
+        this.settleReservation(retryReservation, retrySpentBefore);
+        if (this.runSignal?.aborted) throw cancelErrorFromSignal(this.runSignal, "stop");
+        this.checkCost();
+        if (retryResp && typeof retryResp === "object" && typeof (retryResp as Record<string, unknown>).usage === "object") {
+          this.emit("usage", this.usage.snapshot() as unknown as Record<string, unknown>);
+        }
+        resp = retryResp;
+        const retryChoices = (retryResp.choices as Record<string, unknown>[]) ?? [];
+        msg = (retryChoices[0]?.message ?? {}) as Record<string, unknown>;
+        toolCalls = (msg.tool_calls as Record<string, unknown>[]) ?? [];
+        invalidArgs = validateToolCalls(toolCalls, schemas);
+        assistantMsg.content = (msg.content as string) || "";
+      }
+      // 严格预检拦下的最终失败也得留下观察事件：旧路径里这类调用会走到
+      // executeTool，中间件校验（缺必填/类型错）拦下时记
+      // middleware_validation_failed。重试修好了就不记；重试仍失败、或重
+      // 试只回了文本（原调用被丢弃），对最终仍失败的调用补记一次——只记
+      // 中间件也会拦的那类（缺必填/类型错），多余字段这类只有 strict 才
+      // 拦的不记（中间件本就放行多余字段）。
+      const finalInvalid = toolCalls.length > 0 ? invalidArgs : origInvalidArgs;
+      for (const tc of finalInvalid.keys()) {
+        const fn = (tc.function as Record<string, unknown>) ?? {};
+        const fnName = (fn.name as string) ?? "";
+        const raw = typeof fn.arguments === "string" ? fn.arguments : "{}";
+        let parsed: unknown = null;
+        try { parsed = JSON.parse(raw); } catch { parsed = null; }
+        if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+        const checked = validateToolArgs(fnName, parsed as Record<string, unknown>, toolArgSchemaLookup(fnName));
+        if (!checked.ok) this.emit("middleware_validation_failed", { tool: fnName, fields: checked.fields.join(",") });
+      }
       if (toolCalls.length) assistantMsg.tool_calls = toolCalls;
       // DeepSeek 思考模式：上轮返回的 reasoning_content 下轮必须原样带回，
       // 否则 API 报 400（The `reasoning_content` in the thinking mode must
@@ -2443,8 +2505,14 @@ export class Agent {
           result = "错误：工具参数不是合法的 JSON 对象";
         } else if (deferredDepsThisTurn.has(fnName)) {
           // 依赖链串行化：本轮暂缓，模型下一轮看过上游结果再调。
+          // 暂缓先于校验：依赖上游结果的参数在没看到结果前没法修，
+          // 先报校验错会误导模型；暂缓的消息才是能照做的。
           const deps = deferredDepsThisTurn.get(fnName) ?? [];
           result = `已暂缓执行：${fnName} 的参数依赖 ${deps.join("、")} 的结果，而 ${deps.join("、")} 正在本轮同时执行；请先看 ${deps.join("、")} 的结果，下一轮再调 ${fnName}（不要凭印象编参数）。`;
+        } else if (invalidArgs.get(tc)?.length) {
+          // 严格模式二次校验未通过（已重试一次仍失败）：不执行工具，把校验
+          // 错误当工具结果回填，模型下一轮自己纠正；不静默吞掉。
+          result = `错误：工具 ${fnName} 的参数不符合 schema：${(invalidArgs.get(tc) ?? []).join("；")}`;
         } else if (refusal !== null) {
           // 被拒的调用不执行，直接把纸条当工具结果回填给模型。
           result = refusal;

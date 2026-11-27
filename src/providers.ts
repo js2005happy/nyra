@@ -8,6 +8,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { plaintextHttpError, resolveProvider, type ResolvedProvider } from "./config.ts";
+import { applyStrictToTools, resolveStrictTools } from "./toolStrict.ts";
 import { cancelErrorFromSignal, combineSignals } from "./cancel.ts";
 import { buildQuotaHandoff, type QuotaHandoff } from "./quotaHandoff.ts";
 import { filterHealthyChain, markDegraded } from "./modelHealth.ts";
@@ -270,6 +271,9 @@ export class Provider implements ProviderLike {
   auth: string;
   connectorName: string | null;
   allowedHosts: string[];
+  /** 工具级 strict 开关（十年清单第 4 项）：构造时由 provider 名 + 预置
+   * strictTools 经 resolveStrictTools 算出；见 src/toolStrict.ts。 */
+  strictTools: boolean;
 
   constructor(cfg: ResolvedProvider) {
     // CLI provider 禁止直接构造（Python 版 __new__ 守卫）：定时任务与队列
@@ -287,6 +291,7 @@ export class Provider implements ProviderLike {
     this.auth = cfg.auth;
     this.connectorName = cfg.connectorName;
     this.allowedHosts = cfg.allowedHosts;
+    this.strictTools = resolveStrictTools(cfg.name, cfg.preset?.strictTools);
   }
 
   hasCredentials(): boolean {
@@ -407,7 +412,9 @@ export class Provider implements ProviderLike {
       model: this.model,
       messages: normalizeMessages(messages as Record<string, unknown>[]),
     };
-    if (tools !== null && tools !== undefined) payload.tools = tools;
+    // 十年清单第 4 项：支持 strict 的 provider 发 strict 工具（schema 已
+    // 归一化成 strict 子集）；不支持的原样发，靠 agent 侧二次校验＋一次重试。
+    if (tools !== null && tools !== undefined) payload.tools = applyStrictToTools(this.name, this.strictTools, tools);
     // 推理档位 / 冗长度（config.reasoning_effort / verbosity）。未配置时这里是空对象，
     // payload 与改动前逐字节一致——零配置零影响。
     Object.assign(payload, this.extraBody ?? {});

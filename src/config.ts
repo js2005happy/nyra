@@ -21,6 +21,10 @@ export interface ProviderPreset {
   allowedHosts: string[];
   models: string[];
   auth?: "cli";
+  /** 工具级 strict 开关（十年清单第 4 项）：不填时按 src/toolStrict.ts 的
+   * 支持表默认；只对自定义 provider 生效，内置预置不走这条（不要往内置
+   * PROVIDERS 条目里加字段，会动 CONFIG-MAP）。 */
+  strictTools?: boolean;
 }
 
 /** 15 个内置 provider，与 Python 版 nyra/config.py 的 PROVIDERS 一一对应。 */
@@ -384,6 +388,7 @@ export function getProviderPresets(config?: Record<string, unknown> | null): Rec
       connector: (e.connector as string | null) ?? null,
       allowedHosts: [...((e.allowed_hosts as string[]) ?? [])],
       models: [...((e.models as string[]) ?? [])],
+      ...(typeof e.strict_tools === "boolean" ? { strictTools: e.strict_tools } : {}),
     };
   }
   return presets;

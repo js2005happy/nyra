@@ -96,7 +96,7 @@ function typeName(v: unknown): string {
   return typeof v;
 }
 
-function checkType(value: unknown, type: string): boolean {
+function checkSingleType(value: unknown, type: string): boolean {
   switch (type) {
     case "string": return typeof value === "string";
     case "number": return typeof value === "number" && !Number.isNaN(value);
@@ -109,13 +109,20 @@ function checkType(value: unknown, type: string): boolean {
   }
 }
 
+/** type 可以是单个类型，也可以是联合类型数组（strict 归一化把可选属性
+ * 放宽成 [原类型, "null"] 后会用到）。 */
+function checkType(value: unknown, type: string | string[]): boolean {
+  if (Array.isArray(type)) return type.some((t) => checkSingleType(value, t));
+  return checkSingleType(value, type);
+}
+
 const MAX_ERRORS = 10;
 
 function validateValue(value: unknown, schema: Record<string, unknown>, path: string, errors: string[]): void {
   if (errors.length >= MAX_ERRORS) return;
   const at = path || "根";
-  if (typeof schema.type === "string" && !checkType(value, schema.type)) {
-    errors.push(`${at} 应为 ${schema.type}，实际为 ${typeName(value)}`);
+  if ((typeof schema.type === "string" || Array.isArray(schema.type)) && !checkType(value, schema.type as string | string[])) {
+    errors.push(`${at} 应为 ${Array.isArray(schema.type) ? schema.type.join("/") : schema.type}，实际为 ${typeName(value)}`);
     return;
   }
   if (Array.isArray(schema.enum)) {
@@ -180,4 +187,12 @@ export function validateOutputSchema(text: string, schema: Record<string, unknow
   const errors: string[] = [];
   validateValue(extracted.value, schema, "", errors);
   return { valid: errors.length === 0, errors: errors.map((e) => e.slice(0, 200)), parsed: extracted.value };
+}
+
+/** 对已解析的 JSON 值做 schema 校验（不从文本里抽 JSON）。供工具参数
+ * 二次校验用：工具参数已经是解析后的对象，直接按 schema 验。 */
+export function validateJsonValue(value: unknown, schema: Record<string, unknown>): string[] {
+  const errors: string[] = [];
+  validateValue(value, schema, "", errors);
+  return errors.map((e) => e.slice(0, 200));
 }
