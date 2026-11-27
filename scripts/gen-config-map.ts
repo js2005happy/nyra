@@ -69,7 +69,6 @@ lines.push("| `max_cost_usd` | `cli` 建 agent 时（CLI 参数让位） |");
 lines.push("| `deny_read_globs` | `tools.ts` 的禁读清单（清空顶层也拦得住） |");
 lines.push("| `permissions` | `tools.ts` 的权限规则解析（改 config 放不开 deny） |");
 lines.push("| `sandbox` / `sandbox_mode` | `config.ts` 的 `resolveSandbox`（改不回 local / danger-full-access） |");
-lines.push("| `monthly_cost_limit_usd` | `cost.ts` 的 `resolveMonthlyLimit`（改 config 或加 CLI 参数都放宽不了） |");
 lines.push("| `verify_command` | `runs.ts` 的 `resolveVerifyOrigin`（config 里的校验命令被顶掉） |");
 lines.push("| `disabled_tools` | `cli.ts` 建 agent / savings / tools / redlines 四处（禁用工具不可被改 config 绕过） |");
 lines.push("| 其余 `ENFORCEABLE_KEYS` | 只在 `config import` 与展示层生效，运行时暂未消费 |");
